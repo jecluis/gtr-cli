@@ -71,22 +71,23 @@ enum Commands {
     /// Create a new task
     New {
         /// Project ID
-        #[arg(short, long)]
+        #[arg(short = 'P', long)]
         project: String,
 
-        /// Task title
-        title: String,
+        /// Task title (all remaining arguments)
+        #[arg(num_args = 1.., required = true)]
+        title: Vec<String>,
 
         /// Task body/description
         #[arg(short, long)]
         body: Option<String>,
 
         /// Priority (for-now or not-for-now)
-        #[arg(long, default_value = "not-for-now")]
+        #[arg(short, long, default_value = "not-for-now")]
         priority: String,
 
         /// Size (XS, S, M, L, XL)
-        #[arg(long, default_value = "M")]
+        #[arg(short, long, default_value = "M")]
         size: String,
     },
 
@@ -196,7 +197,10 @@ async fn main() -> Result<()> {
             body,
             priority,
             size,
-        } => gtr::commands::create::run(&config, &project, &title, body, &priority, &size).await,
+        } => {
+            let title_str = title.join(" ");
+            gtr::commands::create::run(&config, &project, &title_str, body, &priority, &size).await
+        }
         Commands::Update {
             task_id,
             title,
