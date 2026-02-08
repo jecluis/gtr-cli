@@ -22,15 +22,6 @@ use crate::config::Config;
 use crate::output;
 use crate::{Error, Result};
 
-/// List projects.
-pub async fn projects(config: &Config) -> Result<()> {
-    let client = Client::new(config)?;
-    let projects = client.list_projects().await?;
-
-    output::print_projects(&projects);
-    Ok(())
-}
-
 /// List tasks.
 pub async fn tasks(
     config: &Config,

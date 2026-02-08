@@ -43,12 +43,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// List tasks or projects
+    /// List tasks
     List {
-        /// List projects instead of tasks
-        #[arg(short, long)]
-        projects: bool,
-
         /// Filter by project ID
         #[arg(short = 'P', long)]
         project: Option<String>,
@@ -73,7 +69,7 @@ enum Commands {
     },
 
     /// Create a new task
-    Create {
+    New {
         /// Project ID
         #[arg(short, long)]
         project: String,
@@ -136,6 +132,12 @@ enum Commands {
         limit: Option<u32>,
     },
 
+    /// Manage projects
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommands,
+    },
+
     /// Initialize configuration
     Init {
         /// Server URL
@@ -146,6 +148,22 @@ enum Commands {
         #[arg(short, long)]
         token: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum ProjectCommands {
+    /// Create a new project
+    Create {
+        /// Project name
+        name: String,
+
+        /// Project description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+
+    /// List all projects
+    List,
 }
 
 #[tokio::main]
@@ -166,20 +184,13 @@ async fn main() -> Result<()> {
     // Execute command
     match cli.command {
         Commands::List {
-            projects,
             project,
             priority,
             size,
             limit,
-        } => {
-            if projects {
-                gtr::commands::list::projects(&config).await
-            } else {
-                gtr::commands::list::tasks(&config, project, priority, size, limit).await
-            }
-        }
+        } => gtr::commands::list::tasks(&config, project, priority, size, limit).await,
         Commands::Show { task_id } => gtr::commands::show::run(&config, &task_id).await,
-        Commands::Create {
+        Commands::New {
             project,
             title,
             body,
@@ -199,6 +210,12 @@ async fn main() -> Result<()> {
             project,
             limit,
         } => gtr::commands::search::run(&config, &query, project, limit).await,
+        Commands::Project { command } => match command {
+            ProjectCommands::Create { name, description } => {
+                gtr::commands::project::create(&config, &name, description).await
+            }
+            ProjectCommands::List => gtr::commands::project::list(&config).await,
+        },
         Commands::Init { .. } => unreachable!(),
     }
 }
