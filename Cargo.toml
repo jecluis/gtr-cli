@@ -1,0 +1,54 @@
+[package]
+name = "gtr"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Joao Eduardo Luis <joao@abysmo.tech>"]
+description = "CLI client for Getting Things Rusty - ADHD-friendly task tracker"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/yourusername/get-things-rusty-cli"
+
+[[bin]]
+name = "gtr"
+path = "src/main.rs"
+
+[dependencies]
+# CLI framework
+clap = { version = "4.5", features = ["derive", "env", "cargo"] }
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1.35", features = ["macros", "rt-multi-thread"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Pretty output
+prettytable-rs = "0.10"
+colored = "2.1"
+termimad = "0.28"
+crossterm = "0.28"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Configuration
+toml = "0.8"
+directories = "5.0"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1.6", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
