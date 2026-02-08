@@ -189,14 +189,7 @@ async fn main() -> Result<()> {
             priority,
             size,
             limit,
-        } => {
-            let priority_mapped = priority.map(|p| match p.as_str() {
-                "now" => "for-now".to_string(),
-                "later" => "not-for-now".to_string(),
-                _ => p,
-            });
-            gtr::commands::list::tasks(&config, project, priority_mapped, size, limit).await
-        }
+        } => gtr::commands::list::tasks(&config, project, priority, size, limit).await,
         Commands::Show { task_id } => gtr::commands::show::run(&config, &task_id).await,
         Commands::New {
             project,
@@ -206,13 +199,7 @@ async fn main() -> Result<()> {
             size,
         } => {
             let title_str = title.join(" ");
-            let priority_mapped = match priority.as_str() {
-                "now" => "for-now",
-                "later" => "not-for-now",
-                _ => &priority,
-            };
-            gtr::commands::create::run(&config, &project, &title_str, body, priority_mapped, &size)
-                .await
+            gtr::commands::create::run(&config, &project, &title_str, body, &priority, &size).await
         }
         Commands::Update {
             task_id,
@@ -220,14 +207,7 @@ async fn main() -> Result<()> {
             body,
             priority,
             size,
-        } => {
-            let priority_mapped = priority.map(|p| match p.as_str() {
-                "now" => "for-now".to_string(),
-                "later" => "not-for-now".to_string(),
-                _ => p,
-            });
-            gtr::commands::update::run(&config, &task_id, title, body, priority_mapped, size).await
-        }
+        } => gtr::commands::update::run(&config, &task_id, title, body, priority, size).await,
         Commands::Delete { task_id } => gtr::commands::delete::run(&config, &task_id).await,
         Commands::Search {
             query,

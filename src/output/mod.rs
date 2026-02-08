@@ -67,15 +67,9 @@ pub fn print_tasks(tasks: &[Task]) {
         let modified = task.metadata.modified.with_timezone(&Local);
         let modified_str = modified.format("%Y-%m-%d %H:%M");
 
-        let priority_display = match task.metadata.priority.as_str() {
-            "for-now" => "now",
-            "not-for-now" => "later",
-            _ => &task.metadata.priority,
-        };
-
         let priority_colored = match task.metadata.priority.as_str() {
-            "for-now" => priority_display.red().to_string(),
-            _ => priority_display.normal().to_string(),
+            "now" => task.metadata.priority.red().to_string(),
+            _ => task.metadata.priority.normal().to_string(),
         };
 
         let status = if task.is_deleted() {
@@ -111,15 +105,9 @@ pub fn print_task_details(task: &Task) {
     println!("\n{}", "Metadata:".bold());
     println!("  ID:       {}", task.metadata.id.to_string().cyan());
 
-    let priority_display = match task.metadata.priority.as_str() {
-        "for-now" => "now",
-        "not-for-now" => "later",
-        _ => &task.metadata.priority,
-    };
-
     let priority_colored = match task.metadata.priority.as_str() {
-        "for-now" => priority_display.red(),
-        _ => priority_display.normal(),
+        "now" => task.metadata.priority.red(),
+        _ => task.metadata.priority.normal(),
     };
     println!("  Priority: {}", priority_colored);
     println!("  Size:     {}", task.metadata.size);
