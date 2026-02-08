@@ -17,17 +17,17 @@
 
 //! List command implementation.
 
-use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
+use crate::output;
+use crate::{Error, Result};
 
 /// List projects.
 pub async fn projects(config: &Config) -> Result<()> {
     let client = Client::new(config)?;
-    let _projects = client.list_projects().await?;
+    let projects = client.list_projects().await?;
 
-    // TODO: Pretty output
-    println!("List projects - to be implemented");
+    output::print_projects(&projects);
     Ok(())
 }
 
@@ -39,13 +39,20 @@ pub async fn tasks(
     size: Option<String>,
     limit: Option<u32>,
 ) -> Result<()> {
-    let _client = Client::new(config)?;
+    let client = Client::new(config)?;
 
-    // TODO: Implement task listing
-    println!("List tasks - to be implemented");
-    println!("  Project: {:?}", project);
-    println!("  Priority: {:?}", priority);
-    println!("  Size: {:?}", size);
-    println!("  Limit: {:?}", limit);
+    // Project ID is required for listing tasks
+    let project_id = project.ok_or_else(|| {
+        Error::InvalidInput(
+            "project ID required. Use --project <id> or list all projects with --projects"
+                .to_string(),
+        )
+    })?;
+
+    let tasks = client
+        .list_tasks(&project_id, priority.as_deref(), size.as_deref(), limit)
+        .await?;
+
+    output::print_tasks(&tasks);
     Ok(())
 }
