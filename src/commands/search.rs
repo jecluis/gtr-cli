@@ -17,18 +17,37 @@
 
 //! Search command implementation.
 
+use colored::Colorize;
+
 use crate::Result;
+use crate::client::Client;
 use crate::config::Config;
+use crate::output;
 
 /// Search tasks.
 pub async fn run(
-    _config: &Config,
+    config: &Config,
     query: &str,
     project: Option<String>,
     limit: Option<u32>,
 ) -> Result<()> {
-    println!("Search for '{}' - to be implemented", query);
-    println!("  Project: {:?}", project);
-    println!("  Limit: {:?}", limit);
+    let client = Client::new(config)?;
+
+    let tasks = client
+        .search_tasks(query, project.as_deref(), limit)
+        .await?;
+
+    if tasks.is_empty() {
+        println!(
+            "{}",
+            format!("No tasks found matching '{}'", query).yellow()
+        );
+        return Ok(());
+    }
+
+    println!("{}", format!("Search results for '{}':", query).bold());
+    println!();
+    output::print_tasks(&tasks);
+
     Ok(())
 }

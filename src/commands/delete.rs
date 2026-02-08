@@ -17,11 +17,24 @@
 
 //! Delete command implementation.
 
+use colored::Colorize;
+
 use crate::Result;
+use crate::client::Client;
 use crate::config::Config;
 
 /// Delete a task.
-pub async fn run(_config: &Config, task_id: &str) -> Result<()> {
-    println!("Delete task {} - to be implemented", task_id);
+pub async fn run(config: &Config, task_id: &str) -> Result<()> {
+    let client = Client::new(config)?;
+
+    client.delete_task(task_id).await?;
+
+    println!("{}", "✓ Task deleted successfully!".green().bold());
+    println!("  ID: {}", task_id.cyan());
+    println!(
+        "\n{}",
+        "Note: Task is marked as deleted but remains in storage".dimmed()
+    );
+
     Ok(())
 }

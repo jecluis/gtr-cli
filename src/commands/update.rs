@@ -17,22 +17,49 @@
 
 //! Update command implementation.
 
-use crate::Result;
+use colored::Colorize;
+
+use crate::client::Client;
 use crate::config::Config;
+use crate::models::UpdateTaskRequest;
+use crate::{Error, Result};
 
 /// Update a task.
 pub async fn run(
-    _config: &Config,
+    config: &Config,
     task_id: &str,
     title: Option<String>,
     body: Option<String>,
     priority: Option<String>,
     size: Option<String>,
 ) -> Result<()> {
-    println!("Update task {} - to be implemented", task_id);
-    println!("  Title: {:?}", title);
-    println!("  Body: {:?}", body);
-    println!("  Priority: {:?}", priority);
-    println!("  Size: {:?}", size);
+    let client = Client::new(config)?;
+
+    // Check if at least one field is provided
+    if title.is_none() && body.is_none() && priority.is_none() && size.is_none() {
+        return Err(Error::InvalidInput(
+            "at least one field must be provided to update".to_string(),
+        ));
+    }
+
+    let req = UpdateTaskRequest {
+        title,
+        body,
+        priority,
+        size,
+    };
+
+    let task = client.update_task(task_id, &req).await?;
+
+    println!("{}", "✓ Task updated successfully!".green().bold());
+    println!("  ID:       {}", task.metadata.id.to_string().cyan());
+    println!("  Title:    {}", task.title);
+    println!("  Priority: {}", task.metadata.priority);
+    println!("  Size:     {}", task.metadata.size);
+    println!(
+        "\nView with: {}",
+        format!("gtr show {}", task.metadata.id).dimmed()
+    );
+
     Ok(())
 }

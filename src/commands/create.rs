@@ -17,23 +17,42 @@
 
 //! Create command implementation.
 
+use colored::Colorize;
+
 use crate::Result;
+use crate::client::Client;
 use crate::config::Config;
+use crate::models::CreateTaskRequest;
 
 /// Create a new task.
 pub async fn run(
-    _config: &Config,
+    config: &Config,
     project: &str,
     title: &str,
     body: Option<String>,
     priority: &str,
     size: &str,
 ) -> Result<()> {
-    println!("Create task - to be implemented");
-    println!("  Project: {}", project);
-    println!("  Title: {}", title);
-    println!("  Body: {:?}", body);
-    println!("  Priority: {}", priority);
-    println!("  Size: {}", size);
+    let client = Client::new(config)?;
+
+    let req = CreateTaskRequest {
+        title: title.to_string(),
+        body: body.unwrap_or_default(),
+        priority: priority.to_string(),
+        size: size.to_string(),
+    };
+
+    let task = client.create_task(project, &req).await?;
+
+    println!("{}", "✓ Task created successfully!".green().bold());
+    println!("  ID:       {}", task.metadata.id.to_string().cyan());
+    println!("  Title:    {}", task.title);
+    println!("  Priority: {}", task.metadata.priority);
+    println!("  Size:     {}", task.metadata.size);
+    println!(
+        "\nView with: {}",
+        format!("gtr show {}", task.metadata.id).dimmed()
+    );
+
     Ok(())
 }
