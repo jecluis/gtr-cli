@@ -49,4 +49,10 @@ pub enum Error {
 
     #[error("invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("storage error: {0}")]
+    Storage(String),
+
+    #[error("database error: {0}")]
+    Database(String),
 }

@@ -49,6 +49,10 @@ uuid = { version = "1.6", features = ["serde", "v4"] }
 tempfile = "3.8"
 which = "6.0"
 
+# Local storage and CRDT
+automerge = "0.6.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
 [dev-dependencies]
 tempfile = "3.8"
 

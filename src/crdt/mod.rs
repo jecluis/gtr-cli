@@ -15,18 +15,8 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Getting Things Rusty CLI client library.
+//! CRDT operations for offline task management.
 
-pub mod client;
-pub mod commands;
-pub mod config;
-pub mod crdt;
-pub mod editor;
-pub mod error;
-pub mod models;
-pub mod output;
-pub mod storage;
-pub mod utils;
+pub mod document;
 
-pub use client::Client;
-pub use error::{Error, Result};
+pub use document::TaskDocument;
