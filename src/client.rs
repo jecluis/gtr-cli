@@ -58,6 +58,27 @@ impl Client {
         }
     }
 
+    /// Post CRDT bytes to server for merging (sync).
+    pub async fn post_sync(&self, _project_id: &str, task_id: &str, bytes: &[u8]) -> Result<Task> {
+        let url = format!("{}/api/sync/{}", self.base_url, task_id);
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes.to_vec())
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            Ok(resp.json::<Task>().await?)
+        } else {
+            let status = resp.status();
+            let text = resp.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
     /// List all projects.
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
         let url = format!("{}/api/projects", self.base_url);

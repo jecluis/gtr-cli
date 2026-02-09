@@ -27,6 +27,7 @@ pub mod error;
 pub mod models;
 pub mod output;
 pub mod storage;
+pub mod sync;
 pub mod utils;
 
 pub use client::Client;
