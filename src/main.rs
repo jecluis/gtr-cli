@@ -149,6 +149,20 @@ enum Commands {
         task_id: String,
     },
 
+    /// Display task change log
+    Log {
+        /// Task ID
+        task_id: String,
+
+        /// Show only work state changes
+        #[arg(long)]
+        work: bool,
+
+        /// Show only state changes (priority, size, etc.)
+        #[arg(long)]
+        state: bool,
+    },
+
     /// Search tasks
     Search {
         /// Search query
@@ -258,6 +272,11 @@ async fn main() -> Result<()> {
         Commands::Undone { task_id } => gtr::commands::undone::run(&config, &task_id).await,
         Commands::Delete { task_id } => gtr::commands::delete::run(&config, &task_id).await,
         Commands::Restore { task_id } => gtr::commands::restore::run(&config, &task_id).await,
+        Commands::Log {
+            task_id,
+            work,
+            state,
+        } => gtr::commands::log::run(&config, &task_id, work, state).await,
         Commands::Search {
             query,
             project,

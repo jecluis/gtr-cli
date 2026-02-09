@@ -48,8 +48,74 @@ pub struct TaskMetadata {
     pub done: Option<DateTime<Utc>>,
     pub deleted: Option<DateTime<Utc>>,
     pub version: u64,
+    #[serde(default)]
+    pub log: Vec<LogEntry>,
+    pub current_work_state: Option<WorkState>,
     pub subtasks: Vec<Uuid>,
     pub custom: serde_json::Value,
+}
+
+/// A single log entry recording a state change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub timestamp: DateTime<Utc>,
+    pub entry_type: LogEntryType,
+    pub source: LogSource,
+}
+
+/// Source of a log entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LogSource {
+    User,
+    System { reason: String },
+    Import,
+}
+
+/// Type of log entry describing what changed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LogEntryType {
+    PriorityChanged {
+        from: String,
+        to: String,
+    },
+    DeadlineChanged {
+        from: Option<DateTime<Utc>>,
+        to: Option<DateTime<Utc>>,
+    },
+    StatusChanged {
+        status: TaskStatus,
+    },
+    SizeChanged {
+        from: String,
+        to: String,
+    },
+    WorkStateChanged {
+        state: WorkState,
+    },
+    TitleChanged {
+        from: String,
+        to: String,
+    },
+    BodyChanged,
+}
+
+/// Task status for logging.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Done,
+    Deleted,
+    Restored,
+}
+
+/// Work state for time tracking.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkState {
+    Doing,
+    Stopped,
 }
 
 /// Request to create a project.

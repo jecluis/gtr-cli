@@ -22,6 +22,7 @@ pub mod delete;
 pub mod done;
 pub mod init;
 pub mod list;
+pub mod log;
 pub mod project;
 pub mod restore;
 pub mod search;
