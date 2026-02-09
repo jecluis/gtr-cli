@@ -19,10 +19,22 @@
 
 use chrono::Local;
 use colored::Colorize;
-use prettytable::{Table, format, row};
+use tabled::settings::Style;
+use tabled::{Table, Tabled};
 use termimad::MadSkin;
 
 use crate::models::{Project, Task};
+
+/// Row type for project table display.
+#[derive(Tabled)]
+struct ProjectRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Name")]
+    name: String,
+    #[tabled(rename = "Description")]
+    description: String,
+}
 
 /// Print a list of projects in table format.
 pub fn print_projects(projects: &[Project]) {
@@ -31,17 +43,37 @@ pub fn print_projects(projects: &[Project]) {
         return;
     }
 
-    let mut table = Table::new();
-    table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-    table.set_titles(row!["ID".bold(), "Name".bold(), "Description".bold()]);
+    let rows: Vec<ProjectRow> = projects
+        .iter()
+        .map(|p| ProjectRow {
+            id: p.id.cyan().to_string(),
+            name: p.name.green().to_string(),
+            description: p.description.as_deref().unwrap_or("-").to_string(),
+        })
+        .collect();
 
-    for project in projects {
-        let desc = project.description.as_deref().unwrap_or("-");
-        table.add_row(row![project.id.cyan(), project.name.green(), desc]);
-    }
-
-    table.printstd();
+    let table = Table::new(rows).with(Style::rounded()).to_string();
+    println!("{}", table);
     println!("\n{} {}", "Total:".bold(), projects.len());
+}
+
+/// Row type for task table display.
+#[derive(Tabled)]
+struct TaskRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Title")]
+    title: String,
+    #[tabled(rename = "Priority")]
+    priority: String,
+    #[tabled(rename = "Size")]
+    size: String,
+    #[tabled(rename = "Modified")]
+    modified: String,
+    #[tabled(rename = "Deadline")]
+    deadline: String,
+    #[tabled(rename = "Status")]
+    status: String,
 }
 
 /// Print a list of tasks in table format.
@@ -51,68 +83,60 @@ pub fn print_tasks(tasks: &[Task]) {
         return;
     }
 
-    let mut table = Table::new();
-    table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-    table.set_titles(row![
-        "ID".bold(),
-        "Title".bold(),
-        "Priority".bold(),
-        "Size".bold(),
-        "Modified".bold(),
-        "Deadline".bold(),
-        "Status".bold()
-    ]);
+    let rows: Vec<TaskRow> = tasks
+        .iter()
+        .map(|task| {
+            let id_short = &task.id[..8];
+            let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
+                .unwrap()
+                .with_timezone(&Local);
+            let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
 
-    for task in tasks {
-        let id_short = &task.id[..8];
-        let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
-            .unwrap()
-            .with_timezone(&Local);
-        let modified_str = modified.format("%Y-%m-%d %H:%M");
+            let priority_colored = match task.priority.as_str() {
+                "now" => task.priority.red().to_string(),
+                _ => task.priority.to_string(),
+            };
 
-        let priority_colored = match task.priority.as_str() {
-            "now" => task.priority.red().to_string(),
-            _ => task.priority.normal().to_string(),
-        };
+            let deadline_str = if let Some(ref deadline_str) = task.deadline {
+                if let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str) {
+                    let deadline_time = deadline.with_timezone(&Local);
+                    let now = chrono::Utc::now();
+                    let formatted = deadline_time.format("%Y-%m-%d").to_string();
 
-        let deadline_str = if let Some(ref deadline_str) = task.deadline {
-            if let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str) {
-                let deadline_time = deadline.with_timezone(&Local);
-                let now = chrono::Utc::now();
-                let formatted = deadline_time.format("%Y-%m-%d").to_string();
-
-                if deadline < now {
-                    formatted.red().to_string()
+                    if deadline < now {
+                        formatted.red().to_string()
+                    } else {
+                        formatted
+                    }
                 } else {
-                    formatted
+                    "-".dimmed().to_string()
                 }
             } else {
                 "-".dimmed().to_string()
+            };
+
+            let status = if task.is_deleted() {
+                "DELETED".red().to_string()
+            } else if task.is_done() {
+                "done".blue().to_string()
+            } else {
+                "pending".green().to_string()
+            };
+
+            TaskRow {
+                id: id_short.cyan().to_string(),
+                title: task.title.clone(),
+                priority: priority_colored,
+                size: task.size.clone(),
+                modified: modified_str,
+                deadline: deadline_str,
+                status,
             }
-        } else {
-            "-".dimmed().to_string()
-        };
+        })
+        .collect();
 
-        let status = if task.is_deleted() {
-            "DELETED".red()
-        } else if task.is_done() {
-            "done".blue()
-        } else {
-            "pending".green()
-        };
-
-        table.add_row(row![
-            id_short.cyan(),
-            task.title,
-            priority_colored,
-            task.size,
-            modified_str,
-            deadline_str,
-            status
-        ]);
-    }
-
-    table.printstd();
+    let table = Table::new(rows).with(Style::rounded()).to_string();
+    println!("{}", table);
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
 
