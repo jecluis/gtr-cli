@@ -30,3 +30,4 @@ pub mod search;
 pub mod show;
 pub mod undone;
 pub mod update;
+pub mod version;

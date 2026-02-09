@@ -44,6 +44,20 @@ impl Client {
         })
     }
 
+    /// Get server version information (no auth required).
+    pub async fn get_version(&self) -> Result<VersionInfo> {
+        let url = format!("{}/api/version", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+
+        if resp.status().is_success() {
+            Ok(resp.json::<VersionInfo>().await?)
+        } else {
+            let status = resp.status();
+            let text = resp.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
     /// List all projects.
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
         let url = format!("{}/api/projects", self.base_url);

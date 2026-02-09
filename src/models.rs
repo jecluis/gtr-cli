@@ -179,6 +179,16 @@ impl Task {
     }
 }
 
+// -- Version models --
+
+/// Version information from server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionInfo {
+    pub name: String,
+    pub version: String,
+    pub git_sha: String,
+}
+
 // -- Config models --
 
 /// Configuration response from server.

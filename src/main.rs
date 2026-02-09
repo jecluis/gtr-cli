@@ -223,6 +223,9 @@ enum Commands {
         #[arg(short, long)]
         token: String,
     },
+
+    /// Show version information (CLI and server)
+    Version,
 }
 
 #[derive(Subcommand, Debug)]
@@ -298,6 +301,12 @@ async fn main() -> Result<()> {
     // Handle init command separately (doesn't need existing config)
     if let Commands::Init { server, token } = cli.command {
         return gtr::commands::init::run(&server, &token);
+    }
+
+    // Handle version command (may need config for server version)
+    if let Commands::Version = cli.command {
+        let config = Config::load(cli.config.as_deref()).ok();
+        return gtr::commands::version::run(config.as_ref()).await;
     }
 
     // Load configuration
@@ -403,5 +412,6 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Init { .. } => unreachable!(),
+        Commands::Version => unreachable!(),
     }
 }
