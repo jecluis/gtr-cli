@@ -122,6 +122,7 @@ pub enum WorkState {
 /// Request to create a project.
 #[derive(Debug, Serialize)]
 pub struct CreateProjectRequest {
+    pub id: String,
     pub name: String,
     pub description: Option<String>,
 }

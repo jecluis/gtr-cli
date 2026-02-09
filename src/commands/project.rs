@@ -29,7 +29,19 @@ use crate::output;
 pub async fn create(config: &Config, name: &str, description: Option<String>) -> Result<()> {
     let client = Client::new(config)?;
 
+    // Generate slug-like ID from name
+    let id = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+
     let req = CreateProjectRequest {
+        id,
         name: name.to_string(),
         description,
     };
