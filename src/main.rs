@@ -185,7 +185,7 @@ enum Commands {
         query: String,
 
         /// Filter by project
-        #[arg(short, long)]
+        #[arg(short = 'P', long)]
         project: Option<String>,
 
         /// Maximum number of results

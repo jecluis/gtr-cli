@@ -56,7 +56,7 @@ pub async fn create(config: &Config, name: &str, description: Option<String>) ->
     }
     println!(
         "\nCreate tasks: {}",
-        format!("gtr new <title> -p {}", project.id).dimmed()
+        format!("gtr new <title> -P {}", project.id).dimmed()
     );
 
     Ok(())
