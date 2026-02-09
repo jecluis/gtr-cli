@@ -27,7 +27,8 @@ use crate::{output, utils};
 #[allow(clippy::too_many_arguments)]
 pub async fn tasks(
     config: &Config,
-    project: Option<String>,
+    project: Vec<String>,
+    all_projects: bool,
     priority: Option<String>,
     size: Option<String>,
     include_done: bool,
@@ -38,23 +39,44 @@ pub async fn tasks(
     reversed: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
-    let project_id = utils::resolve_project(&client, project).await?;
 
-    let mut tasks = client
-        .list_tasks(
-            &project_id,
-            priority.as_deref(),
-            size.as_deref(),
-            include_done,
-            include_deleted,
-            due_soon,
-            overdue,
-            limit,
-        )
-        .await?;
+    // Determine which projects to query
+    let project_ids = if all_projects {
+        // Get all projects
+        client
+            .list_projects()
+            .await?
+            .into_iter()
+            .map(|p| p.id)
+            .collect::<Vec<_>>()
+    } else if !project.is_empty() {
+        // Use specified project IDs
+        project
+    } else {
+        // Resolve single project interactively
+        vec![utils::resolve_project(&client, None).await?]
+    };
+
+    // Fetch tasks from all specified projects
+    let mut all_tasks = Vec::new();
+    for project_id in project_ids {
+        let tasks = client
+            .list_tasks(
+                &project_id,
+                priority.as_deref(),
+                size.as_deref(),
+                include_done,
+                include_deleted,
+                due_soon,
+                overdue,
+                limit,
+            )
+            .await?;
+        all_tasks.extend(tasks);
+    }
 
     // Sort and split tasks
-    let (doing_tasks, other_tasks) = split_by_work_state(&mut tasks);
+    let (doing_tasks, other_tasks) = split_by_work_state(&mut all_tasks);
 
     // Sort both groups by priority then deadline
     let doing_tasks = sort_tasks(doing_tasks);
