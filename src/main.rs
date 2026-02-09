@@ -69,6 +69,14 @@ enum Commands {
         #[arg(long)]
         all: bool,
 
+        /// Show only tasks due within 48 hours
+        #[arg(long)]
+        due_soon: bool,
+
+        /// Show only overdue tasks
+        #[arg(long)]
+        overdue: bool,
+
         /// Maximum number of results
         #[arg(short, long)]
         limit: Option<u32>,
@@ -243,6 +251,8 @@ async fn main() -> Result<()> {
             done,
             deleted,
             all,
+            due_soon,
+            overdue,
             limit,
         } => {
             let include_done = all || done;
@@ -254,6 +264,8 @@ async fn main() -> Result<()> {
                 size,
                 include_done,
                 include_deleted,
+                due_soon,
+                overdue,
                 limit,
             )
             .await

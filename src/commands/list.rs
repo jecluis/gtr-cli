@@ -23,6 +23,7 @@ use crate::output;
 use crate::{Error, Result};
 
 /// List tasks.
+#[allow(clippy::too_many_arguments)]
 pub async fn tasks(
     config: &Config,
     project: Option<String>,
@@ -30,6 +31,8 @@ pub async fn tasks(
     size: Option<String>,
     include_done: bool,
     include_deleted: bool,
+    due_soon: bool,
+    overdue: bool,
     limit: Option<u32>,
 ) -> Result<()> {
     let client = Client::new(config)?;
@@ -49,6 +52,8 @@ pub async fn tasks(
             size.as_deref(),
             include_done,
             include_deleted,
+            due_soon,
+            overdue,
             limit,
         )
         .await?;

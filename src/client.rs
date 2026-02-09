@@ -63,6 +63,7 @@ impl Client {
     }
 
     /// List tasks in a project.
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_tasks(
         &self,
         project_id: &str,
@@ -70,6 +71,8 @@ impl Client {
         size: Option<&str>,
         include_done: bool,
         include_deleted: bool,
+        due_soon: bool,
+        overdue: bool,
         limit: Option<u32>,
     ) -> Result<Vec<Task>> {
         let mut url = format!("{}/api/projects/{}/tasks", self.base_url, project_id);
@@ -86,6 +89,12 @@ impl Client {
         }
         if include_deleted {
             params.push("include_deleted=true".to_string());
+        }
+        if due_soon {
+            params.push("due_soon=true".to_string());
+        }
+        if overdue {
+            params.push("overdue=true".to_string());
         }
         if let Some(l) = limit {
             params.push(format!("limit={}", l));
