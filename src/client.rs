@@ -62,6 +62,12 @@ impl Client {
         self.post(&url, req).await
     }
 
+    /// Update a project.
+    pub async fn update_project(&self, id: &str, req: &UpdateProjectRequest) -> Result<Project> {
+        let url = format!("{}/api/projects/{}", self.base_url, id);
+        self.put(&url, req).await
+    }
+
     /// List tasks in a project.
     #[allow(clippy::too_many_arguments)]
     pub async fn list_tasks(

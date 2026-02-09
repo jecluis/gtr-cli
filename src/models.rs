@@ -51,6 +51,8 @@ pub struct Task {
     pub custom: serde_json::Value,
     #[serde(default)]
     pub log: Vec<LogEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_work_state: Option<String>,
 }
 
 /// A single log entry recording a state change.
@@ -121,6 +123,15 @@ pub enum WorkState {
 pub struct CreateProjectRequest {
     pub id: String,
     pub name: String,
+    pub description: Option<String>,
+}
+
+/// Request to update a project.
+#[derive(Debug, Serialize)]
+pub struct UpdateProjectRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 
