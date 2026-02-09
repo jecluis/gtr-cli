@@ -227,6 +227,24 @@ enum ProjectCommands {
         /// Project description
         #[arg(short, long)]
         description: Option<String>,
+
+        /// Set as default project
+        #[arg(long)]
+        set_default: bool,
+    },
+
+    /// Update a project
+    Update {
+        /// Project ID
+        project_id: String,
+
+        /// New project description
+        #[arg(short, long)]
+        description: Option<String>,
+
+        /// Set as default project
+        #[arg(long)]
+        set_default: bool,
     },
 
     /// List all projects
@@ -357,8 +375,17 @@ async fn main() -> Result<()> {
             limit,
         } => gtr::commands::search::run(&config, &query, project, limit).await,
         Commands::Project { command } => match command {
-            ProjectCommands::Create { name, description } => {
-                gtr::commands::project::create(&config, &name, description).await
+            ProjectCommands::Create {
+                name,
+                description,
+                set_default,
+            } => gtr::commands::project::create(&config, &name, description, set_default).await,
+            ProjectCommands::Update {
+                project_id,
+                description,
+                set_default,
+            } => {
+                gtr::commands::project::update(&config, &project_id, description, set_default).await
             }
             ProjectCommands::List => gtr::commands::project::list(&config).await,
         },

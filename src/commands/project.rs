@@ -22,11 +22,16 @@ use colored::Colorize;
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::models::CreateProjectRequest;
+use crate::models::{CreateProjectRequest, UpdateProjectRequest};
 use crate::output;
 
 /// Create a new project.
-pub async fn create(config: &Config, name: &str, description: Option<String>) -> Result<()> {
+pub async fn create(
+    config: &Config,
+    name: &str,
+    description: Option<String>,
+    set_default: bool,
+) -> Result<()> {
     let client = Client::new(config)?;
 
     // Generate slug-like ID from name
@@ -48,6 +53,12 @@ pub async fn create(config: &Config, name: &str, description: Option<String>) ->
 
     let project = client.create_project(&req).await?;
 
+    if set_default {
+        let mut config_mut = config.clone();
+        config_mut.set_default_project(project.id.clone())?;
+        println!("{}", "✓ Set as default project".green());
+    }
+
     println!("{}", "✓ Project created successfully!".green().bold());
     println!("  ID:          {}", project.id.cyan());
     println!("  Name:        {}", project.name);
@@ -58,6 +69,38 @@ pub async fn create(config: &Config, name: &str, description: Option<String>) ->
         "\nCreate tasks: {}",
         format!("gtr new <title> -P {}", project.id).dimmed()
     );
+
+    Ok(())
+}
+
+/// Update a project.
+pub async fn update(
+    config: &Config,
+    project_id: &str,
+    description: Option<String>,
+    set_default: bool,
+) -> Result<()> {
+    let client = Client::new(config)?;
+
+    let req = UpdateProjectRequest {
+        name: None,
+        description,
+    };
+
+    let project = client.update_project(project_id, &req).await?;
+
+    if set_default {
+        let mut config_mut = config.clone();
+        config_mut.set_default_project(project.id.clone())?;
+        println!("{}", "✓ Set as default project".green());
+    }
+
+    println!("{}", "✓ Project updated successfully!".green().bold());
+    println!("  ID:          {}", project.id.cyan());
+    println!("  Name:        {}", project.name);
+    if let Some(desc) = &project.description {
+        println!("  Description: {}", desc);
+    }
 
     Ok(())
 }
