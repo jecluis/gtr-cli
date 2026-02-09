@@ -19,7 +19,7 @@
 
 use chrono::Local;
 use colored::Colorize;
-use tabled::settings::Style;
+use tabled::settings::{Alignment, Modify, Style, object::Columns};
 use tabled::{Table, Tabled};
 use termimad::MadSkin;
 
@@ -52,7 +52,10 @@ pub fn print_projects(projects: &[Project]) {
         })
         .collect();
 
-    let table = Table::new(rows).with(Style::rounded()).to_string();
+    let table = Table::new(rows)
+        .with(Style::rounded())
+        .with(Modify::new(Columns::new(0..1)).with(Alignment::center())) // ID
+        .to_string();
     println!("{}", table);
     println!("\n{} {}", "Total:".bold(), projects.len());
 }
@@ -109,10 +112,10 @@ pub fn print_tasks(tasks: &[Task]) {
                         formatted
                     }
                 } else {
-                    "-".dimmed().to_string()
+                    "-".to_string()
                 }
             } else {
-                "-".dimmed().to_string()
+                "-".to_string()
             };
 
             let status = if task.is_deleted() {
@@ -135,7 +138,11 @@ pub fn print_tasks(tasks: &[Task]) {
         })
         .collect();
 
-    let table = Table::new(rows).with(Style::rounded()).to_string();
+    let table = Table::new(rows)
+        .with(Style::rounded())
+        .with(Modify::new(Columns::new(0..1)).with(Alignment::center())) // ID
+        .with(Modify::new(Columns::new(2..7)).with(Alignment::center())) // Priority, Size, Modified, Deadline, Status
+        .to_string();
     println!("{}", table);
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
