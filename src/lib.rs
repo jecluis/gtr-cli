@@ -17,6 +17,7 @@
 
 //! Getting Things Rusty CLI client library.
 
+pub mod cache;
 pub mod client;
 pub mod commands;
 pub mod config;
