@@ -59,14 +59,11 @@ pub async fn run(
     let task = client.update_task(task_id, &req).await?;
 
     println!("{}", "✓ Task updated successfully!".green().bold());
-    println!("  ID:       {}", task.metadata.id.to_string().cyan());
+    println!("  ID:       {}", task.id.cyan());
     println!("  Title:    {}", task.title);
-    println!("  Priority: {}", task.metadata.priority);
-    println!("  Size:     {}", task.metadata.size);
-    println!(
-        "\nView with: {}",
-        format!("gtr show {}", task.metadata.id).dimmed()
-    );
+    println!("  Priority: {}", task.priority);
+    println!("  Size:     {}", task.size);
+    println!("\nView with: {}", format!("gtr show {}", task.id).dimmed());
 
     Ok(())
 }

@@ -19,7 +19,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// Project representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,31 +28,29 @@ pub struct Project {
     pub description: Option<String>,
 }
 
-/// Task representation.
+/// Task representation (matches server's TaskResponse).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
+    pub id: String,
     pub title: String,
     pub body: String,
-    pub metadata: TaskMetadata,
-}
-
-/// Task metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskMetadata {
-    pub id: Uuid,
     pub priority: String,
     pub size: String,
-    pub created: DateTime<Utc>,
-    pub modified: DateTime<Utc>,
-    pub done: Option<DateTime<Utc>>,
-    pub deleted: Option<DateTime<Utc>>,
-    pub deadline: Option<DateTime<Utc>>,
+    pub created: String,
+    pub modified: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub done: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<String>,
     pub version: u64,
     #[serde(default)]
-    pub log: Vec<LogEntry>,
-    pub current_work_state: Option<WorkState>,
-    pub subtasks: Vec<Uuid>,
+    pub subtasks: Vec<String>,
+    #[serde(default)]
     pub custom: serde_json::Value,
+    #[serde(default)]
+    pub log: Vec<LogEntry>,
 }
 
 /// A single log entry recording a state change.
@@ -156,17 +153,17 @@ pub struct UpdateTaskRequest {
 impl Task {
     /// Check if task is pending (not done and not deleted).
     pub fn is_pending(&self) -> bool {
-        self.metadata.done.is_none() && self.metadata.deleted.is_none()
+        self.done.is_none() && self.deleted.is_none()
     }
 
     /// Check if task is done (completed successfully).
     pub fn is_done(&self) -> bool {
-        self.metadata.done.is_some()
+        self.done.is_some()
     }
 
     /// Check if task is deleted (tombstone).
     pub fn is_deleted(&self) -> bool {
-        self.metadata.deleted.is_some()
+        self.deleted.is_some()
     }
 }
 

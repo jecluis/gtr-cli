@@ -30,7 +30,7 @@ pub async fn run(config: &Config, task_id: &str, work_only: bool, state_only: bo
     let client = Client::new(config)?;
     let task = client.get_task(task_id).await?;
 
-    if task.metadata.log.is_empty() {
+    if task.log.is_empty() {
         println!("{}", "No log entries found".yellow());
         return Ok(());
     }
@@ -41,7 +41,6 @@ pub async fn run(config: &Config, task_id: &str, work_only: bool, state_only: bo
 
     // Filter entries based on flags
     let filtered_entries: Vec<_> = task
-        .metadata
         .log
         .iter()
         .filter(|entry| {

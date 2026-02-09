@@ -30,7 +30,7 @@ pub async fn run(config: &Config, task_id: &str) -> Result<()> {
     let task = client.restore_task(task_id).await?;
 
     println!("{}", "✓ Task restored from deleted!".green().bold());
-    println!("  ID:    {}", task.metadata.id.to_string().cyan());
+    println!("  ID:    {}", task.id.to_string().cyan());
     println!("  Title: {}", task.title);
 
     Ok(())

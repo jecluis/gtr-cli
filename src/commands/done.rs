@@ -30,7 +30,7 @@ pub async fn run(config: &Config, task_id: &str) -> Result<()> {
     let task = client.mark_done(task_id).await?;
 
     println!("{}", "✓ Task marked as done!".green().bold());
-    println!("  ID:    {}", task.metadata.id.to_string().cyan());
+    println!("  ID:    {}", task.id.to_string().cyan());
     println!("  Title: {}", task.title);
 
     Ok(())
