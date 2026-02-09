@@ -106,9 +106,9 @@ enum Commands {
         #[arg(num_args = 1.., required = true)]
         title: Vec<String>,
 
-        /// Task body/description
+        /// Edit task body in external editor
         #[arg(short, long)]
-        body: Option<String>,
+        body: bool,
 
         /// Priority (now or later)
         #[arg(short, long, default_value = "later", value_parser = ["now", "later"])]
@@ -132,9 +132,9 @@ enum Commands {
         #[arg(short, long)]
         title: Option<String>,
 
-        /// New body
+        /// Edit task body in external editor
         #[arg(short, long)]
-        body: Option<String>,
+        body: bool,
 
         /// New priority (now or later)
         #[arg(short, long, value_parser = ["now", "later"])]

@@ -30,7 +30,7 @@ pub async fn run(
     config: &Config,
     project: Option<String>,
     title: &str,
-    body: Option<String>,
+    edit_body: bool,
     priority: &str,
     size: &str,
     deadline: Option<String>,
@@ -38,9 +38,22 @@ pub async fn run(
     let client = Client::new(config)?;
     let project_id = utils::resolve_project(&client, project).await?;
 
+    let body = if edit_body {
+        match crate::editor::edit_text(config, "") {
+            Ok(content) => content,
+            Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
+                println!("{}", "✗ Operation cancelled".yellow());
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
+    } else {
+        String::new()
+    };
+
     let req = CreateTaskRequest {
         title: title.to_string(),
-        body: body.unwrap_or_default(),
+        body,
         priority: priority.to_string(),
         size: size.to_string(),
         deadline,

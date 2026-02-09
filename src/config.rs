@@ -33,6 +33,10 @@ pub struct Config {
     /// Authentication token
     pub auth_token: String,
 
+    /// Editor command (with optional args) for editing task bodies
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editor: Option<String>,
+
     /// Cache directory (for Phase 1.5)
     #[serde(skip)]
     pub cache_dir: PathBuf,
@@ -87,6 +91,7 @@ impl Config {
         Ok(Config {
             server_url,
             auth_token,
+            editor: None,
             cache_dir: Self::default_cache_dir()?,
             config_path: Self::default_config_path()?,
         })

@@ -29,7 +29,7 @@ pub async fn run(
     config: &Config,
     task_id: &str,
     title: Option<String>,
-    body: Option<String>,
+    edit_body: bool,
     priority: Option<String>,
     size: Option<String>,
     deadline: Option<String>,
@@ -38,19 +38,28 @@ pub async fn run(
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
     // Check if at least one field is provided
-    if title.is_none()
-        && body.is_none()
-        && priority.is_none()
-        && size.is_none()
-        && deadline.is_none()
-    {
+    if title.is_none() && !edit_body && priority.is_none() && size.is_none() && deadline.is_none() {
         return Err(Error::InvalidInput(
             "at least one field must be provided to update".to_string(),
         ));
     }
 
-    // Fetch the task before updating to show changes
+    // Fetch the task before updating to show changes and get existing body
     let old_task = client.get_task(&full_id).await?;
+
+    // Edit body if requested
+    let body = if edit_body {
+        match crate::editor::edit_text(config, &old_task.body) {
+            Ok(content) => Some(content),
+            Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
+                println!("{}", "✗ Operation cancelled".yellow());
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
+    } else {
+        None
+    };
 
     let req = UpdateTaskRequest {
         title: title.clone(),
@@ -100,14 +109,8 @@ pub async fn run(
     }
 
     if deadline.is_some() {
-        let old_deadline_str = old_task
-            .deadline
-            .as_deref()
-            .unwrap_or("none");
-        let new_deadline_str = task
-            .deadline
-            .as_deref()
-            .unwrap_or("none");
+        let old_deadline_str = old_task.deadline.as_deref().unwrap_or("none");
+        let new_deadline_str = task.deadline.as_deref().unwrap_or("none");
 
         if old_deadline_str != new_deadline_str {
             println!(
