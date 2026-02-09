@@ -57,6 +57,18 @@ enum Commands {
         #[arg(long)]
         size: Option<String>,
 
+        /// Include done tasks
+        #[arg(long)]
+        done: bool,
+
+        /// Include deleted tasks
+        #[arg(long)]
+        deleted: bool,
+
+        /// Include all tasks (done and deleted)
+        #[arg(long)]
+        all: bool,
+
         /// Maximum number of results
         #[arg(short, long)]
         limit: Option<u32>,
@@ -113,8 +125,26 @@ enum Commands {
         size: Option<String>,
     },
 
-    /// Delete a task
+    /// Mark a task as done
+    Done {
+        /// Task ID
+        task_id: String,
+    },
+
+    /// Unmark a task as done (restore to pending)
+    Undone {
+        /// Task ID
+        task_id: String,
+    },
+
+    /// Delete a task (tombstone)
     Delete {
+        /// Task ID
+        task_id: String,
+    },
+
+    /// Restore a deleted task
+    Restore {
         /// Task ID
         task_id: String,
     },
@@ -188,8 +218,24 @@ async fn main() -> Result<()> {
             project,
             priority,
             size,
+            done,
+            deleted,
+            all,
             limit,
-        } => gtr::commands::list::tasks(&config, project, priority, size, limit).await,
+        } => {
+            let include_done = all || done;
+            let include_deleted = all || deleted;
+            gtr::commands::list::tasks(
+                &config,
+                project,
+                priority,
+                size,
+                include_done,
+                include_deleted,
+                limit,
+            )
+            .await
+        }
         Commands::Show { task_id } => gtr::commands::show::run(&config, &task_id).await,
         Commands::New {
             project,
@@ -208,7 +254,10 @@ async fn main() -> Result<()> {
             priority,
             size,
         } => gtr::commands::update::run(&config, &task_id, title, body, priority, size).await,
+        Commands::Done { task_id } => gtr::commands::done::run(&config, &task_id).await,
+        Commands::Undone { task_id } => gtr::commands::undone::run(&config, &task_id).await,
         Commands::Delete { task_id } => gtr::commands::delete::run(&config, &task_id).await,
+        Commands::Restore { task_id } => gtr::commands::restore::run(&config, &task_id).await,
         Commands::Search {
             query,
             project,

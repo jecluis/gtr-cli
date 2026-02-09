@@ -19,9 +19,12 @@
 
 pub mod create;
 pub mod delete;
+pub mod done;
 pub mod init;
 pub mod list;
 pub mod project;
+pub mod restore;
 pub mod search;
 pub mod show;
+pub mod undone;
 pub mod update;

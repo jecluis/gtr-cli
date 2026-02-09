@@ -45,6 +45,7 @@ pub struct TaskMetadata {
     pub size: String,
     pub created: DateTime<Utc>,
     pub modified: DateTime<Utc>,
+    pub done: Option<DateTime<Utc>>,
     pub deleted: Option<DateTime<Utc>>,
     pub version: u64,
     pub subtasks: Vec<Uuid>,
@@ -81,7 +82,17 @@ pub struct UpdateTaskRequest {
 }
 
 impl Task {
-    /// Check if task is deleted.
+    /// Check if task is pending (not done and not deleted).
+    pub fn is_pending(&self) -> bool {
+        self.metadata.done.is_none() && self.metadata.deleted.is_none()
+    }
+
+    /// Check if task is done (completed successfully).
+    pub fn is_done(&self) -> bool {
+        self.metadata.done.is_some()
+    }
+
+    /// Check if task is deleted (tombstone).
     pub fn is_deleted(&self) -> bool {
         self.metadata.deleted.is_some()
     }

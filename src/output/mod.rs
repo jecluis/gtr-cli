@@ -74,8 +74,10 @@ pub fn print_tasks(tasks: &[Task]) {
 
         let status = if task.is_deleted() {
             "DELETED".red()
+        } else if task.is_done() {
+            "done".blue()
         } else {
-            "active".green()
+            "pending".green()
         };
 
         table.add_row(row![
@@ -116,6 +118,14 @@ pub fn print_task_details(task: &Task) {
     let modified = task.metadata.modified.with_timezone(&Local);
     println!("  Created:  {}", created.format("%Y-%m-%d %H:%M:%S"));
     println!("  Modified: {}", modified.format("%Y-%m-%d %H:%M:%S"));
+
+    if let Some(done) = task.metadata.done {
+        let done_time = done.with_timezone(&Local);
+        println!(
+            "  {}",
+            format!("Done:     {}", done_time.format("%Y-%m-%d %H:%M:%S")).blue()
+        );
+    }
 
     if let Some(deleted) = task.metadata.deleted {
         let deleted_time = deleted.with_timezone(&Local);

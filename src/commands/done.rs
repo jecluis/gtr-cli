@@ -15,44 +15,23 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! List command implementation.
+//! Done command implementation.
 
+use colored::Colorize;
+
+use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::output;
-use crate::{Error, Result};
 
-/// List tasks.
-pub async fn tasks(
-    config: &Config,
-    project: Option<String>,
-    priority: Option<String>,
-    size: Option<String>,
-    include_done: bool,
-    include_deleted: bool,
-    limit: Option<u32>,
-) -> Result<()> {
+/// Mark a task as done.
+pub async fn run(config: &Config, task_id: &str) -> Result<()> {
     let client = Client::new(config)?;
 
-    // Project ID is required for listing tasks
-    let project_id = project.ok_or_else(|| {
-        Error::InvalidInput(
-            "project ID required. Use --project <id> or 'gtr project list' for all projects"
-                .to_string(),
-        )
-    })?;
+    let task = client.mark_done(task_id).await?;
 
-    let tasks = client
-        .list_tasks(
-            &project_id,
-            priority.as_deref(),
-            size.as_deref(),
-            include_done,
-            include_deleted,
-            limit,
-        )
-        .await?;
+    println!("{}", "✓ Task marked as done!".green().bold());
+    println!("  ID:    {}", task.metadata.id.to_string().cyan());
+    println!("  Title: {}", task.title);
 
-    output::print_tasks(&tasks);
     Ok(())
 }

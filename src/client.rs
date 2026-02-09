@@ -68,6 +68,8 @@ impl Client {
         project_id: &str,
         priority: Option<&str>,
         size: Option<&str>,
+        include_done: bool,
+        include_deleted: bool,
         limit: Option<u32>,
     ) -> Result<Vec<Task>> {
         let mut url = format!("{}/api/projects/{}/tasks", self.base_url, project_id);
@@ -78,6 +80,12 @@ impl Client {
         }
         if let Some(s) = size {
             params.push(format!("size={}", s));
+        }
+        if include_done {
+            params.push("include_done=true".to_string());
+        }
+        if include_deleted {
+            params.push("include_deleted=true".to_string());
         }
         if let Some(l) = limit {
             params.push(format!("limit={}", l));
@@ -109,10 +117,28 @@ impl Client {
         self.put(&url, req).await
     }
 
-    /// Delete a task.
+    /// Mark a task as done.
+    pub async fn mark_done(&self, task_id: &str) -> Result<Task> {
+        let url = format!("{}/api/tasks/{}/done", self.base_url, task_id);
+        self.post(&url, &()).await
+    }
+
+    /// Unmark a task as done (restore to pending).
+    pub async fn mark_undone(&self, task_id: &str) -> Result<Task> {
+        let url = format!("{}/api/tasks/{}/done", self.base_url, task_id);
+        self.delete_with_response(&url).await
+    }
+
+    /// Delete a task (tombstone).
     pub async fn delete_task(&self, task_id: &str) -> Result<()> {
         let url = format!("{}/api/tasks/{}", self.base_url, task_id);
         self.delete(&url).await
+    }
+
+    /// Restore a deleted task.
+    pub async fn restore_task(&self, task_id: &str) -> Result<Task> {
+        let url = format!("{}/api/tasks/{}/restore", self.base_url, task_id);
+        self.post(&url, &()).await
     }
 
     /// Search tasks.
@@ -180,7 +206,7 @@ impl Client {
         self.handle_response(resp).await
     }
 
-    /// Generic DELETE request.
+    /// Generic DELETE request (no response body).
     async fn delete(&self, url: &str) -> Result<()> {
         let resp = self
             .http
@@ -196,6 +222,18 @@ impl Client {
             let text = resp.text().await?;
             Err(self.error_from_response(status, &text))
         }
+    }
+
+    /// Generic DELETE request with response body.
+    async fn delete_with_response<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T> {
+        let resp = self
+            .http
+            .delete(url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        self.handle_response(resp).await
     }
 
     /// Handle HTTP response and deserialize or return error.
