@@ -101,6 +101,10 @@ enum Commands {
         /// Size (XS, S, M, L, XL)
         #[arg(short, long, default_value = "M")]
         size: String,
+
+        /// Deadline (e.g., "tomorrow", "+3d", "2026-12-25")
+        #[arg(short, long)]
+        deadline: Option<String>,
     },
 
     /// Update an existing task
@@ -123,6 +127,10 @@ enum Commands {
         /// New size
         #[arg(long)]
         size: Option<String>,
+
+        /// New deadline (use "none" to clear)
+        #[arg(long)]
+        deadline: Option<String>,
     },
 
     /// Mark a task as done
@@ -257,9 +265,13 @@ async fn main() -> Result<()> {
             body,
             priority,
             size,
+            deadline,
         } => {
             let title_str = title.join(" ");
-            gtr::commands::create::run(&config, &project, &title_str, body, &priority, &size).await
+            gtr::commands::create::run(
+                &config, &project, &title_str, body, &priority, &size, deadline,
+            )
+            .await
         }
         Commands::Update {
             task_id,
@@ -267,7 +279,11 @@ async fn main() -> Result<()> {
             body,
             priority,
             size,
-        } => gtr::commands::update::run(&config, &task_id, title, body, priority, size).await,
+            deadline,
+        } => {
+            gtr::commands::update::run(&config, &task_id, title, body, priority, size, deadline)
+                .await
+        }
         Commands::Done { task_id } => gtr::commands::done::run(&config, &task_id).await,
         Commands::Undone { task_id } => gtr::commands::undone::run(&config, &task_id).await,
         Commands::Delete { task_id } => gtr::commands::delete::run(&config, &task_id).await,

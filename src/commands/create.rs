@@ -32,6 +32,7 @@ pub async fn run(
     body: Option<String>,
     priority: &str,
     size: &str,
+    deadline: Option<String>,
 ) -> Result<()> {
     let client = Client::new(config)?;
 
@@ -40,6 +41,7 @@ pub async fn run(
         body: body.unwrap_or_default(),
         priority: priority.to_string(),
         size: size.to_string(),
+        deadline,
     };
 
     let task = client.create_task(project, &req).await?;

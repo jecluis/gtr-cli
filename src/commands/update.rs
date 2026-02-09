@@ -32,11 +32,17 @@ pub async fn run(
     body: Option<String>,
     priority: Option<String>,
     size: Option<String>,
+    deadline: Option<String>,
 ) -> Result<()> {
     let client = Client::new(config)?;
 
     // Check if at least one field is provided
-    if title.is_none() && body.is_none() && priority.is_none() && size.is_none() {
+    if title.is_none()
+        && body.is_none()
+        && priority.is_none()
+        && size.is_none()
+        && deadline.is_none()
+    {
         return Err(Error::InvalidInput(
             "at least one field must be provided to update".to_string(),
         ));
@@ -47,6 +53,7 @@ pub async fn run(
         body,
         priority,
         size,
+        deadline,
     };
 
     let task = client.update_task(task_id, &req).await?;

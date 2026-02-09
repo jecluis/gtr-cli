@@ -47,6 +47,7 @@ pub struct TaskMetadata {
     pub modified: DateTime<Utc>,
     pub done: Option<DateTime<Utc>>,
     pub deleted: Option<DateTime<Utc>>,
+    pub deadline: Option<DateTime<Utc>>,
     pub version: u64,
     #[serde(default)]
     pub log: Vec<LogEntry>,
@@ -132,6 +133,8 @@ pub struct CreateTaskRequest {
     pub body: String,
     pub priority: String,
     pub size: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<String>,
 }
 
 /// Request to update a task.
@@ -145,6 +148,8 @@ pub struct UpdateTaskRequest {
     pub priority: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<String>,
 }
 
 impl Task {
