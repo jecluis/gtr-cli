@@ -17,6 +17,8 @@
 
 //! Pretty output formatting for tasks and projects.
 
+use std::collections::HashSet;
+
 use chrono::Local;
 use colored::Colorize;
 use tabled::settings::{Alignment, Modify, Style, object::Columns};
@@ -60,13 +62,34 @@ pub fn print_projects(projects: &[Project]) {
     println!("\n{} {}", "Total:".bold(), projects.len());
 }
 
-/// Row type for task table display.
+/// Row type for task table display (without project column).
 #[derive(Tabled)]
 struct TaskRow {
     #[tabled(rename = "ID")]
     id: String,
     #[tabled(rename = "Title")]
     title: String,
+    #[tabled(rename = "Priority")]
+    priority: String,
+    #[tabled(rename = "Size")]
+    size: String,
+    #[tabled(rename = "Modified")]
+    modified: String,
+    #[tabled(rename = "Deadline")]
+    deadline: String,
+    #[tabled(rename = "Status")]
+    status: String,
+}
+
+/// Row type for task table display (with project column).
+#[derive(Tabled)]
+struct TaskRowWithProject {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Title")]
+    title: String,
+    #[tabled(rename = "Project")]
+    project: String,
     #[tabled(rename = "Priority")]
     priority: String,
     #[tabled(rename = "Size")]
@@ -114,6 +137,19 @@ pub fn print_tasks(tasks: &[Task]) {
 
 /// Internal function to print task table.
 fn print_task_table(tasks: &[Task]) {
+    // Check if tasks are from multiple projects
+    let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
+    let show_project = unique_projects.len() > 1;
+
+    if show_project {
+        print_task_table_with_project(tasks, unique_projects);
+    } else {
+        print_task_table_simple(tasks);
+    }
+}
+
+/// Print task table without project column.
+fn print_task_table_simple(tasks: &[Task]) {
     let rows: Vec<TaskRow> = tasks
         .iter()
         .map(|task| {
@@ -166,11 +202,96 @@ fn print_task_table(tasks: &[Task]) {
         })
         .collect();
 
-    let table = Table::new(rows)
+    let mut binding = Table::new(rows);
+    let table = binding
         .with(Style::rounded())
         .with(Modify::new(Columns::new(0..1)).with(Alignment::center())) // ID
-        .with(Modify::new(Columns::new(2..7)).with(Alignment::center())) // Priority, Size, Modified, Deadline, Status
-        .to_string();
+        .with(Modify::new(Columns::new(2..7)).with(Alignment::center())); // Priority, Size, Modified, Deadline, Status
+
+    println!("{}", table);
+}
+
+/// Print task table with project column.
+fn print_task_table_with_project(tasks: &[Task], unique_projects: HashSet<&str>) {
+    // Generate colors for each project (cycle through a set of colors)
+    let colors = [
+        colored::Color::Cyan,
+        colored::Color::Green,
+        colored::Color::Yellow,
+        colored::Color::Magenta,
+        colored::Color::Blue,
+        colored::Color::BrightCyan,
+        colored::Color::BrightGreen,
+        colored::Color::BrightYellow,
+    ];
+    let mut project_colors = std::collections::HashMap::new();
+    for (idx, project_id) in unique_projects.iter().enumerate() {
+        project_colors.insert(*project_id, colors[idx % colors.len()]);
+    }
+
+    let rows: Vec<TaskRowWithProject> = tasks
+        .iter()
+        .map(|task| {
+            let id_short = &task.id[..8];
+            let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
+                .unwrap()
+                .with_timezone(&Local);
+            let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
+
+            let priority_colored = match task.priority.as_str() {
+                "now" => task.priority.red().to_string(),
+                _ => task.priority.to_string(),
+            };
+
+            let deadline_str = if let Some(ref deadline_str) = task.deadline {
+                if let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str) {
+                    let deadline_time = deadline.with_timezone(&Local);
+                    let now = chrono::Utc::now();
+                    let formatted = deadline_time.format("%Y-%m-%d").to_string();
+
+                    if deadline < now {
+                        formatted.red().to_string()
+                    } else {
+                        formatted
+                    }
+                } else {
+                    "-".to_string()
+                }
+            } else {
+                "-".to_string()
+            };
+
+            let status = if task.is_deleted() {
+                "DELETED".red().to_string()
+            } else if task.is_done() {
+                "done".blue().to_string()
+            } else {
+                "pending".green().to_string()
+            };
+
+            let color = project_colors.get(task.project_id.as_str()).unwrap();
+            let project = task.project_id.color(*color).to_string();
+
+            TaskRowWithProject {
+                id: id_short.cyan().to_string(),
+                title: task.title.clone(),
+                project,
+                priority: priority_colored,
+                size: task.size.clone(),
+                modified: modified_str,
+                deadline: deadline_str,
+                status,
+            }
+        })
+        .collect();
+
+    let mut binding = Table::new(rows);
+    let table = binding
+        .with(Style::rounded())
+        .with(Modify::new(Columns::new(0..1)).with(Alignment::center())) // ID
+        .with(Modify::new(Columns::new(2..3)).with(Alignment::center())) // Project
+        .with(Modify::new(Columns::new(3..8)).with(Alignment::center())); // Priority, Size, Modified, Deadline, Status
+
     println!("{}", table);
 }
 

@@ -32,6 +32,7 @@ pub struct Project {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
+    pub project_id: String,
     pub title: String,
     pub body: String,
     pub priority: String,
