@@ -226,6 +226,12 @@ enum Commands {
 
     /// Show version information (CLI and server)
     Version,
+
+    /// Synchronize with server
+    Sync {
+        #[command(subcommand)]
+        command: SyncCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -252,6 +258,15 @@ enum ProjectCommands {
 
     /// List all projects
     List,
+}
+
+#[derive(Subcommand, Debug)]
+enum SyncCommands {
+    /// Manually sync now (push and pull)
+    Now,
+
+    /// Show sync status
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -410,6 +425,10 @@ async fn main() -> Result<()> {
             ConfigCommands::Reset { project } => {
                 gtr::commands::config::reset(&config, project).await
             }
+        },
+        Commands::Sync { command } => match command {
+            SyncCommands::Now => gtr::commands::sync::now(&config).await,
+            SyncCommands::Status => gtr::commands::sync::status(&config).await,
         },
         Commands::Init { .. } => unreachable!(),
         Commands::Version => unreachable!(),

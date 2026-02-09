@@ -28,6 +28,7 @@ pub mod project;
 pub mod restore;
 pub mod search;
 pub mod show;
+pub mod sync;
 pub mod undone;
 pub mod update;
 pub mod version;

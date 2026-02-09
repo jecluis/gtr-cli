@@ -19,11 +19,11 @@
 
 use std::time::Duration;
 
+use crate::Result;
 use crate::cache::TaskCache;
 use crate::client::Client;
 use crate::config::Config;
 use crate::storage::TaskStorage;
-use crate::Result;
 
 /// Sync coordinator handling local-remote synchronization.
 pub struct SyncManager {
