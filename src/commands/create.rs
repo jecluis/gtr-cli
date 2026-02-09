@@ -23,11 +23,12 @@ use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::models::CreateTaskRequest;
+use crate::utils;
 
 /// Create a new task.
 pub async fn run(
     config: &Config,
-    project: &str,
+    project: Option<String>,
     title: &str,
     body: Option<String>,
     priority: &str,
@@ -35,6 +36,8 @@ pub async fn run(
     deadline: Option<String>,
 ) -> Result<()> {
     let client = Client::new(config)?;
+    let mut config_mut = config.clone();
+    let project_id = utils::resolve_project(&client, &mut config_mut, project).await?;
 
     let req = CreateTaskRequest {
         title: title.to_string(),
@@ -44,7 +47,7 @@ pub async fn run(
         deadline,
     };
 
-    let task = client.create_task(project, &req).await?;
+    let task = client.create_task(&project_id, &req).await?;
 
     println!("{}", "✓ Task created successfully!".green().bold());
     println!("  ID:       {}", task.id.cyan());

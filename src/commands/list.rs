@@ -17,11 +17,11 @@
 
 //! List command implementation.
 
+use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::models::Task;
-use crate::output;
-use crate::{Error, Result};
+use crate::{output, utils};
 
 /// List tasks.
 #[allow(clippy::too_many_arguments)]
@@ -38,14 +38,8 @@ pub async fn tasks(
     reversed: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
-
-    // Project ID is required for listing tasks
-    let project_id = project.ok_or_else(|| {
-        Error::InvalidInput(
-            "project ID required. Use --project <id> or 'gtr project list' for all projects"
-                .to_string(),
-        )
-    })?;
+    let mut config_mut = config.clone();
+    let project_id = utils::resolve_project(&client, &mut config_mut, project).await?;
 
     let mut tasks = client
         .list_tasks(

@@ -94,9 +94,9 @@ enum Commands {
 
     /// Create a new task
     New {
-        /// Project ID
+        /// Project ID (optional if default set)
         #[arg(short = 'P', long)]
-        project: String,
+        project: Option<String>,
 
         /// Task title (all remaining arguments)
         #[arg(num_args = 1.., required = true)]
@@ -351,7 +351,7 @@ async fn main() -> Result<()> {
         } => {
             let title_str = title.join(" ");
             gtr::commands::create::run(
-                &config, &project, &title_str, body, &priority, &size, deadline,
+                &config, project, &title_str, body, &priority, &size, deadline,
             )
             .await
         }

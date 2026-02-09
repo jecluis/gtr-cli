@@ -17,7 +17,83 @@
 
 //! Utility functions for the CLI.
 
-use crate::{Client, Error, Result};
+use colored::Colorize;
+use dialoguer::Select;
+
+use crate::client::Client;
+use crate::config::Config;
+use crate::{Error, Result};
+
+/// Resolve project ID: use provided, or auto-select if 1, or use default, or prompt.
+pub async fn resolve_project(
+    client: &Client,
+    config: &mut Config,
+    provided: Option<String>,
+) -> Result<String> {
+    // If project explicitly provided, use it
+    if let Some(project_id) = provided {
+        return Ok(project_id);
+    }
+
+    // Get all projects
+    let projects = client.list_projects().await?;
+
+    if projects.is_empty() {
+        return Err(Error::InvalidInput(
+            "No projects found. Create one with 'gtr project create <name>'".to_string(),
+        ));
+    }
+
+    // If only one project, use it automatically
+    if projects.len() == 1 {
+        return Ok(projects[0].id.clone());
+    }
+
+    // Multiple projects - check for default
+    if let Some(ref default_id) = config.default_project {
+        // Verify default project still exists
+        if projects.iter().any(|p| &p.id == default_id) {
+            return Ok(default_id.clone());
+        }
+    }
+
+    // No default or default doesn't exist - prompt user
+    println!("{}", "Multiple projects found. Please select one:".yellow());
+
+    let items: Vec<String> = projects
+        .iter()
+        .map(|p| {
+            if let Some(desc) = &p.description {
+                format!("{} - {}", p.name.cyan(), desc.dimmed())
+            } else {
+                p.name.cyan().to_string()
+            }
+        })
+        .collect();
+
+    let selection = Select::new()
+        .with_prompt("Select project")
+        .items(&items)
+        .default(0)
+        .interact()
+        .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
+
+    let selected_project = &projects[selection];
+
+    // Ask if they want to set as default
+    println!("\n{}", "Set this as default project? (y/N): ".dimmed());
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| Error::InvalidInput(format!("Failed to read input: {}", e)))?;
+
+    if input.trim().to_lowercase() == "y" {
+        config.set_default_project(selected_project.id.clone())?;
+        println!("{}", "✓ Set as default project".green());
+    }
+
+    Ok(selected_project.id.clone())
+}
 
 /// Resolve a potentially shortened task ID to a full UUID.
 ///
