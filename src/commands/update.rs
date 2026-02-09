@@ -49,21 +49,82 @@ pub async fn run(
         ));
     }
 
+    // Fetch the task before updating to show changes
+    let old_task = client.get_task(&full_id).await?;
+
     let req = UpdateTaskRequest {
-        title,
-        body,
-        priority,
-        size,
-        deadline,
+        title: title.clone(),
+        body: body.clone(),
+        priority: priority.clone(),
+        size: size.clone(),
+        deadline: deadline.clone(),
     };
 
     let task = client.update_task(&full_id, &req).await?;
 
     println!("{}", "✓ Task updated successfully!".green().bold());
-    println!("  ID:       {}", task.id.cyan());
-    println!("  Title:    {}", task.title);
-    println!("  Priority: {}", task.priority);
-    println!("  Size:     {}", task.size);
+    println!("  ID: {}", task.id.cyan());
+
+    // Show what changed with highlighting
+    if let Some(new_title) = title {
+        if old_task.title != new_title {
+            println!(
+                "  {} {} → {}",
+                "Title:".bold(),
+                old_task.title.dimmed().strikethrough(),
+                new_title.green()
+            );
+        }
+    }
+
+    if let Some(new_priority) = priority {
+        if old_task.priority != new_priority {
+            println!(
+                "  {} {} → {}",
+                "Priority:".bold(),
+                old_task.priority.dimmed().strikethrough(),
+                new_priority.green()
+            );
+        }
+    }
+
+    if let Some(new_size) = size {
+        if old_task.size != new_size {
+            println!(
+                "  {} {} → {}",
+                "Size:".bold(),
+                old_task.size.dimmed().strikethrough(),
+                new_size.green()
+            );
+        }
+    }
+
+    if deadline.is_some() {
+        let old_deadline_str = old_task
+            .deadline
+            .as_deref()
+            .unwrap_or("none");
+        let new_deadline_str = task
+            .deadline
+            .as_deref()
+            .unwrap_or("none");
+
+        if old_deadline_str != new_deadline_str {
+            println!(
+                "  {} {} → {}",
+                "Deadline:".bold(),
+                old_deadline_str.dimmed().strikethrough(),
+                new_deadline_str.green()
+            );
+        }
+    }
+
+    if let Some(_new_body) = body {
+        if old_task.body != task.body {
+            println!("  {} {}", "Body:".bold(), "updated".green());
+        }
+    }
+
     println!("\nView with: {}", format!("gtr show {}", task.id).dimmed());
 
     Ok(())
