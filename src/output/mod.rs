@@ -59,6 +59,7 @@ pub fn print_tasks(tasks: &[Task]) {
         "Priority".bold(),
         "Size".bold(),
         "Modified".bold(),
+        "Deadline".bold(),
         "Status".bold()
     ]);
 
@@ -70,6 +71,20 @@ pub fn print_tasks(tasks: &[Task]) {
         let priority_colored = match task.metadata.priority.as_str() {
             "now" => task.metadata.priority.red().to_string(),
             _ => task.metadata.priority.normal().to_string(),
+        };
+
+        let deadline_str = if let Some(deadline) = task.metadata.deadline {
+            let deadline_time = deadline.with_timezone(&Local);
+            let now = chrono::Utc::now();
+            let formatted = deadline_time.format("%Y-%m-%d").to_string();
+
+            if deadline < now {
+                formatted.red().to_string()
+            } else {
+                formatted
+            }
+        } else {
+            "-".dimmed().to_string()
         };
 
         let status = if task.is_deleted() {
@@ -86,6 +101,7 @@ pub fn print_tasks(tasks: &[Task]) {
             priority_colored,
             task.metadata.size,
             modified_str,
+            deadline_str,
             status
         ]);
     }
@@ -118,6 +134,19 @@ pub fn print_task_details(task: &Task) {
     let modified = task.metadata.modified.with_timezone(&Local);
     println!("  Created:  {}", created.format("%Y-%m-%d %H:%M:%S"));
     println!("  Modified: {}", modified.format("%Y-%m-%d %H:%M:%S"));
+
+    if let Some(deadline) = task.metadata.deadline {
+        let deadline_time = deadline.with_timezone(&Local);
+        let now = chrono::Utc::now();
+        let is_overdue = deadline < now;
+        let deadline_str = format!("Deadline: {}", deadline_time.format("%Y-%m-%d %H:%M:%S"));
+
+        if is_overdue {
+            println!("  {}", deadline_str.red().bold());
+        } else {
+            println!("  {}", deadline_str);
+        }
+    }
 
     if let Some(done) = task.metadata.done {
         let done_time = done.with_timezone(&Local);
