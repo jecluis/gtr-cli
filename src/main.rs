@@ -50,11 +50,11 @@ enum Commands {
         project: Option<String>,
 
         /// Filter by priority (now or later)
-        #[arg(long, value_parser = ["now", "later"])]
+        #[arg(short, long, value_parser = ["now", "later"])]
         priority: Option<String>,
 
         /// Filter by size (XS, S, M, L, XL)
-        #[arg(long)]
+        #[arg(short, long)]
         size: Option<String>,
 
         /// Include done tasks
@@ -129,15 +129,15 @@ enum Commands {
         body: Option<String>,
 
         /// New priority (now or later)
-        #[arg(long, value_parser = ["now", "later"])]
+        #[arg(short, long, value_parser = ["now", "later"])]
         priority: Option<String>,
 
         /// New size
-        #[arg(long)]
+        #[arg(short, long)]
         size: Option<String>,
 
         /// New deadline (use "none" to clear)
-        #[arg(long)]
+        #[arg(short, long)]
         deadline: Option<String>,
     },
 
