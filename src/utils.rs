@@ -21,15 +21,10 @@ use colored::Colorize;
 use dialoguer::Select;
 
 use crate::client::Client;
-use crate::config::Config;
 use crate::{Error, Result};
 
-/// Resolve project ID: use provided, or auto-select if 1, or use default, or prompt.
-pub async fn resolve_project(
-    client: &Client,
-    config: &mut Config,
-    provided: Option<String>,
-) -> Result<String> {
+/// Resolve project ID: use provided, or auto-select if 1, or prompt.
+pub async fn resolve_project(client: &Client, provided: Option<String>) -> Result<String> {
     // If project explicitly provided, use it
     if let Some(project_id) = provided {
         return Ok(project_id);
@@ -49,15 +44,7 @@ pub async fn resolve_project(
         return Ok(projects[0].id.clone());
     }
 
-    // Multiple projects - check for default
-    if let Some(ref default_id) = config.default_project {
-        // Verify default project still exists
-        if projects.iter().any(|p| &p.id == default_id) {
-            return Ok(default_id.clone());
-        }
-    }
-
-    // No default or default doesn't exist - prompt user
+    // Multiple projects - prompt user
     println!("{}", "Multiple projects found. Please select one:".yellow());
 
     let items: Vec<String> = projects
@@ -78,21 +65,7 @@ pub async fn resolve_project(
         .interact()
         .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
 
-    let selected_project = &projects[selection];
-
-    // Ask if they want to set as default
-    println!("\n{}", "Set this as default project? (y/N): ".dimmed());
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .map_err(|e| Error::InvalidInput(format!("Failed to read input: {}", e)))?;
-
-    if input.trim().to_lowercase() == "y" {
-        config.set_default_project(selected_project.id.clone())?;
-        println!("{}", "✓ Set as default project".green());
-    }
-
-    Ok(selected_project.id.clone())
+    Ok(projects[selection].id.clone())
 }
 
 /// Resolve a potentially shortened task ID to a full UUID.

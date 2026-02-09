@@ -38,8 +38,7 @@ pub async fn tasks(
     reversed: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
-    let mut config_mut = config.clone();
-    let project_id = utils::resolve_project(&client, &mut config_mut, project).await?;
+    let project_id = utils::resolve_project(&client, project).await?;
 
     let mut tasks = client
         .list_tasks(

@@ -33,10 +33,6 @@ pub struct Config {
     /// Authentication token
     pub auth_token: String,
 
-    /// Default project ID
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_project: Option<String>,
-
     /// Cache directory (for Phase 1.5)
     #[serde(skip)]
     pub cache_dir: PathBuf,
@@ -91,7 +87,6 @@ impl Config {
         Ok(Config {
             server_url,
             auth_token,
-            default_project: None,
             cache_dir: Self::default_cache_dir()?,
             config_path: Self::default_config_path()?,
         })
@@ -111,12 +106,6 @@ impl Config {
             self.auth_token = t;
         }
         self
-    }
-
-    /// Set the default project and save.
-    pub fn set_default_project(&mut self, project_id: String) -> Result<()> {
-        self.default_project = Some(project_id);
-        self.save()
     }
 
     /// Get default config file path.

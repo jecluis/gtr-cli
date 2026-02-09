@@ -36,8 +36,7 @@ pub async fn run(
     deadline: Option<String>,
 ) -> Result<()> {
     let client = Client::new(config)?;
-    let mut config_mut = config.clone();
-    let project_id = utils::resolve_project(&client, &mut config_mut, project).await?;
+    let project_id = utils::resolve_project(&client, project).await?;
 
     let req = CreateTaskRequest {
         title: title.to_string(),
