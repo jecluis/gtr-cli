@@ -70,7 +70,7 @@ enum Commands {
         all: bool,
 
         /// Show only tasks due within 48 hours
-        #[arg(long)]
+        #[arg(long = "due-soon")]
         due_soon: bool,
 
         /// Show only overdue tasks
