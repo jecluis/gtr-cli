@@ -19,15 +19,16 @@
 
 use colored::Colorize;
 
-use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
+use crate::{Result, utils};
 
 /// Unmark a task as done (restore to pending).
 pub async fn run(config: &Config, task_id: &str) -> Result<()> {
     let client = Client::new(config)?;
+    let full_id = utils::resolve_task_id(&client, task_id).await?;
 
-    let task = client.mark_undone(task_id).await?;
+    let task = client.mark_undone(&full_id).await?;
 
     println!("{}", "✓ Task restored to pending!".green().bold());
     println!("  ID:    {}", task.id.to_string().cyan());

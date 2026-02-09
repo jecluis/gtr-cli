@@ -19,15 +19,16 @@
 
 use colored::Colorize;
 
-use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
+use crate::{Result, utils};
 
 /// Mark a task as done.
 pub async fn run(config: &Config, task_id: &str) -> Result<()> {
     let client = Client::new(config)?;
+    let full_id = utils::resolve_task_id(&client, task_id).await?;
 
-    let task = client.mark_done(task_id).await?;
+    let task = client.mark_done(&full_id).await?;
 
     println!("{}", "✓ Task marked as done!".green().bold());
     println!("  ID:    {}", task.id.to_string().cyan());

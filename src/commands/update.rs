@@ -22,7 +22,7 @@ use colored::Colorize;
 use crate::client::Client;
 use crate::config::Config;
 use crate::models::UpdateTaskRequest;
-use crate::{Error, Result};
+use crate::{Error, Result, utils};
 
 /// Update a task.
 pub async fn run(
@@ -35,6 +35,7 @@ pub async fn run(
     deadline: Option<String>,
 ) -> Result<()> {
     let client = Client::new(config)?;
+    let full_id = utils::resolve_task_id(&client, task_id).await?;
 
     // Check if at least one field is provided
     if title.is_none()
@@ -56,7 +57,7 @@ pub async fn run(
         deadline,
     };
 
-    let task = client.update_task(task_id, &req).await?;
+    let task = client.update_task(&full_id, &req).await?;
 
     println!("{}", "✓ Task updated successfully!".green().bold());
     println!("  ID:       {}", task.id.cyan());

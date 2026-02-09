@@ -20,12 +20,13 @@
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::output;
+use crate::{output, utils};
 
 /// Show a specific task with full details and markdown rendering.
 pub async fn run(config: &Config, task_id: &str) -> Result<()> {
     let client = Client::new(config)?;
-    let task = client.get_task(task_id).await?;
+    let full_id = utils::resolve_task_id(&client, task_id).await?;
+    let task = client.get_task(&full_id).await?;
 
     output::print_task_details(&task);
     Ok(())

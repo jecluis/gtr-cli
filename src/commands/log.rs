@@ -20,15 +20,16 @@
 use chrono::Local;
 use colored::Colorize;
 
-use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::models::{LogEntryType, LogSource};
+use crate::{Result, utils};
 
 /// Display the change log for a task.
 pub async fn run(config: &Config, task_id: &str, work_only: bool, state_only: bool) -> Result<()> {
     let client = Client::new(config)?;
-    let task = client.get_task(task_id).await?;
+    let full_id = utils::resolve_task_id(&client, task_id).await?;
+    let task = client.get_task(&full_id).await?;
 
     if task.log.is_empty() {
         println!("{}", "No log entries found".yellow());
