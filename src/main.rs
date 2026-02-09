@@ -80,6 +80,10 @@ enum Commands {
         /// Maximum number of results
         #[arg(short, long)]
         limit: Option<u32>,
+
+        /// Reverse the order of non-doing tasks
+        #[arg(short, long)]
+        reversed: bool,
     },
 
     /// Show a specific task
@@ -318,6 +322,7 @@ async fn main() -> Result<()> {
             due_soon,
             overdue,
             limit,
+            reversed,
         } => {
             let include_done = all || done;
             let include_deleted = all || deleted;
@@ -331,6 +336,7 @@ async fn main() -> Result<()> {
                 due_soon,
                 overdue,
                 limit,
+                reversed,
             )
             .await
         }

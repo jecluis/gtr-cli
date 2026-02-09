@@ -19,6 +19,7 @@
 
 use crate::client::Client;
 use crate::config::Config;
+use crate::models::Task;
 use crate::output;
 use crate::{Error, Result};
 
@@ -34,6 +35,7 @@ pub async fn tasks(
     due_soon: bool,
     overdue: bool,
     limit: Option<u32>,
+    reversed: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
 
@@ -45,7 +47,7 @@ pub async fn tasks(
         )
     })?;
 
-    let tasks = client
+    let mut tasks = client
         .list_tasks(
             &project_id,
             priority.as_deref(),
@@ -58,6 +60,60 @@ pub async fn tasks(
         )
         .await?;
 
-    output::print_tasks(&tasks);
+    // Sort and split tasks
+    let (doing_tasks, other_tasks) = split_by_work_state(&mut tasks);
+
+    // Sort both groups by priority then deadline
+    let doing_tasks = sort_tasks(doing_tasks);
+    let mut other_tasks = sort_tasks(other_tasks);
+
+    // Reverse other tasks if flag is set
+    if reversed {
+        other_tasks.reverse();
+    }
+
+    output::print_tasks_grouped(&doing_tasks, &other_tasks);
     Ok(())
+}
+
+/// Split tasks into doing and other groups.
+fn split_by_work_state(tasks: &mut [Task]) -> (Vec<Task>, Vec<Task>) {
+    let mut doing = Vec::new();
+    let mut other = Vec::new();
+
+    for task in tasks {
+        if task.current_work_state.as_deref() == Some("doing") {
+            doing.push(task.clone());
+        } else {
+            other.push(task.clone());
+        }
+    }
+
+    (doing, other)
+}
+
+/// Sort tasks by priority (now > later) then deadline (sooner first).
+fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
+    tasks.sort_by(|a, b| {
+        // First by priority (now < later for sorting, so now comes first)
+        let priority_cmp = match (a.priority.as_str(), b.priority.as_str()) {
+            ("now", "later") => std::cmp::Ordering::Less,
+            ("later", "now") => std::cmp::Ordering::Greater,
+            _ => std::cmp::Ordering::Equal,
+        };
+
+        if priority_cmp != std::cmp::Ordering::Equal {
+            return priority_cmp;
+        }
+
+        // Then by deadline (sooner first, None last)
+        match (&a.deadline, &b.deadline) {
+            (Some(a_deadline), Some(b_deadline)) => a_deadline.cmp(b_deadline),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+
+    tasks
 }

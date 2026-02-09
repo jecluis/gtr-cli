@@ -79,13 +79,41 @@ struct TaskRow {
     status: String,
 }
 
+/// Print tasks grouped by work state (doing vs others).
+pub fn print_tasks_grouped(doing_tasks: &[Task], other_tasks: &[Task]) {
+    if doing_tasks.is_empty() && other_tasks.is_empty() {
+        println!("{}", "No tasks found".yellow());
+        return;
+    }
+
+    if !doing_tasks.is_empty() {
+        println!("\n{}", "═══ DOING ═══".bold().cyan());
+        print_task_table(doing_tasks);
+    }
+
+    if !other_tasks.is_empty() {
+        if !doing_tasks.is_empty() {
+            println!("\n{}", "═══ TASKS ═══".bold());
+        }
+        print_task_table(other_tasks);
+    }
+
+    let total = doing_tasks.len() + other_tasks.len();
+    println!("\n{} {}", "Total:".bold(), total);
+}
+
 /// Print a list of tasks in table format.
 pub fn print_tasks(tasks: &[Task]) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
         return;
     }
+    print_task_table(tasks);
+    println!("\n{} {}", "Total:".bold(), tasks.len());
+}
 
+/// Internal function to print task table.
+fn print_task_table(tasks: &[Task]) {
     let rows: Vec<TaskRow> = tasks
         .iter()
         .map(|task| {
@@ -144,7 +172,6 @@ pub fn print_tasks(tasks: &[Task]) {
         .with(Modify::new(Columns::new(2..7)).with(Alignment::center())) // Priority, Size, Modified, Deadline, Status
         .to_string();
     println!("{}", table);
-    println!("\n{} {}", "Total:".bold(), tasks.len());
 }
 
 /// Print a single task with full details and markdown rendering.
