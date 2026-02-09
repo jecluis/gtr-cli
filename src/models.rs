@@ -168,3 +168,29 @@ impl Task {
         self.metadata.deleted.is_some()
     }
 }
+
+// -- Config models --
+
+/// Configuration response from server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigResponse {
+    pub deadline_thresholds: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<ConfigOverrides>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defaults: Option<std::collections::HashMap<String, String>>,
+}
+
+/// Configuration overrides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigOverrides {
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub deadline_thresholds: std::collections::HashMap<String, String>,
+}
+
+/// Configuration update request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigUpdateRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_thresholds: Option<std::collections::HashMap<String, Option<String>>>,
+}

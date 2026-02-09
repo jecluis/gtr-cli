@@ -261,6 +261,141 @@ impl Client {
         }
     }
 
+    /// Get user configuration.
+    pub async fn get_user_config(&self) -> Result<ConfigResponse> {
+        let url = format!("{}/api/config", self.base_url);
+        let response = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let text = response.text().await?;
+
+        if status.is_success() {
+            let config: ConfigResponse = serde_json::from_str(&text)
+                .map_err(|e| Error::Server(format!("Invalid JSON response: {}", e)))?;
+            Ok(config)
+        } else {
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Update user configuration.
+    pub async fn update_user_config(&self, req: &ConfigUpdateRequest) -> Result<ConfigResponse> {
+        let url = format!("{}/api/config", self.base_url);
+        let response = self
+            .http
+            .put(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .json(req)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let text = response.text().await?;
+
+        if status.is_success() {
+            let config: ConfigResponse = serde_json::from_str(&text)
+                .map_err(|e| Error::Server(format!("Invalid JSON response: {}", e)))?;
+            Ok(config)
+        } else {
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Reset user promotion config to defaults.
+    pub async fn reset_user_config(&self) -> Result<()> {
+        let url = format!("{}/api/config/promotion", self.base_url);
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = response.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Get project configuration.
+    pub async fn get_project_config(&self, project_id: &str) -> Result<ConfigResponse> {
+        let url = format!("{}/api/projects/{}/config", self.base_url, project_id);
+        let response = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let text = response.text().await?;
+
+        if status.is_success() {
+            let config: ConfigResponse = serde_json::from_str(&text)
+                .map_err(|e| Error::Server(format!("Invalid JSON response: {}", e)))?;
+            Ok(config)
+        } else {
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Update project configuration.
+    pub async fn update_project_config(
+        &self,
+        project_id: &str,
+        req: &ConfigUpdateRequest,
+    ) -> Result<ConfigResponse> {
+        let url = format!("{}/api/projects/{}/config", self.base_url, project_id);
+        let response = self
+            .http
+            .put(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .json(req)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let text = response.text().await?;
+
+        if status.is_success() {
+            let config: ConfigResponse = serde_json::from_str(&text)
+                .map_err(|e| Error::Server(format!("Invalid JSON response: {}", e)))?;
+            Ok(config)
+        } else {
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Reset project promotion config.
+    pub async fn reset_project_config(&self, project_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/api/projects/{}/config/promotion",
+            self.base_url, project_id
+        );
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = response.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
     /// Convert HTTP error response to Error.
     fn error_from_response(&self, status: StatusCode, body: &str) -> Error {
         match status {

@@ -199,6 +199,12 @@ enum Commands {
         command: ProjectCommands,
     },
 
+    /// Manage deadline promotion configuration
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+
     /// Initialize configuration
     Init {
         /// Server URL
@@ -225,6 +231,46 @@ enum ProjectCommands {
 
     /// List all projects
     List,
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCommands {
+    /// Show current deadline promotion thresholds
+    Show {
+        /// Show project-specific configuration
+        #[arg(short = 'P', long)]
+        project: Option<String>,
+    },
+
+    /// Set deadline threshold for a specific task size
+    Set {
+        /// Task size (XS, S, M, L, XL)
+        size: String,
+
+        /// Threshold duration (e.g., "24h", "3d", "1w")
+        duration: String,
+
+        /// Set for project instead of user
+        #[arg(short = 'P', long)]
+        project: Option<String>,
+    },
+
+    /// Remove deadline threshold override for a specific size
+    Unset {
+        /// Task size (XS, S, M, L, XL)
+        size: String,
+
+        /// Remove from project instead of user
+        #[arg(short = 'P', long)]
+        project: Option<String>,
+    },
+
+    /// Reset all overrides to defaults
+    Reset {
+        /// Reset project configuration instead of user
+        #[arg(short = 'P', long)]
+        project: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -315,6 +361,20 @@ async fn main() -> Result<()> {
                 gtr::commands::project::create(&config, &name, description).await
             }
             ProjectCommands::List => gtr::commands::project::list(&config).await,
+        },
+        Commands::Config { command } => match command {
+            ConfigCommands::Show { project } => gtr::commands::config::show(&config, project).await,
+            ConfigCommands::Set {
+                size,
+                duration,
+                project,
+            } => gtr::commands::config::set(&config, size, duration, project).await,
+            ConfigCommands::Unset { size, project } => {
+                gtr::commands::config::unset(&config, size, project).await
+            }
+            ConfigCommands::Reset { project } => {
+                gtr::commands::config::reset(&config, project).await
+            }
         },
         Commands::Init { .. } => unreachable!(),
     }

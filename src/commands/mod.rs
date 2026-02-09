@@ -17,6 +17,7 @@
 
 //! Command implementations.
 
+pub mod config;
 pub mod create;
 pub mod delete;
 pub mod done;
