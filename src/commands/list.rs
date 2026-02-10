@@ -61,14 +61,18 @@ pub async fn tasks(
         vec![utils::resolve_project(&client, None).await?]
     };
 
-    // Load tasks from local cache
-    let task_ids = ctx.cache.list_task_ids(&project_ids)?;
+    // Load tasks from local cache and storage
     let mut all_tasks = Vec::new();
 
-    for task_id in task_ids {
-        // Try to load from storage, skip if not found
-        if let Ok(task) = ctx.storage.load_task("", &task_id) {
-            all_tasks.push(task);
+    for project_id in &project_ids {
+        // Get task summaries from cache (includes project_id)
+        let summaries = ctx.cache.list_tasks(project_id)?;
+
+        for summary in summaries {
+            // Load full task from storage
+            if let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id) {
+                all_tasks.push(task);
+            }
         }
     }
 
