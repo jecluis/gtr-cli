@@ -22,14 +22,34 @@ use colored::Colorize;
 
 use crate::client::Client;
 use crate::config::Config;
+use crate::local::LocalContext;
 use crate::models::{LogEntryType, LogSource};
 use crate::{Result, utils};
 
-/// Display the change log for a task.
-pub async fn run(config: &Config, task_id: &str, work_only: bool, state_only: bool) -> Result<()> {
+/// Display the change log for a task (from local storage).
+pub async fn run(
+    config: &Config,
+    task_id: &str,
+    work_only: bool,
+    state_only: bool,
+    no_sync: bool,
+) -> Result<()> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
-    let task = client.get_task(&full_id).await?;
+
+    let ctx = LocalContext::new(config, !no_sync)?;
+
+    // Load from local storage
+    let task = match ctx.storage.load_task("", &full_id) {
+        Ok(t) => t,
+        Err(_) => {
+            // Not cached, fetch from server
+            let fetched = client.get_task(&full_id).await?;
+            ctx.storage.create_task(&fetched.project_id, &fetched)?;
+            ctx.cache.upsert_task(&fetched, false)?;
+            fetched
+        }
+    };
 
     if task.log.is_empty() {
         println!("{}", "No log entries found".yellow());

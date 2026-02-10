@@ -217,6 +217,10 @@ enum Commands {
         /// Show only state changes (priority, size, etc.)
         #[arg(long)]
         state: bool,
+
+        /// Skip sync (use cached log)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Search tasks
@@ -448,7 +452,8 @@ async fn main() -> Result<()> {
             task_id,
             work,
             state,
-        } => gtr::commands::log::run(&config, &task_id, work, state).await,
+            no_sync,
+        } => gtr::commands::log::run(&config, &task_id, work, state, no_sync).await,
         Commands::Search {
             query,
             project,
