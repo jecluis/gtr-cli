@@ -19,25 +19,57 @@
 
 use colored::Colorize;
 
-use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::output;
+use crate::local::LocalContext;
+use crate::{Result, output};
 
-/// Search tasks.
+/// Search tasks (local full-text search on cache).
 pub async fn run(
     config: &Config,
     query: &str,
     project: Option<String>,
     limit: Option<u32>,
+    no_sync: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
 
-    let tasks = client
-        .search_tasks(query, project.as_deref(), limit)
-        .await?;
+    // Determine which projects to search
+    let project_ids = if let Some(proj) = project {
+        vec![proj]
+    } else {
+        // Search all projects (get from server for now)
+        client
+            .list_projects()
+            .await?
+            .into_iter()
+            .map(|p| p.id)
+            .collect()
+    };
 
-    if tasks.is_empty() {
+    // Load all tasks and filter by query
+    let task_ids = ctx.cache.list_task_ids(&project_ids)?;
+    let query_lower = query.to_lowercase();
+    let mut matching_tasks = Vec::new();
+
+    for task_id in task_ids {
+        if let Ok(task) = ctx.storage.load_task("", &task_id) {
+            // Search in title and body (case-insensitive)
+            if task.title.to_lowercase().contains(&query_lower)
+                || task.body.to_lowercase().contains(&query_lower)
+            {
+                matching_tasks.push(task);
+                if let Some(lim) = limit {
+                    if matching_tasks.len() >= lim as usize {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if matching_tasks.is_empty() {
         println!(
             "{}",
             format!("No tasks found matching '{}'", query).yellow()
@@ -47,7 +79,7 @@ pub async fn run(
 
     println!("{}", format!("Search results for '{}':", query).bold());
     println!();
-    output::print_tasks(&tasks);
+    output::print_tasks(&matching_tasks);
 
     Ok(())
 }

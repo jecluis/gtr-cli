@@ -231,6 +231,10 @@ enum Commands {
         /// Maximum number of results
         #[arg(short, long)]
         limit: Option<u32>,
+
+        /// Skip sync (search cache only)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Manage projects
@@ -449,7 +453,8 @@ async fn main() -> Result<()> {
             query,
             project,
             limit,
-        } => gtr::commands::search::run(&config, &query, project, limit).await,
+            no_sync,
+        } => gtr::commands::search::run(&config, &query, project, limit, no_sync).await,
         Commands::Project { command } => match command {
             ProjectCommands::Create { name, description } => {
                 gtr::commands::project::create(&config, &name, description).await
