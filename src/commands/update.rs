@@ -17,14 +17,17 @@
 
 //! Update command implementation.
 
+use chrono::Utc;
 use colored::Colorize;
 
 use crate::client::Client;
 use crate::config::Config;
-use crate::models::UpdateTaskRequest;
-use crate::{Error, Result, utils};
+use crate::local::LocalContext;
+use crate::utils;
+use crate::{Error, Result};
 
-/// Update a task.
+/// Update a task (local-first with optional sync).
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     config: &Config,
     task_id: &str,
@@ -33,6 +36,7 @@ pub async fn run(
     priority: Option<String>,
     size: Option<String>,
     deadline: Option<String>,
+    no_sync: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
@@ -44,34 +48,62 @@ pub async fn run(
         ));
     }
 
-    // Fetch the task before updating to show changes and get existing body
-    let old_task = client.get_task(&full_id).await?;
+    // Initialize local context
+    let ctx = LocalContext::new(config, !no_sync)?;
+
+    // Load task from local storage (or fetch from server if not cached)
+    let mut task = match ctx.storage.load_task("", &full_id) {
+        Ok(t) => t,
+        Err(_) => {
+            // Not in local storage, fetch from server
+            let fetched = client.get_task(&full_id).await?;
+            ctx.storage.create_task(&fetched.project_id, &fetched)?;
+            ctx.cache.upsert_task(&fetched, false)?;
+            fetched
+        }
+    };
+
+    let old_task = task.clone();
 
     // Edit body if requested
-    let body = if edit_body {
-        match crate::editor::edit_text(config, &old_task.body) {
-            Ok(content) => Some(content),
+    if edit_body {
+        match crate::editor::edit_text(config, &task.body) {
+            Ok(content) => task.body = content,
             Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
                 println!("{}", "✗ Operation cancelled".yellow());
                 return Ok(());
             }
             Err(e) => return Err(e),
         }
-    } else {
-        None
-    };
+    }
 
-    let req = UpdateTaskRequest {
-        title: title.clone(),
-        body: body.clone(),
-        priority: priority.clone(),
-        size: size.clone(),
-        deadline: deadline.clone(),
-    };
+    // Apply updates
+    if let Some(ref new_title) = title {
+        task.title = new_title.clone();
+    }
+    if let Some(ref new_priority) = priority {
+        task.priority = new_priority.clone();
+    }
+    if let Some(ref new_size) = size {
+        task.size = new_size.clone();
+    }
+    if let Some(ref new_deadline) = deadline {
+        task.deadline = if new_deadline == "none" {
+            None
+        } else {
+            Some(new_deadline.clone())
+        };
+    }
 
-    let task = client.update_task(&full_id, &req).await?;
+    // Update metadata
+    task.modified = Utc::now().to_rfc3339();
+    task.version += 1;
 
-    println!("{}", "✓ Task updated successfully!".green().bold());
+    // Save locally
+    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.cache.upsert_task(&task, !no_sync)?;
+
+    println!("{}", "✓ Task updated locally!".green().bold());
     println!("  ID: {}", task.id.cyan());
 
     // Show what changed with highlighting
@@ -122,9 +154,16 @@ pub async fn run(
         }
     }
 
-    if let Some(_new_body) = body {
-        if old_task.body != task.body {
-            println!("  {} {}", "Body:".bold(), "updated".green());
+    if edit_body && old_task.body != task.body {
+        println!("  {} {}", "Body:".bold(), "updated".green());
+    }
+
+    // Attempt sync if enabled
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!("{}", "  ✓ Synced with server".green());
+        } else {
+            println!("{}", "  ⊙ Queued for sync (server unreachable)".yellow());
         }
     }
 

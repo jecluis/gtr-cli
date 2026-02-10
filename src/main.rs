@@ -151,6 +151,10 @@ enum Commands {
         /// New deadline (use "none" to clear)
         #[arg(short, long)]
         deadline: Option<String>,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Mark a task as done
@@ -389,9 +393,12 @@ async fn main() -> Result<()> {
             priority,
             size,
             deadline,
+            no_sync,
         } => {
-            gtr::commands::update::run(&config, &task_id, title, body, priority, size, deadline)
-                .await
+            gtr::commands::update::run(
+                &config, &task_id, title, body, priority, size, deadline, no_sync,
+            )
+            .await
         }
         Commands::Done { task_id } => gtr::commands::done::run(&config, &task_id).await,
         Commands::Undone { task_id } => gtr::commands::undone::run(&config, &task_id).await,
