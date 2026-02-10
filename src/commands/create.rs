@@ -21,12 +21,12 @@ use chrono::Utc;
 use colored::Colorize;
 use uuid::Uuid;
 
+use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
 use crate::models::Task;
 use crate::utils;
-use crate::Result;
 
 /// Create a new task (local-first with optional sync).
 #[allow(clippy::too_many_arguments)]

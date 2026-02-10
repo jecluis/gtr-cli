@@ -17,22 +17,50 @@
 
 //! Restore command implementation.
 
+use chrono::Utc;
 use colored::Colorize;
 
+use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::{Result, utils};
+use crate::local::LocalContext;
+use crate::utils;
 
-/// Restore a deleted task.
-pub async fn run(config: &Config, task_id: &str) -> Result<()> {
+/// Restore a deleted task (local-first with optional sync).
+pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
-    let task = client.restore_task(&full_id).await?;
+    let ctx = LocalContext::new(config, !no_sync)?;
 
-    println!("{}", "✓ Task restored from deleted!".green().bold());
-    println!("  ID:    {}", task.id.to_string().cyan());
+    let mut task = match ctx.storage.load_task("", &full_id) {
+        Ok(t) => t,
+        Err(_) => {
+            let fetched = client.get_task(&full_id).await?;
+            ctx.storage.create_task(&fetched.project_id, &fetched)?;
+            ctx.cache.upsert_task(&fetched, false)?;
+            fetched
+        }
+    };
+
+    task.deleted = None;
+    task.modified = Utc::now().to_rfc3339();
+    task.version += 1;
+
+    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.cache.upsert_task(&task, !no_sync)?;
+
+    println!("{}", "✓ Task restored locally!".green().bold());
+    println!("  ID:    {}", task.id.cyan());
     println!("  Title: {}", task.title);
+
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!("{}", "  ✓ Synced with server".green());
+        } else {
+            println!("{}", "  ⊙ Queued for sync".yellow());
+        }
+    }
 
     Ok(())
 }

@@ -161,24 +161,40 @@ enum Commands {
     Done {
         /// Task ID
         task_id: String,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Unmark a task as done (restore to pending)
     Undone {
         /// Task ID
         task_id: String,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Delete a task (tombstone)
     Delete {
         /// Task ID
         task_id: String,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Restore a deleted task
     Restore {
         /// Task ID
         task_id: String,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Display task change log
@@ -400,10 +416,18 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Commands::Done { task_id } => gtr::commands::done::run(&config, &task_id).await,
-        Commands::Undone { task_id } => gtr::commands::undone::run(&config, &task_id).await,
-        Commands::Delete { task_id } => gtr::commands::delete::run(&config, &task_id).await,
-        Commands::Restore { task_id } => gtr::commands::restore::run(&config, &task_id).await,
+        Commands::Done { task_id, no_sync } => {
+            gtr::commands::done::run(&config, &task_id, no_sync).await
+        }
+        Commands::Undone { task_id, no_sync } => {
+            gtr::commands::undone::run(&config, &task_id, no_sync).await
+        }
+        Commands::Delete { task_id, no_sync } => {
+            gtr::commands::delete::run(&config, &task_id, no_sync).await
+        }
+        Commands::Restore { task_id, no_sync } => {
+            gtr::commands::restore::run(&config, &task_id, no_sync).await
+        }
         Commands::Log {
             task_id,
             work,

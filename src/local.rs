@@ -19,11 +19,11 @@
 
 use std::time::Duration;
 
+use crate::Result;
 use crate::cache::TaskCache;
 use crate::config::Config;
 use crate::storage::{StorageConfig, TaskStorage};
 use crate::sync::SyncManager;
-use crate::Result;
 
 /// Context for local-first operations.
 pub struct LocalContext {

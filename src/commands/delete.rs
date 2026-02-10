@@ -17,25 +17,50 @@
 
 //! Delete command implementation.
 
+use chrono::Utc;
 use colored::Colorize;
 
+use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::{Result, utils};
+use crate::local::LocalContext;
+use crate::utils;
 
-/// Delete a task.
-pub async fn run(config: &Config, task_id: &str) -> Result<()> {
+/// Delete a task (tombstone, local-first with optional sync).
+pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
-    client.delete_task(&full_id).await?;
+    let ctx = LocalContext::new(config, !no_sync)?;
 
-    println!("{}", "✓ Task deleted successfully!".green().bold());
-    println!("  ID: {}", task_id.cyan());
-    println!(
-        "\n{}",
-        "Note: Task is marked as deleted but remains in storage".dimmed()
-    );
+    let mut task = match ctx.storage.load_task("", &full_id) {
+        Ok(t) => t,
+        Err(_) => {
+            let fetched = client.get_task(&full_id).await?;
+            ctx.storage.create_task(&fetched.project_id, &fetched)?;
+            ctx.cache.upsert_task(&fetched, false)?;
+            fetched
+        }
+    };
+
+    task.deleted = Some(Utc::now().to_rfc3339());
+    task.modified = Utc::now().to_rfc3339();
+    task.version += 1;
+
+    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.cache.upsert_task(&task, !no_sync)?;
+
+    println!("{}", "✓ Task deleted locally!".green().bold());
+    println!("  ID:    {}", task.id.cyan());
+    println!("  Title: {}", task.title);
+
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!("{}", "  ✓ Synced with server".green());
+        } else {
+            println!("{}", "  ⊙ Queued for sync".yellow());
+        }
+    }
 
     Ok(())
 }
