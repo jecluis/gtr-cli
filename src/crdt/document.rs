@@ -168,14 +168,17 @@ impl TaskDocument {
 
     fn get_str(&self, obj: &automerge::ObjId, key: &str) -> Result<String> {
         match self.doc.get(obj, key) {
-            Ok(Some((automerge::Value::Scalar(s), _))) => Ok(s.to_string()),
+            Ok(Some((automerge::Value::Scalar(s), _))) => s
+                .to_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| Error::Storage(format!("field {key} is not a string"))),
             _ => Err(Error::Storage(format!("missing field: {key}"))),
         }
     }
 
     fn try_get_str(&self, obj: &automerge::ObjId, key: &str) -> Result<Option<String>> {
         match self.doc.get(obj, key) {
-            Ok(Some((automerge::Value::Scalar(s), _))) => Ok(Some(s.to_string())),
+            Ok(Some((automerge::Value::Scalar(s), _))) => Ok(s.to_str().map(|s| s.to_string())),
             Ok(None) | Ok(Some(_)) => Ok(None),
             Err(e) => Err(Error::Storage(format!("error reading {key}: {e:?}"))),
         }
