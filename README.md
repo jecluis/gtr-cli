@@ -130,6 +130,35 @@ The CLI fully supports offline work:
 - **CRDT-based conflict resolution** when syncing with server
 - **Automatic merge** of concurrent edits from multiple devices
 
+## Markdown Rendering
+
+Task descriptions are rendered with formatted markdown for better readability:
+
+```bash
+# View task with markdown formatting (default)
+gtr show <task-id>
+
+# Disable formatting for plain text
+gtr show <task-id> --no-format
+```
+
+### Features
+
+- **Bold** text highlighted in bright white
+- _Italic_ text in cyan
+- Headers in yellow
+- `inline code` with dark background
+- Code blocks with syntax-appropriate styling
+- Bullet lists with green markers
+
+### Environment Control
+
+Markdown rendering respects terminal capabilities:
+
+- **NO_COLOR** environment variable disables all formatting
+- Automatic TTY detection (plain text when piped to other commands)
+- `--no-format` flag for explicit plain text output
+
 ## Configuration
 
 Config file location: `~/.config/gtr/config.toml`
@@ -157,6 +186,7 @@ auth_token = "your-auth-token"
 - [x] **HTTP client** - REST API integration with timeout handling
 - [x] **Full CRUD commands** - create, show, update, delete, list, search
 - [x] **State commands** - done, undone, restore
+- [x] **Markdown rendering** - Formatted task descriptions with NO_COLOR support
 - [x] **Log viewing** - View task change history
 - [x] **Project management** - List and filter by project
 - [x] **$EDITOR integration** - Edit task body in your preferred editor

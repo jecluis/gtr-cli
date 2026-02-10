@@ -25,6 +25,7 @@ pub mod crdt;
 pub mod editor;
 pub mod error;
 pub mod local;
+pub mod markdown;
 pub mod models;
 pub mod output;
 pub mod storage;

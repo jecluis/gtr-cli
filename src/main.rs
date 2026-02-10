@@ -102,6 +102,10 @@ enum Commands {
         /// Skip sync refresh (use cached only)
         #[arg(long)]
         no_sync: bool,
+
+        /// Disable markdown formatting (plain text)
+        #[arg(long)]
+        no_format: bool,
     },
 
     /// Create a new task
@@ -404,9 +408,11 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Commands::Show { task_id, no_sync } => {
-            gtr::commands::show::run(&config, &task_id, no_sync).await
-        }
+        Commands::Show {
+            task_id,
+            no_sync,
+            no_format,
+        } => gtr::commands::show::run(&config, &task_id, no_sync, no_format).await,
         Commands::New {
             project,
             title,

@@ -23,8 +23,8 @@ use chrono::Local;
 use colored::Colorize;
 use tabled::settings::{Alignment, Modify, Style, object::Columns};
 use tabled::{Table, Tabled};
-use termimad::MadSkin;
 
+use crate::markdown::MarkdownRenderer;
 use crate::models::{Project, Task};
 
 /// Row type for project table display.
@@ -296,8 +296,10 @@ fn print_task_table_with_project(tasks: &[Task], unique_projects: HashSet<&str>)
 }
 
 /// Print a single task with full details and markdown rendering.
-pub fn print_task_details(task: &Task) {
-    let skin = MadSkin::default();
+///
+/// If `no_format` is true or NO_COLOR is set, markdown will not be rendered.
+pub fn print_task_details(task: &Task, no_format: bool) {
+    let renderer = MarkdownRenderer::with_override(Some(no_format));
 
     // Print header
     println!("\n{}", "═".repeat(60));
@@ -366,7 +368,7 @@ pub fn print_task_details(task: &Task) {
     if !task.body.is_empty() {
         println!("\n{}", "Description:".bold());
         println!("{}", "─".repeat(60));
-        skin.print_text(&task.body);
+        print!("{}", renderer.render(&task.body));
     } else {
         println!("\n{}", "(No description)".italic().dimmed());
     }

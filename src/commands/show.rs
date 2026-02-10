@@ -23,7 +23,7 @@ use crate::local::LocalContext;
 use crate::{Result, output, utils};
 
 /// Show a specific task (local-first with optional refresh).
-pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
+pub async fn run(config: &Config, task_id: &str, no_sync: bool, no_format: bool) -> Result<()> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
@@ -41,7 +41,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
         }
     };
 
-    output::print_task_details(&task);
+    output::print_task_details(&task, no_format);
 
     // Try to refresh from server in background if sync enabled
     if !no_sync {
