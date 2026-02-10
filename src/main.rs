@@ -94,6 +94,10 @@ enum Commands {
     Show {
         /// Task ID
         task_id: String,
+
+        /// Skip sync refresh (use cached only)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Create a new task
@@ -386,7 +390,9 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Commands::Show { task_id } => gtr::commands::show::run(&config, &task_id).await,
+        Commands::Show { task_id, no_sync } => {
+            gtr::commands::show::run(&config, &task_id, no_sync).await
+        }
         Commands::New {
             project,
             title,
