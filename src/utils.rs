@@ -34,7 +34,7 @@ pub async fn resolve_project(client: &Client, provided: Option<String>) -> Resul
     let projects = client.list_projects().await?;
 
     if projects.is_empty() {
-        return Err(Error::InvalidInput(
+        return Err(Error::UserFacing(
             "No projects found. Create one with 'gtr project create <name>'".to_string(),
         ));
     }
@@ -101,13 +101,13 @@ pub async fn resolve_task_id(client: &Client, short_id: &str) -> Result<String> 
     }
 
     match matches.len() {
-        0 => Err(Error::InvalidInput(format!(
-            "no task found with ID prefix '{}'",
+        0 => Err(Error::TaskNotFound(format!(
+            "No task found with ID prefix '{}'",
             short_id
         ))),
         1 => Ok(matches[0].clone()),
-        _ => Err(Error::InvalidInput(format!(
-            "ambiguous ID prefix '{}' matches {} tasks",
+        _ => Err(Error::UserFacing(format!(
+            "Ambiguous ID prefix '{}' matches {} tasks. Please provide more characters.",
             short_id,
             matches.len()
         ))),

@@ -50,6 +50,9 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    #[error("{0}")]
+    UserFacing(String),
+
     #[error("storage error: {0}")]
     Storage(String),
 

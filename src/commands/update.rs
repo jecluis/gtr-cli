@@ -43,8 +43,8 @@ pub async fn run(
 
     // Check if at least one field is provided
     if title.is_none() && !edit_body && priority.is_none() && size.is_none() && deadline.is_none() {
-        return Err(Error::InvalidInput(
-            "at least one field must be provided to update".to_string(),
+        return Err(Error::UserFacing(
+            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, or --deadline)".to_string(),
         ));
     }
 
