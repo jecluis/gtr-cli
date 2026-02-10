@@ -1,6 +1,10 @@
 use std::process::Command;
 
 fn main() {
+    // Tell Cargo to re-run this script when git HEAD changes
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/refs/heads");
+
     // Capture git SHA at build time
     let output = Command::new("git")
         .args(["rev-parse", "--short=8", "HEAD"])
