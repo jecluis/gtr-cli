@@ -78,8 +78,14 @@ impl SyncManager {
 
     /// Push a single task to server.
     async fn push_task(&self, task_id: &str) -> Result<()> {
+        // Get project_id from cache
+        let summary = self
+            .cache
+            .get_task_summary(task_id)?
+            .ok_or_else(|| crate::Error::TaskNotFound(format!("task {task_id} not in cache")))?;
+
         // Get task from local storage
-        let task = self.storage.load_task("", task_id)?; // TODO: get project_id from cache
+        let task = self.storage.load_task(&summary.project_id, task_id)?;
 
         // Get CRDT bytes for server merge
         let bytes = self.storage.get_task_bytes(&task.project_id, task_id)?;
