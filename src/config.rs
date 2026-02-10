@@ -68,6 +68,9 @@ impl Config {
         config.config_path = config_path;
         config.cache_dir = Self::default_cache_dir()?;
 
+        // Ensure cache directory exists
+        fs::create_dir_all(&config.cache_dir)?;
+
         Ok(config)
     }
 
@@ -88,11 +91,15 @@ impl Config {
 
     /// Create a new config with given server and token.
     pub fn new(server_url: String, auth_token: String) -> Result<Self> {
+        let cache_dir = Self::default_cache_dir()?;
+        // Ensure cache directory exists
+        fs::create_dir_all(&cache_dir)?;
+
         Ok(Config {
             server_url,
             auth_token,
             editor: None,
-            cache_dir: Self::default_cache_dir()?,
+            cache_dir,
             config_path: Self::default_config_path()?,
         })
     }
