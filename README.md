@@ -5,8 +5,9 @@ with offline-first CRDT synchronization.
 
 ## Status
 
-**In Development** - Basic skeleton implemented, commands to be completed in
-Phase 1.
+**Alpha** - Full offline-first operation with CRDT synchronization is
+implemented. All commands work locally-first with automatic background sync to
+the server.
 
 ## Installation
 
@@ -23,7 +24,8 @@ gtr init --server http://localhost:3000 --token your-auth-token
 ```
 
 This creates `~/.config/gtr/config.toml` with your server URL and
-authentication token.
+authentication token. The CLI will automatically create a local cache directory
+at `~/.local/share/gtr/` for offline storage.
 
 ### 2. List Tasks
 
@@ -73,6 +75,61 @@ gtr delete <task-id>
 gtr search "search query" --project my-project --limit 10
 ```
 
+## Offline Mode
+
+The CLI operates **offline-first** by default. All operations work locally
+immediately, with automatic background synchronization to the server.
+
+### How It Works
+
+1. **Local Storage**: Tasks are stored as CRDT `.automerge` files in
+   `~/.local/share/gtr/default/<project-id>/`
+2. **SQLite Cache**: Fast queries using a local SQLite index at
+   `~/.local/share/gtr/index.db`
+3. **Automatic Sync**: Commands attempt to sync with the server (with timeout)
+4. **Graceful Degradation**: If sync fails, operations complete locally and are
+   queued for later sync
+
+### Sync Status Indicators
+
+After each command, you'll see one of:
+
+- `✓ synced` - Successfully synced with server
+- `⊙ queued for sync` - Saved locally, will sync when server is available
+- `✗ sync failed` - Local operation succeeded, but sync failed (check
+  connectivity)
+
+### Disabling Sync
+
+For fully offline operation, use the `--no-sync` flag:
+
+```bash
+# Create a task without attempting to sync
+gtr create --project my-project "Offline task" --no-sync
+
+# Update without sync
+gtr update <task-id> --title "New title" --no-sync
+```
+
+### Manual Synchronization
+
+```bash
+# Sync all pending changes
+gtr sync now
+
+# Check sync status
+gtr sync status
+```
+
+### Working Offline
+
+The CLI fully supports offline work:
+
+- **Create, update, delete** tasks while offline
+- **Search and list** using local cache
+- **CRDT-based conflict resolution** when syncing with server
+- **Automatic merge** of concurrent edits from multiple devices
+
 ## Configuration
 
 Config file location: `~/.config/gtr/config.toml`
@@ -90,32 +147,29 @@ auth_token = "your-auth-token"
 
 ## Features
 
-### Phase 1 (In Progress)
+### Implemented ✓
 
-- [x] Project skeleton
-- [ ] HTTP client
-- [ ] Basic CRUD commands (list, show, create, update, delete)
-- [ ] Pretty table output
-- [ ] Markdown rendering with termimad
+- [x] **Offline-first operation** - All commands work locally with automatic
+      sync
+- [x] **CRDT synchronization** - Conflict-free sync using Automerge
+- [x] **Local CRDT storage** - Tasks stored as `.automerge` files
+- [x] **SQLite cache** - Fast local queries and full-text search
+- [x] **HTTP client** - REST API integration with timeout handling
+- [x] **Full CRUD commands** - create, show, update, delete, list, search
+- [x] **State commands** - done, undone, restore
+- [x] **Log viewing** - View task change history
+- [x] **Project management** - List and filter by project
+- [x] **$EDITOR integration** - Edit task body in your preferred editor
+- [x] **Pretty table output** - Color-coded task lists
+- [x] **Sync commands** - Manual sync (`sync now`, `sync status`)
+- [x] **Offline mode flag** - `--no-sync` for fully offline operation
 
-### Phase 1.5 (Planned)
+### Planned
 
-- [ ] Local cache directory
-- [ ] Offline read capability
-- [ ] `gtr sync` command (pull-only)
-
-### Phase 3 (Planned)
-
-- [ ] Full offline CRDT sync
-- [ ] Local .automerge storage
-- [ ] Bi-directional sync
-- [ ] Conflict resolution
-
-### Phase 4 (Planned)
-
-- [ ] `$EDITOR` integration
-- [ ] Interactive prompts
-- [ ] Shell completions
+- [ ] Interactive prompts for missing fields
+- [ ] Shell completions (bash, zsh, fish)
+- [ ] Config subcommands (view, edit, validate)
+- [ ] Advanced filtering (by date range, custom fields)
 
 ## Development
 
