@@ -121,6 +121,10 @@ enum Commands {
         /// Deadline (e.g., "tomorrow", "+3d", "2026-12-25")
         #[arg(short, long)]
         deadline: Option<String>,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Update an existing task
@@ -370,10 +374,11 @@ async fn main() -> Result<()> {
             priority,
             size,
             deadline,
+            no_sync,
         } => {
             let title_str = title.join(" ");
             gtr::commands::create::run(
-                &config, project, &title_str, body, &priority, &size, deadline,
+                &config, project, &title_str, body, &priority, &size, deadline, no_sync,
             )
             .await
         }

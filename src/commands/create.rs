@@ -17,15 +17,19 @@
 
 //! Create command implementation.
 
+use chrono::Utc;
 use colored::Colorize;
+use uuid::Uuid;
 
-use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::models::CreateTaskRequest;
+use crate::local::LocalContext;
+use crate::models::Task;
 use crate::utils;
+use crate::Result;
 
-/// Create a new task.
+/// Create a new task (local-first with optional sync).
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     config: &Config,
     project: Option<String>,
@@ -34,7 +38,9 @@ pub async fn run(
     priority: &str,
     size: &str,
     deadline: Option<String>,
+    no_sync: bool,
 ) -> Result<()> {
+    // Get project ID (may require server)
     let client = Client::new(config)?;
     let project_id = utils::resolve_project(&client, project).await?;
 
@@ -51,21 +57,49 @@ pub async fn run(
         String::new()
     };
 
-    let req = CreateTaskRequest {
+    // Create task locally first
+    let task_id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+
+    let task = Task {
+        id: task_id.clone(),
+        project_id: project_id.clone(),
         title: title.to_string(),
         body,
         priority: priority.to_string(),
         size: size.to_string(),
+        created: now.clone(),
+        modified: now,
+        done: None,
+        deleted: None,
         deadline,
+        version: 1,
+        subtasks: vec![],
+        custom: serde_json::Value::Object(serde_json::Map::new()),
+        log: vec![],
+        current_work_state: None,
     };
 
-    let task = client.create_task(&project_id, &req).await?;
+    // Save locally
+    let ctx = LocalContext::new(config, !no_sync)?;
+    ctx.storage.create_task(&project_id, &task)?;
+    ctx.cache.upsert_task(&task, !no_sync)?;
 
-    println!("{}", "✓ Task created successfully!".green().bold());
+    println!("{}", "✓ Task created locally!".green().bold());
     println!("  ID:       {}", task.id.cyan());
     println!("  Title:    {}", task.title);
     println!("  Priority: {}", task.priority);
     println!("  Size:     {}", task.size);
+
+    // Attempt sync if enabled
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!("{}", "  ✓ Synced with server".green());
+        } else {
+            println!("{}", "  ⊙ Queued for sync (server unreachable)".yellow());
+        }
+    }
+
     println!("\nView with: {}", format!("gtr show {}", task.id).dimmed());
 
     Ok(())
