@@ -222,6 +222,41 @@ impl TaskCache {
 
         Ok(tasks)
     }
+
+    /// List all task IDs for multiple projects.
+    pub fn list_task_ids(&self, project_ids: &[String]) -> Result<Vec<String>> {
+        if project_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let placeholders = project_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!(
+            "SELECT id FROM tasks WHERE project_id IN ({}) ORDER BY modified DESC",
+            placeholders
+        );
+
+        let mut stmt = self
+            .conn
+            .prepare(&query)
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let params: Vec<&dyn rusqlite::ToSql> = project_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+
+        let ids = stmt
+            .query_map(&params[..], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(ids)
+    }
 }
 
 /// Summary of a task from the cache (for listing).

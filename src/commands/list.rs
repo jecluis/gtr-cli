@@ -17,13 +17,15 @@
 
 //! List command implementation.
 
-use crate::Result;
+use chrono::{DateTime, Duration, Utc};
+
 use crate::client::Client;
 use crate::config::Config;
+use crate::local::LocalContext;
 use crate::models::Task;
-use crate::{output, utils};
+use crate::{Result, output, utils};
 
-/// List tasks.
+/// List tasks (local-first from cache).
 #[allow(clippy::too_many_arguments)]
 pub async fn tasks(
     config: &Config,
@@ -37,12 +39,14 @@ pub async fn tasks(
     overdue: bool,
     limit: Option<u32>,
     reversed: bool,
+    no_sync: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
 
     // Determine which projects to query
     let project_ids = if all_projects {
-        // Get all projects
+        // Get all projects from server (TODO: cache projects too)
         client
             .list_projects()
             .await?
@@ -57,22 +61,64 @@ pub async fn tasks(
         vec![utils::resolve_project(&client, None).await?]
     };
 
-    // Fetch tasks from all specified projects
+    // Load tasks from local cache
+    let task_ids = ctx.cache.list_task_ids(&project_ids)?;
     let mut all_tasks = Vec::new();
-    for project_id in project_ids {
-        let tasks = client
-            .list_tasks(
-                &project_id,
-                priority.as_deref(),
-                size.as_deref(),
-                include_done,
-                include_deleted,
-                due_soon,
-                overdue,
-                limit,
-            )
-            .await?;
-        all_tasks.extend(tasks);
+
+    for task_id in task_ids {
+        // Try to load from storage, skip if not found
+        if let Ok(task) = ctx.storage.load_task("", &task_id) {
+            all_tasks.push(task);
+        }
+    }
+
+    // Apply filters
+    all_tasks.retain(|task| {
+        // Filter by done/deleted status
+        let status_ok = match (task.done.is_some(), task.deleted.is_some()) {
+            (true, _) => include_done,
+            (_, true) => include_deleted,
+            _ => true,
+        };
+
+        // Filter by priority
+        let priority_ok = priority
+            .as_ref()
+            .map(|p| task.priority == *p)
+            .unwrap_or(true);
+
+        // Filter by size
+        let size_ok = size.as_ref().map(|s| task.size == *s).unwrap_or(true);
+
+        // Filter by deadline (due soon or overdue)
+        let deadline_ok = if due_soon || overdue {
+            if let Some(ref deadline_str) = task.deadline {
+                if let Ok(deadline) = DateTime::parse_from_rfc3339(deadline_str) {
+                    let now = Utc::now();
+                    let deadline_utc = deadline.with_timezone(&Utc);
+                    if overdue {
+                        deadline_utc < now
+                    } else if due_soon {
+                        deadline_utc < now + Duration::hours(48)
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            true
+        };
+
+        status_ok && priority_ok && size_ok && deadline_ok
+    });
+
+    // Apply limit if specified
+    if let Some(lim) = limit {
+        all_tasks.truncate(lim as usize);
     }
 
     // Sort and split tasks

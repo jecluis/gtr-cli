@@ -88,6 +88,10 @@ enum Commands {
         /// Reverse the order of non-doing tasks
         #[arg(short, long)]
         reversed: bool,
+
+        /// Skip sync (use cache only)
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Show a specific task
@@ -372,6 +376,7 @@ async fn main() -> Result<()> {
             overdue,
             limit,
             reversed,
+            no_sync,
         } => {
             let include_done = all || done;
             let include_deleted = all || deleted;
@@ -387,6 +392,7 @@ async fn main() -> Result<()> {
                 overdue,
                 limit,
                 reversed,
+                no_sync,
             )
             .await
         }
