@@ -104,11 +104,11 @@ impl SyncManager {
     }
 
     /// Get sync status summary.
-    pub fn sync_status(&self) -> Result<SyncStatus> {
+    pub async fn sync_status(&self) -> Result<SyncStatus> {
         let pending_count = self.cache.get_pending_tasks()?.len();
 
-        // Try to reach server (quick check)
-        let server_reachable = false; // TODO: implement health check
+        // Try to reach server (quick check with timeout)
+        let server_reachable = self.client.health_check().await;
 
         Ok(SyncStatus {
             pending_push: pending_count,

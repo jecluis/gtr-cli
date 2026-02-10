@@ -57,7 +57,7 @@ pub async fn now(config: &Config) -> Result<()> {
 /// gtr sync status - Show sync state.
 pub async fn status(config: &Config) -> Result<()> {
     let sync = init_sync(config)?;
-    let status = sync.sync_status()?;
+    let status = sync.sync_status().await?;
 
     println!("{}", "Sync Status:".bold());
 

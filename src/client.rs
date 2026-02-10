@@ -58,6 +58,18 @@ impl Client {
         }
     }
 
+    /// Quick health check to see if server is reachable.
+    pub async fn health_check(&self) -> bool {
+        let url = format!("{}/api/version", self.base_url);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            self.http.get(&url).send(),
+        )
+        .await;
+
+        matches!(result, Ok(Ok(resp)) if resp.status().is_success())
+    }
+
     /// Post CRDT bytes to server for merging (sync).
     pub async fn post_sync(&self, _project_id: &str, task_id: &str, bytes: &[u8]) -> Result<Task> {
         let url = format!("{}/api/sync/{}", self.base_url, task_id);
