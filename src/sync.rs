@@ -56,8 +56,69 @@ impl SyncManager {
         // First push local changes
         self.push_pending().await?;
 
-        // Then pull remote changes (not implemented yet - would need server API)
-        // self.pull_updates().await?;
+        // Then pull remote changes
+        self.pull_updates().await?;
+
+        Ok(())
+    }
+
+    /// Pull updates from server for all projects.
+    async fn pull_updates(&self) -> Result<()> {
+        // Get all projects
+        let projects = self.client.list_projects().await?;
+
+        for project in projects {
+            // Get all tasks for this project
+            let tasks = self
+                .client
+                .list_tasks(&project.id, None, None, true, true, false, false, None)
+                .await?;
+
+            for task in tasks {
+                // Always pull and merge - CRDT handles conflicts automatically
+                if let Err(e) = self.pull_task(&project.id, &task.id).await {
+                    eprintln!("Failed to pull task {}: {}", task.id, e);
+                    // Continue with other tasks
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Pull a single task from server and merge with local version.
+    async fn pull_task(&self, project_id: &str, task_id: &str) -> Result<()> {
+        // Fetch CRDT bytes from server
+        let remote_bytes = self.client.fetch_sync(task_id).await?;
+
+        // Check if we have a local version to merge with
+        let merged_bytes = match self.storage.get_task_bytes(project_id, task_id) {
+            Ok(local_bytes) => {
+                // We have local version - merge with remote
+                let mut local_doc = crate::crdt::TaskDocument::load(&local_bytes)?;
+                let mut remote_doc = crate::crdt::TaskDocument::load(&remote_bytes)?;
+
+                // CRDT merge handles conflicts automatically
+                local_doc.merge(&mut remote_doc)?;
+
+                local_doc.save()
+            }
+            Err(_) => {
+                // No local version - use remote as-is
+                remote_bytes
+            }
+        };
+
+        // Save merged result to local storage
+        self.storage
+            .save_task_bytes(project_id, task_id, &merged_bytes)?;
+
+        // Extract task data for cache
+        let doc = crate::crdt::TaskDocument::load(&merged_bytes)?;
+        let task = doc.to_task()?;
+
+        // Update cache
+        self.cache.upsert_task(&task, false)?;
 
         Ok(())
     }

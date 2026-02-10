@@ -91,6 +91,25 @@ impl Client {
         }
     }
 
+    /// Fetch CRDT bytes from server for a task.
+    pub async fn fetch_sync(&self, task_id: &str) -> Result<Vec<u8>> {
+        let url = format!("{}/api/sync/{}", self.base_url, task_id);
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            Ok(resp.bytes().await?.to_vec())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
     /// List all projects.
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
         let url = format!("{}/api/projects", self.base_url);

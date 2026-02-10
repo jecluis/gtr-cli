@@ -130,4 +130,17 @@ impl TaskStorage {
         let paths = self.config.task_paths(project_id, &uuid);
         Ok(fs::read(&paths.automerge)?)
     }
+
+    /// Save CRDT bytes directly (for pull sync).
+    pub fn save_task_bytes(&self, project_id: &str, task_id: &str, bytes: &[u8]) -> Result<()> {
+        self.config.ensure_project_dir(project_id)?;
+
+        let uuid = uuid::Uuid::parse_str(task_id)
+            .map_err(|e| crate::Error::InvalidInput(format!("invalid task ID: {e}")))?;
+
+        let paths = self.config.task_paths(project_id, &uuid);
+        fs::write(&paths.automerge, bytes)?;
+
+        Ok(())
+    }
 }
