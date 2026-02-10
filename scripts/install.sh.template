@@ -1,0 +1,114 @@
+#!/bin/sh
+# Install script for gtr (Getting Things Rusty CLI)
+# Usage: curl -fsSL https://github.com/USER/REPO/releases/latest/download/install.sh | sh
+
+set -e
+
+# Configuration
+REPO="jecluis/gtr-cli"
+BINARY_NAME="gtr"
+VERSION="__VERSION__" # Replaced during release build
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Detect platform
+detect_platform() {
+	local os
+	local arch
+
+	os="$(uname -s)"
+	arch="$(uname -m)"
+
+	case "$os" in
+	Linux)
+		os="linux"
+		;;
+	Darwin)
+		os="macos"
+		;;
+	*)
+		echo "${RED}Unsupported OS: $os${NC}" >&2
+		exit 1
+		;;
+	esac
+
+	case "$arch" in
+	x86_64 | amd64)
+		arch="amd64"
+		;;
+	aarch64 | arm64)
+		arch="arm64"
+		;;
+	*)
+		echo "${RED}Unsupported architecture: $arch${NC}" >&2
+		exit 1
+		;;
+	esac
+
+	echo "${os}-${arch}"
+}
+
+# Main installation
+main() {
+	echo "${GREEN}Installing gtr ${VERSION}${NC}"
+
+	# Detect platform
+	PLATFORM=$(detect_platform)
+	echo "Detected platform: ${PLATFORM}"
+
+	# Construct download URL
+	ASSET_NAME="${BINARY_NAME}-${VERSION}-${PLATFORM}"
+	DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET_NAME}"
+
+	# Create temp directory
+	TMP_DIR=$(mktemp -d)
+	trap "rm -rf $TMP_DIR" EXIT
+
+	# Download binary
+	echo "Downloading from: ${DOWNLOAD_URL}"
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$BINARY_NAME"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q "$DOWNLOAD_URL" -O "$TMP_DIR/$BINARY_NAME"
+	else
+		echo "${RED}Error: curl or wget is required${NC}" >&2
+		exit 1
+	fi
+
+	# Make executable
+	chmod +x "$TMP_DIR/$BINARY_NAME"
+
+	# Determine install location
+	if [ -w "/usr/local/bin" ]; then
+		INSTALL_DIR="/usr/local/bin"
+	elif [ -d "$HOME/.local/bin" ]; then
+		INSTALL_DIR="$HOME/.local/bin"
+		mkdir -p "$INSTALL_DIR"
+	else
+		INSTALL_DIR="$HOME/bin"
+		mkdir -p "$INSTALL_DIR"
+	fi
+
+	# Install binary
+	mv "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+
+	echo "${GREEN}✓ Successfully installed gtr to ${INSTALL_DIR}${NC}"
+	echo ""
+	echo "Run 'gtr --help' to get started"
+	echo ""
+
+	# Check if install dir is in PATH
+	case ":$PATH:" in
+	*:$INSTALL_DIR:*) ;;
+	*)
+		echo "${YELLOW}Note: Add ${INSTALL_DIR} to your PATH:${NC}"
+		echo "  export PATH=\"\$PATH:${INSTALL_DIR}\""
+		;;
+	esac
+}
+
+main "$@"
