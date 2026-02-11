@@ -60,7 +60,72 @@ Shows task with pretty markdown rendering.
 ### 5. Update a Task
 
 ```bash
+# Update specific fields
 gtr update <task-id> --title "New title" --priority for-now
+
+# Edit body in your $EDITOR
+gtr update <task-id> --body
+```
+
+#### Editing Task Body
+
+When using `--body`, the editor opens with the task title as a markdown H1
+header:
+
+```markdown
+# Your Task Title
+
+Your task body content here...
+```
+
+**Title Editing in Body:**
+
+- **Change title:** Edit the `# Title` line to update the task title
+- **Remove title:** Delete the `# Title` line to keep the original title
+  unchanged
+- **Precedence:** The `--title` flag always takes precedence over title changes
+  in the editor
+
+**Example:**
+
+```bash
+# Edit both title and body in one command
+gtr update abc123 --body
+# (Edit the "# Title" line in editor to change both)
+
+# Override with explicit --title flag
+gtr update abc123 --body --title "Explicit title"
+# (Editor changes to title are ignored, flag wins)
+```
+
+**Editor Configuration:**
+
+The editor is resolved in this order:
+
+1. `gtr config editor --set "nvim -c 'set ft=markdown'"` (config file)
+2. `$EDITOR` environment variable
+3. `$VISUAL` environment variable
+4. Default: `vi`
+
+**Text Wrapping in Neovim:**
+
+For automatic hard-wrapping at 80 columns in nvim, set:
+
+```bash
+gtr config editor --set "nvim -c 'set ft=markdown tw=79 fo+=t'"
+```
+
+This configures:
+
+- `ft=markdown` - Enable markdown syntax highlighting
+- `tw=79` - Set text width to 79 characters (79 + newline = 80 columns)
+- `fo+=t` - Auto-wrap text using textwidth
+
+Or add to your `~/.config/nvim/ftplugin/markdown.vim`:
+
+```vim
+setlocal textwidth=79
+setlocal formatoptions+=t
 ```
 
 ### 6. Delete a Task

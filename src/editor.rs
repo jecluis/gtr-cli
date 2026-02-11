@@ -95,6 +95,63 @@ fn confirm(prompt: &str) -> Result<bool> {
     Ok(input.trim().to_lowercase() == "y")
 }
 
+/// Edit task body with title as markdown H1 header.
+///
+/// Opens editor with `# {title}\n\n{body}` format. If user changes the
+/// title line, returns the new title. If user removes the title line,
+/// original title is preserved.
+///
+/// Returns: `(new_title_if_changed, new_body)`
+pub fn edit_task_body(
+    config: &Config,
+    original_title: &str,
+    original_body: &str,
+) -> Result<(Option<String>, String)> {
+    // Format content with title as H1 header
+    let content = format!("# {}\n\n{}", original_title, original_body);
+
+    // Open editor
+    let edited = edit_text(config, &content)?;
+
+    // Parse result to extract title and body
+    let (new_title, new_body) = parse_markdown_with_title(&edited, original_title);
+
+    Ok((new_title, new_body))
+}
+
+/// Parse edited markdown content, extracting title from H1 header if present.
+///
+/// If first line starts with `# `, it's treated as the title. If the title
+/// changed, returns `Some(new_title)`. If no H1 header or title unchanged,
+/// returns `None` to preserve original title.
+fn parse_markdown_with_title(content: &str, original_title: &str) -> (Option<String>, String) {
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Check if first line is H1 header
+    if let Some(first) = lines.first() {
+        if let Some(stripped) = first.strip_prefix("# ") {
+            let new_title = stripped.trim().to_string();
+
+            // Find where body starts (skip empty lines after title)
+            let body_start = lines
+                .iter()
+                .skip(1)
+                .position(|line| !line.trim().is_empty())
+                .map(|pos| pos + 1)
+                .unwrap_or(1);
+
+            let new_body = lines[body_start..].join("\n");
+
+            // Return new title only if it changed
+            let title_changed = !new_title.is_empty() && new_title != original_title;
+            return (if title_changed { Some(new_title) } else { None }, new_body);
+        }
+    }
+
+    // No H1 header found - keep original title, entire content is body
+    (None, content.to_string())
+}
+
 /// Open an external editor to edit text.
 ///
 /// - Creates a temporary .md file

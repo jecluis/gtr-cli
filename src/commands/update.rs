@@ -65,10 +65,16 @@ pub async fn run(
 
     let old_task = task.clone();
 
-    // Edit body if requested
+    // Edit body if requested (includes title as H1 header)
     if edit_body {
-        match crate::editor::edit_text(config, &task.body) {
-            Ok(content) => task.body = content,
+        match crate::editor::edit_task_body(config, &task.title, &task.body) {
+            Ok((new_title, new_body)) => {
+                task.body = new_body;
+                // Update title if it changed in editor
+                if let Some(title_from_editor) = new_title {
+                    task.title = title_from_editor;
+                }
+            }
             Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
                 println!("{}", "✗ Operation cancelled".yellow());
                 return Ok(());
@@ -108,6 +114,7 @@ pub async fn run(
 
     // Show what changed with highlighting
     if let Some(new_title) = title {
+        // Title changed via --title flag
         if old_task.title != new_title {
             println!(
                 "  {} {} → {}",
@@ -116,6 +123,14 @@ pub async fn run(
                 new_title.green()
             );
         }
+    } else if edit_body && old_task.title != task.title {
+        // Title changed via editor
+        println!(
+            "  {} {} → {}",
+            "Title:".bold(),
+            old_task.title.dimmed().strikethrough(),
+            task.title.green()
+        );
     }
 
     if let Some(new_priority) = priority {
