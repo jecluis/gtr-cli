@@ -27,6 +27,55 @@ use tabled::{Table, Tabled};
 use crate::markdown::MarkdownRenderer;
 use crate::models::{Project, Task};
 
+/// Calculate minimum unique prefix length for task IDs.
+///
+/// Uses optimized O(N log N) algorithm by sorting IDs and comparing adjacent pairs.
+/// Always returns at least 2 to avoid single-character typos.
+fn find_min_unique_prefix_len(task_ids: &[String]) -> usize {
+    if task_ids.len() <= 1 {
+        return 2; // minimum
+    }
+
+    let mut sorted: Vec<String> = task_ids.iter().map(|id| id[..8].to_string()).collect();
+    sorted.sort();
+
+    let mut max_needed = 2; // minimum
+
+    for i in 0..sorted.len() - 1 {
+        let common_len = common_prefix_len(&sorted[i], &sorted[i + 1]);
+        let needed = (common_len + 1).max(2);
+        max_needed = max_needed.max(needed);
+    }
+
+    max_needed.min(8) // cap at shortened ID length
+}
+
+/// Calculate length of common prefix between two strings.
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    a.chars()
+        .zip(b.chars())
+        .take_while(|(ca, cb)| ca == cb)
+        .count()
+}
+
+/// Format task ID with colored prefix and separator for list views.
+///
+/// If terminal supports colors, formats as: `prefix|suffix` where prefix is cyan
+/// and suffix is dimmed. If no color support, returns plain shortened ID.
+fn format_task_id(id: &str, prefix_len: usize) -> String {
+    let id_short = &id[..8];
+
+    // Check if terminal supports colors
+    if colored::control::SHOULD_COLORIZE.should_colorize() {
+        let prefix = &id_short[..prefix_len];
+        let suffix = &id_short[prefix_len..];
+        format!("{}|{}", prefix.cyan(), suffix.dimmed())
+    } else {
+        // No color support: return plain shortened ID without separator
+        id_short.to_string()
+    }
+}
+
 /// Row type for project table display.
 #[derive(Tabled)]
 struct ProjectRow {
@@ -150,10 +199,13 @@ fn print_task_table(tasks: &[Task]) {
 
 /// Print task table without project column.
 fn print_task_table_simple(tasks: &[Task]) {
+    // Calculate minimum unique prefix length for all task IDs
+    let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
+    let prefix_len = find_min_unique_prefix_len(&task_ids);
+
     let rows: Vec<TaskRow> = tasks
         .iter()
         .map(|task| {
-            let id_short = &task.id[..8];
             let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
                 .unwrap()
                 .with_timezone(&Local);
@@ -191,7 +243,7 @@ fn print_task_table_simple(tasks: &[Task]) {
             };
 
             TaskRow {
-                id: id_short.cyan().to_string(),
+                id: format_task_id(&task.id, prefix_len),
                 title: task.title.clone(),
                 priority: priority_colored,
                 size: task.size.clone(),
@@ -213,6 +265,10 @@ fn print_task_table_simple(tasks: &[Task]) {
 
 /// Print task table with project column.
 fn print_task_table_with_project(tasks: &[Task], unique_projects: HashSet<&str>) {
+    // Calculate minimum unique prefix length for all task IDs
+    let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
+    let prefix_len = find_min_unique_prefix_len(&task_ids);
+
     // Generate colors for each project (cycle through a set of colors)
     let colors = [
         colored::Color::Cyan,
@@ -232,7 +288,6 @@ fn print_task_table_with_project(tasks: &[Task], unique_projects: HashSet<&str>)
     let rows: Vec<TaskRowWithProject> = tasks
         .iter()
         .map(|task| {
-            let id_short = &task.id[..8];
             let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
                 .unwrap()
                 .with_timezone(&Local);
@@ -273,7 +328,7 @@ fn print_task_table_with_project(tasks: &[Task], unique_projects: HashSet<&str>)
             let project = task.project_id.color(*color).to_string();
 
             TaskRowWithProject {
-                id: id_short.cyan().to_string(),
+                id: format_task_id(&task.id, prefix_len),
                 title: task.title.clone(),
                 project,
                 priority: priority_colored,
@@ -374,4 +429,72 @@ pub fn print_task_details(task: &Task, no_format: bool) {
     }
 
     println!("{}\n", "═".repeat(60));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_common_prefix_len() {
+        assert_eq!(common_prefix_len("abc", "abc"), 3);
+        assert_eq!(common_prefix_len("abc", "abd"), 2);
+        assert_eq!(common_prefix_len("abc", "xyz"), 0);
+        assert_eq!(common_prefix_len("", "abc"), 0);
+        assert_eq!(common_prefix_len("abc", ""), 0);
+    }
+
+    #[test]
+    fn test_find_min_unique_prefix_len_single_task() {
+        let ids = vec!["ea75a3ac".to_string()];
+        assert_eq!(find_min_unique_prefix_len(&ids), 2);
+    }
+
+    #[test]
+    fn test_find_min_unique_prefix_len_all_different() {
+        let ids = vec![
+            "ea75a3ac".to_string(),
+            "b35bcda6".to_string(),
+            "d240111c".to_string(),
+        ];
+        // All differ at position 0, but minimum is 2
+        assert_eq!(find_min_unique_prefix_len(&ids), 2);
+    }
+
+    #[test]
+    fn test_find_min_unique_prefix_len_similar_prefix() {
+        let ids = vec![
+            "d240111c".to_string(),
+            "ea75a3ac".to_string(),
+            "ea7bc84d".to_string(),
+        ];
+        // ea75a3ac vs ea7bc84d differ at position 3, so need 4 chars
+        assert_eq!(find_min_unique_prefix_len(&ids), 4);
+    }
+
+    #[test]
+    fn test_find_min_unique_prefix_len_longer_prefix() {
+        let ids = vec!["ea75a3ac".to_string(), "ea75a3bc".to_string()];
+        // Differ at position 6, so need 7 chars
+        assert_eq!(find_min_unique_prefix_len(&ids), 7);
+    }
+
+    #[test]
+    fn test_format_task_id_no_color() {
+        // When SHOULD_COLORIZE is false, should return plain shortened ID
+        colored::control::set_override(false);
+        let formatted = format_task_id("ea75a3ac-1234-5678-90ab-cdef12345678", 4);
+        assert_eq!(formatted, "ea75a3ac");
+        colored::control::unset_override();
+    }
+
+    #[test]
+    fn test_format_task_id_with_color() {
+        // When SHOULD_COLORIZE is true, should include separator
+        colored::control::set_override(true);
+        let formatted = format_task_id("ea75a3ac-1234-5678-90ab-cdef12345678", 4);
+        // Should contain the separator (actual color codes may vary)
+        assert!(formatted.contains("|"));
+        colored::control::unset_override();
+    }
 }
