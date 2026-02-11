@@ -17,6 +17,7 @@
 
 //! Utility functions for the CLI.
 
+use chrono::{DateTime, Utc};
 use colored::Colorize;
 use dialoguer::Select;
 
@@ -112,4 +113,48 @@ pub async fn resolve_task_id(client: &Client, short_id: &str) -> Result<String> 
             matches.len()
         ))),
     }
+}
+
+/// Validate and normalize a deadline string to RFC3339 format.
+///
+/// Accepts various ISO 8601 / RFC3339 formats and returns a normalized
+/// RFC3339 string with timezone. Returns an error with helpful message
+/// if the format is invalid.
+///
+/// Examples of valid input:
+/// - "2026-02-15T08:00:00Z"
+/// - "2026-02-15T08:00:00-05:00"
+/// - "2026-02-15 08:00:00"
+pub fn validate_deadline(deadline_str: &str) -> Result<String> {
+    // Try parsing as RFC3339 first
+    if let Ok(dt) = DateTime::parse_from_rfc3339(deadline_str) {
+        return Ok(dt.to_rfc3339());
+    }
+
+    // Try parsing as "YYYY-MM-DD HH:MM:SS" and assume UTC
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(deadline_str, "%Y-%m-%d %H:%M:%S") {
+        let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+        return Ok(dt_utc.to_rfc3339());
+    }
+
+    // Try parsing as "YYYY-MM-DD" (date only, assume midnight UTC)
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(deadline_str, "%Y-%m-%d") {
+        let dt = date
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| Error::InvalidInput("Invalid date".to_string()))?;
+        let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+        return Ok(dt_utc.to_rfc3339());
+    }
+
+    // Invalid format
+    Err(Error::InvalidInput(format!(
+        "Invalid deadline format: '{}'\n\
+        \n\
+        Supported formats:\n\
+        - ISO 8601 with timezone: 2026-02-15T08:00:00Z\n\
+        - ISO 8601 with offset: 2026-02-15T08:00:00-05:00\n\
+        - Date and time (UTC): 2026-02-15 08:00:00\n\
+        - Date only (midnight UTC): 2026-02-15",
+        deadline_str
+    )))
 }

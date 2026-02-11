@@ -97,7 +97,8 @@ pub async fn run(
         task.deadline = if new_deadline == "none" {
             None
         } else {
-            Some(new_deadline.clone())
+            // Validate deadline format
+            Some(crate::utils::validate_deadline(new_deadline)?)
         };
     }
 

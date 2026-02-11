@@ -44,6 +44,13 @@ pub async fn run(
     let client = Client::new(config)?;
     let project_id = utils::resolve_project(&client, project).await?;
 
+    // Validate deadline if provided
+    let validated_deadline = if let Some(ref dl) = deadline {
+        Some(utils::validate_deadline(dl)?)
+    } else {
+        None
+    };
+
     let body = if edit_body {
         match crate::editor::edit_text(config, "") {
             Ok(content) => content,
@@ -72,7 +79,7 @@ pub async fn run(
         modified: now,
         done: None,
         deleted: None,
-        deadline,
+        deadline: validated_deadline,
         version: 1,
         subtasks: vec![],
         custom: serde_json::Value::Object(serde_json::Map::new()),
