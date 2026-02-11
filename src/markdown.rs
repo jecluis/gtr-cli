@@ -88,12 +88,16 @@ impl MarkdownRenderer {
     ///
     /// If markdown rendering is disabled (NO_COLOR set or --no-format),
     /// returns the input text unchanged.
+    ///
+    /// Output is hard-wrapped at 80 columns for consistent display across
+    /// terminal widths.
     pub fn render(&self, markdown: &str) -> String {
         if !self.enabled || markdown.is_empty() {
             return markdown.to_string();
         }
 
-        self.skin.term_text(markdown).to_string()
+        // Render with fixed 80-column width for consistent wrapping
+        self.skin.text(markdown, Some(80)).to_string()
     }
 
     /// Check if markdown rendering is enabled.
