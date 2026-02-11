@@ -372,7 +372,11 @@ fn print_task_table_with_project(
 ///
 /// If `no_format` is true or NO_COLOR is set, markdown will not be rendered.
 pub fn print_task_details(task: &Task, no_format: bool) {
-    let renderer = MarkdownRenderer::with_override(Some(no_format));
+    let renderer = if no_format {
+        MarkdownRenderer::with_override(Some(false)) // Force disable
+    } else {
+        MarkdownRenderer::with_override(None) // Use default (respects NO_COLOR/TTY)
+    };
 
     // Print header
     println!("\n{}", "═".repeat(80));

@@ -36,13 +36,14 @@ impl MarkdownRenderer {
 
     /// Create a new markdown renderer with an explicit enabled/disabled override.
     ///
-    /// If `force_disable` is Some(true), markdown rendering is disabled
-    /// regardless of environment settings.
-    pub fn with_override(force_disable: Option<bool>) -> Self {
-        let enabled = if let Some(true) = force_disable {
-            false
-        } else {
-            should_render_markdown()
+    /// - `None`: Use default logic (check NO_COLOR and TTY)
+    /// - `Some(true)`: Force enable markdown rendering
+    /// - `Some(false)`: Force disable markdown rendering
+    pub fn with_override(override_enabled: Option<bool>) -> Self {
+        let enabled = match override_enabled {
+            Some(true) => true,
+            Some(false) => false,
+            None => should_render_markdown(),
         };
 
         let mut skin = MadSkin::default();
@@ -150,22 +151,15 @@ mod tests {
 
     #[test]
     fn plain_text_unchanged_when_disabled() {
-        unsafe {
-            std::env::set_var("NO_COLOR", "1");
-        }
-        let renderer = MarkdownRenderer::new();
+        // Force disable markdown rendering
+        let renderer = MarkdownRenderer::with_override(Some(false));
         assert_eq!(renderer.render("plain text"), "plain text");
-        unsafe {
-            std::env::remove_var("NO_COLOR");
-        }
     }
 
     #[test]
     fn renders_basic_markdown() {
-        unsafe {
-            std::env::remove_var("NO_COLOR");
-        }
-        let renderer = MarkdownRenderer::new();
+        // Force enable markdown rendering for testing (stdout is not a TTY in tests)
+        let renderer = MarkdownRenderer::with_override(Some(true));
         let input = "**bold** and *italic*";
         let output = renderer.render(input);
 
