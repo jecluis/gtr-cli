@@ -251,7 +251,13 @@ enum Commands {
         command: ProjectCommands,
     },
 
-    /// Manage deadline promotion configuration
+    /// Manage deadline promotion thresholds
+    Deadline {
+        #[command(subcommand)]
+        command: DeadlineCommands,
+    },
+
+    /// Manage general configuration (editor, etc.)
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
@@ -314,7 +320,7 @@ enum SyncCommands {
 }
 
 #[derive(Subcommand, Debug)]
-enum ConfigCommands {
+enum DeadlineCommands {
     /// Show current deadline promotion thresholds
     Show {
         /// Show project-specific configuration
@@ -353,6 +359,20 @@ enum ConfigCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum ConfigCommands {
+    /// Show or manage editor configuration
+    Editor {
+        /// Set editor command (with optional args)
+        #[arg(long)]
+        set: Option<String>,
+
+        /// Unset editor (fall back to $EDITOR or default)
+        #[arg(long)]
+        unset: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
@@ -379,7 +399,7 @@ async fn run() -> Result<()> {
     let config = Config::load(cli.config.as_deref())?;
 
     // Override config with CLI arguments
-    let config = config.with_server(cli.server).with_token(cli.token);
+    let mut config = config.with_server(cli.server).with_token(cli.token);
 
     // Execute command
     match cli.command {
@@ -483,18 +503,31 @@ async fn run() -> Result<()> {
             } => gtr::commands::project::update(&config, &project_id, description).await,
             ProjectCommands::List => gtr::commands::project::list(&config).await,
         },
-        Commands::Config { command } => match command {
-            ConfigCommands::Show { project } => gtr::commands::config::show(&config, project).await,
-            ConfigCommands::Set {
+        Commands::Deadline { command } => match command {
+            DeadlineCommands::Show { project } => {
+                gtr::commands::deadline::show(&config, project).await
+            }
+            DeadlineCommands::Set {
                 size,
                 duration,
                 project,
-            } => gtr::commands::config::set(&config, size, duration, project).await,
-            ConfigCommands::Unset { size, project } => {
-                gtr::commands::config::unset(&config, size, project).await
+            } => gtr::commands::deadline::set(&config, size, duration, project).await,
+            DeadlineCommands::Unset { size, project } => {
+                gtr::commands::deadline::unset(&config, size, project).await
             }
-            ConfigCommands::Reset { project } => {
-                gtr::commands::config::reset(&config, project).await
+            DeadlineCommands::Reset { project } => {
+                gtr::commands::deadline::reset(&config, project).await
+            }
+        },
+        Commands::Config { command } => match command {
+            ConfigCommands::Editor { set, unset } => {
+                if unset {
+                    gtr::commands::config::unset_editor(&mut config)
+                } else if let Some(editor) = set {
+                    gtr::commands::config::set_editor(&mut config, editor.clone())
+                } else {
+                    gtr::commands::config::show_editor(&config)
+                }
             }
         },
         Commands::Sync { command } => match command {

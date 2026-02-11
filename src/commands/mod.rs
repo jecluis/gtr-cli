@@ -19,6 +19,7 @@
 
 pub mod config;
 pub mod create;
+pub mod deadline;
 pub mod delete;
 pub mod done;
 pub mod init;

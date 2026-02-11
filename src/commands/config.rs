@@ -15,157 +15,73 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Config command implementation.
-
-use std::collections::HashMap;
+//! General configuration command implementation.
 
 use colored::Colorize;
 
 use crate::Result;
-use crate::client::Client;
 use crate::config::Config;
-use crate::models::ConfigUpdateRequest;
 
-/// Show current configuration.
-pub async fn show(config: &Config, project: Option<String>) -> Result<()> {
-    let client = Client::new(config)?;
+/// Show current editor configuration.
+pub fn show_editor(config: &Config) -> Result<()> {
+    let editor = resolve_editor(config);
+    let source = get_editor_source(config);
 
-    let cfg = if let Some(project_id) = project {
-        client.get_project_config(&project_id).await?
-    } else {
-        client.get_user_config().await?
-    };
-
-    println!("{}", "Deadline Promotion Thresholds".bold().green());
+    println!("{}", "Editor Configuration".bold().green());
     println!("{}", "─".repeat(50));
-
-    let sizes = ["XS", "S", "M", "L", "XL"];
-    for size in sizes {
-        let threshold = cfg
-            .deadline_thresholds
-            .get(size)
-            .map(String::as_str)
-            .unwrap_or("-");
-
-        // Check if this is an override
-        let is_override = cfg
-            .overrides
-            .as_ref()
-            .and_then(|o| o.deadline_thresholds.get(size))
-            .is_some();
-
-        if is_override {
-            println!(
-                "  {:<4} {:<10} {}",
-                size.cyan(),
-                threshold.yellow().bold(),
-                "(override)".dimmed()
-            );
-        } else {
-            println!(
-                "  {:<4} {:<10} {}",
-                size.cyan(),
-                threshold,
-                "(default)".dimmed()
-            );
-        }
-    }
-
-    if let Some(overrides) = &cfg.overrides {
-        if !overrides.deadline_thresholds.is_empty() {
-            println!("\n{}", "Active Overrides:".bold());
-            for (size, duration) in &overrides.deadline_thresholds {
-                println!("  {} = {}", size.cyan(), duration.yellow());
-            }
-        }
-    }
-
+    println!("  Current: {}", editor.cyan());
+    println!("  Source:  {}", source.dimmed());
     println!();
-    Ok(())
-}
-
-/// Set deadline threshold for a specific size.
-pub async fn set(
-    config: &Config,
-    size: String,
-    duration: String,
-    project: Option<String>,
-) -> Result<()> {
-    let client = Client::new(config)?;
-
-    let mut thresholds = HashMap::new();
-    thresholds.insert(size.clone(), Some(duration.clone()));
-
-    let req = ConfigUpdateRequest {
-        deadline_thresholds: Some(thresholds),
-    };
-
-    let cfg = if let Some(project_id) = project {
-        client.update_project_config(&project_id, &req).await?
-    } else {
-        client.update_user_config(&req).await?
-    };
-
-    println!("{}", "✓ Configuration updated!".green().bold());
-    println!("  {} threshold set to {}", size.cyan(), duration.yellow());
-
-    if let Some(merged) = cfg.deadline_thresholds.get(&size) {
-        if merged != &duration {
-            println!(
-                "  {} Effective value: {} (overridden by project config)",
-                "ℹ".blue(),
-                merged.yellow()
-            );
-        }
-    }
 
     Ok(())
 }
 
-/// Unset (remove) deadline threshold override for a specific size.
-pub async fn unset(config: &Config, size: String, project: Option<String>) -> Result<()> {
-    let client = Client::new(config)?;
+/// Set editor in configuration file.
+pub fn set_editor(config: &mut Config, editor: String) -> Result<()> {
+    config.editor = Some(editor.clone());
+    config.save()?;
 
-    let mut thresholds = HashMap::new();
-    thresholds.insert(size.clone(), None);
-
-    let req = ConfigUpdateRequest {
-        deadline_thresholds: Some(thresholds),
-    };
-
-    let cfg = if let Some(project_id) = project {
-        client.update_project_config(&project_id, &req).await?
-    } else {
-        client.update_user_config(&req).await?
-    };
-
-    println!("{}", "✓ Override removed!".green().bold());
-    println!("  {} threshold reset to default", size.cyan());
-
-    if let Some(default) = cfg.deadline_thresholds.get(&size) {
-        println!("  Current value: {}", default.dimmed());
-    }
+    println!("{}", "✓ Editor configuration updated!".green().bold());
+    println!("  Editor set to: {}", editor.cyan());
+    println!();
 
     Ok(())
 }
 
-/// Reset all overrides to defaults.
-pub async fn reset(config: &Config, project: Option<String>) -> Result<()> {
-    let client = Client::new(config)?;
+/// Unset (remove) editor from configuration file.
+pub fn unset_editor(config: &mut Config) -> Result<()> {
+    config.editor = None;
+    config.save()?;
 
-    if let Some(project_id) = project {
-        client.reset_project_config(&project_id).await?;
-        println!(
-            "{}",
-            "✓ Project configuration reset to defaults!".green().bold()
-        );
-    } else {
-        client.reset_user_config().await?;
-        println!(
-            "{}",
-            "✓ User configuration reset to defaults!".green().bold()
-        );
-    }
+    let fallback = resolve_editor(config);
+    let source = get_editor_source(config);
+
+    println!("{}", "✓ Editor configuration removed!".green().bold());
+    println!("  Now using: {} ({})", fallback.cyan(), source.dimmed());
+    println!();
 
     Ok(())
+}
+
+/// Resolve which editor to use, with fallback chain.
+fn resolve_editor(config: &Config) -> String {
+    config
+        .editor
+        .clone()
+        .or_else(|| std::env::var("EDITOR").ok())
+        .or_else(|| std::env::var("VISUAL").ok())
+        .unwrap_or_else(|| "vi".to_string())
+}
+
+/// Get the source of the current editor setting.
+fn get_editor_source(config: &Config) -> String {
+    if config.editor.is_some() {
+        "config file".to_string()
+    } else if std::env::var("EDITOR").is_ok() {
+        "$EDITOR".to_string()
+    } else if std::env::var("VISUAL").is_ok() {
+        "$VISUAL".to_string()
+    } else {
+        "default".to_string()
+    }
 }
