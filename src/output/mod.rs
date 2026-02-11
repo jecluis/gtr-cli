@@ -357,9 +357,9 @@ pub fn print_task_details(task: &Task, no_format: bool) {
     let renderer = MarkdownRenderer::with_override(Some(no_format));
 
     // Print header
-    println!("\n{}", "═".repeat(60));
+    println!("\n{}", "═".repeat(80));
     println!("{}", task.title.bold().green());
-    println!("{}", "═".repeat(60));
+    println!("{}", "═".repeat(80));
 
     // Print metadata
     println!("\n{}", "Metadata:".bold());
@@ -422,13 +422,13 @@ pub fn print_task_details(task: &Task, no_format: bool) {
     // Print body with markdown rendering
     if !task.body.is_empty() {
         println!("\n{}", "Description:".bold());
-        println!("{}", "─".repeat(60));
+        println!("{}", "─".repeat(80));
         print!("{}", renderer.render(&task.body));
     } else {
         println!("\n{}", "(No description)".italic().dimmed());
     }
 
-    println!("{}\n", "═".repeat(60));
+    println!("{}\n", "═".repeat(80));
 }
 
 #[cfg(test)]
