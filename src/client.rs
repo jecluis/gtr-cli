@@ -110,6 +110,51 @@ impl Client {
         }
     }
 
+    /// Sync changes with server using change-based protocol.
+    ///
+    /// Sends local changes and heads, receives server changes and merged task.
+    pub async fn sync_changes(
+        &self,
+        task_id: &str,
+        changes: Vec<Vec<u8>>,
+        heads: Vec<Vec<u8>>,
+    ) -> Result<SyncChangesResponse> {
+        #[derive(serde::Serialize)]
+        struct SyncRequest {
+            changes: Vec<Vec<u8>>,
+            heads: Vec<Vec<u8>>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct SyncResponse {
+            changes: Vec<Vec<u8>>,
+            task: Task,
+        }
+
+        let url = format!("{}/api/sync/changes/{}", self.base_url, task_id);
+        let req = SyncRequest { changes, heads };
+
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .json(&req)
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            let sync_resp: SyncResponse = resp.json().await?;
+            Ok(SyncChangesResponse {
+                changes: sync_resp.changes,
+                task: sync_resp.task,
+            })
+        } else {
+            let status = resp.status();
+            let text = resp.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
     /// List all projects.
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
         let url = format!("{}/api/projects", self.base_url);

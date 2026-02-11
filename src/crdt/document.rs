@@ -279,4 +279,35 @@ impl TaskDocument {
 
         Ok(result)
     }
+
+    /// Get changes since a given set of document heads (as raw bytes).
+    ///
+    /// Returns changes as a list of byte vectors for transmission to server.
+    pub fn get_changes_since_bytes(&self, heads_bytes: &[Vec<u8>]) -> Vec<Vec<u8>> {
+        // Convert byte vectors to ChangeHash
+        let heads: Vec<automerge::ChangeHash> = heads_bytes
+            .iter()
+            .filter_map(|bytes| automerge::ChangeHash::try_from(bytes.as_slice()).ok())
+            .collect();
+
+        self.doc
+            .get_changes(&heads)
+            .iter()
+            .map(|change| change.raw_bytes().to_vec())
+            .collect()
+    }
+
+    /// Apply changes from byte vectors.
+    ///
+    /// Takes a vector of change bytes and applies them to this document.
+    /// This preserves causality and proper Lamport clock ordering.
+    pub fn apply_changes(&mut self, changes: Vec<Vec<u8>>) -> Result<()> {
+        for change_bytes in changes {
+            self.doc
+                .apply_changes([automerge::Change::from_bytes(change_bytes)
+                    .map_err(|e| Error::Storage(format!("invalid change bytes: {e:?}")))?])
+                .map_err(|e| Error::Storage(format!("failed to apply change: {e:?}")))?;
+        }
+        Ok(())
+    }
 }

@@ -154,7 +154,7 @@ impl SyncManager {
         Ok(())
     }
 
-    /// Push a single task to server.
+    /// Push a single task to server using change-based sync.
     async fn push_task(&self, task_id: &str) -> Result<()> {
         // Get project_id from cache
         let summary = self
@@ -162,26 +162,33 @@ impl SyncManager {
             .get_task_summary(task_id)?
             .ok_or_else(|| crate::Error::TaskNotFound(format!("task {task_id} not in cache")))?;
 
-        // Get task from local storage
-        let task = self.storage.load_task(&summary.project_id, task_id)?;
+        // Load local CRDT document
+        let bytes = self.storage.get_task_bytes(&summary.project_id, task_id)?;
+        let mut local_doc = crate::crdt::TaskDocument::load(&bytes)?;
 
-        // Get CRDT bytes for server merge
-        let bytes = self.storage.get_task_bytes(&task.project_id, task_id)?;
+        // Get heads that represent last server state (empty for now - we'll track this later)
+        // For initial implementation, we send all changes
+        let last_server_heads: Vec<Vec<u8>> = vec![];
 
-        // Post to server sync endpoint
-        let merged_task = self
+        // Get changes since last sync with server
+        let changes = local_doc.get_changes_since_bytes(&last_server_heads);
+
+        // Sync with server
+        let sync_response = self
             .client
-            .post_sync(&task.project_id, task_id, &bytes)
+            .sync_changes(task_id, changes, last_server_heads)
             .await?;
 
-        // CRITICAL: Fetch the merged CRDT bytes from server and save locally
-        // This ensures our local CRDT has the server's authoritative merged state
-        let merged_bytes = self.client.fetch_sync(task_id).await?;
+        // Apply server's changes to our local document
+        local_doc.apply_changes(sync_response.changes)?;
+
+        // Save updated document
+        let updated_bytes = local_doc.save();
         self.storage
-            .save_task_bytes(&task.project_id, task_id, &merged_bytes)?;
+            .save_task_bytes(&summary.project_id, task_id, &updated_bytes)?;
 
         // Update cache with merged result
-        self.cache.upsert_task(&merged_task, false)?;
+        self.cache.upsert_task(&sync_response.task, false)?;
         self.cache.mark_synced(task_id)?;
 
         Ok(())
