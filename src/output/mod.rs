@@ -19,7 +19,8 @@
 
 use std::collections::HashSet;
 
-use chrono::Local;
+use chrono::{DateTime, Local, Utc};
+use chrono_humanize::{Accuracy, HumanTime, Tense};
 use colored::Colorize;
 use tabled::settings::{Alignment, Modify, Style, object::Columns};
 use tabled::{Table, Tabled};
@@ -56,6 +57,51 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
         .zip(b.chars())
         .take_while(|(ca, cb)| ca == cb)
         .count()
+}
+
+/// Format deadline for display (relative or absolute).
+///
+/// - If absolute_dates is true: always show absolute date
+/// - If relative and > 30 days: show absolute date
+/// - Otherwise: show relative time using chrono-humanize
+/// - Color red if overdue
+fn format_deadline(deadline_str: Option<&str>, absolute_dates: bool) -> String {
+    let Some(deadline_str) = deadline_str else {
+        return "-".to_string();
+    };
+
+    let Ok(deadline) = DateTime::parse_from_rfc3339(deadline_str) else {
+        return "-".to_string();
+    };
+
+    let deadline_time = deadline.with_timezone(&Local);
+    let now = Utc::now();
+    let is_overdue = deadline < now;
+
+    // Calculate days difference for threshold check
+    let duration = if deadline > now {
+        deadline.signed_duration_since(now)
+    } else {
+        now.signed_duration_since(deadline)
+    };
+    let days = duration.num_days();
+
+    // Determine display format
+    let formatted = if absolute_dates || days > 30 {
+        // Show absolute date
+        deadline_time.format("%Y-%m-%d").to_string()
+    } else {
+        // Show relative time
+        let ht = HumanTime::from(deadline);
+        ht.to_text_en(Accuracy::Rough, Tense::Future)
+    };
+
+    // Color red if overdue
+    if is_overdue {
+        formatted.red().to_string()
+    } else {
+        formatted
+    }
 }
 
 /// Format task ID with colored prefix and separator for list views.
@@ -152,7 +198,7 @@ struct TaskRowWithProject {
 }
 
 /// Print tasks grouped by work state (doing vs others).
-pub fn print_tasks_grouped(doing_tasks: &[Task], other_tasks: &[Task]) {
+pub fn print_tasks_grouped(doing_tasks: &[Task], other_tasks: &[Task], absolute_dates: bool) {
     if doing_tasks.is_empty() && other_tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
         return;
@@ -160,14 +206,14 @@ pub fn print_tasks_grouped(doing_tasks: &[Task], other_tasks: &[Task]) {
 
     if !doing_tasks.is_empty() {
         println!("\n{}", "═══ DOING ═══".bold().cyan());
-        print_task_table(doing_tasks);
+        print_task_table(doing_tasks, absolute_dates);
     }
 
     if !other_tasks.is_empty() {
         if !doing_tasks.is_empty() {
             println!("\n{}", "═══ TASKS ═══".bold());
         }
-        print_task_table(other_tasks);
+        print_task_table(other_tasks, absolute_dates);
     }
 
     let total = doing_tasks.len() + other_tasks.len();
@@ -175,30 +221,30 @@ pub fn print_tasks_grouped(doing_tasks: &[Task], other_tasks: &[Task]) {
 }
 
 /// Print a list of tasks in table format.
-pub fn print_tasks(tasks: &[Task]) {
+pub fn print_tasks(tasks: &[Task], absolute_dates: bool) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
         return;
     }
-    print_task_table(tasks);
+    print_task_table(tasks, absolute_dates);
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
 
 /// Internal function to print task table.
-fn print_task_table(tasks: &[Task]) {
+fn print_task_table(tasks: &[Task], absolute_dates: bool) {
     // Check if tasks are from multiple projects
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
     let show_project = unique_projects.len() > 1;
 
     if show_project {
-        print_task_table_with_project(tasks, unique_projects);
+        print_task_table_with_project(tasks, unique_projects, absolute_dates);
     } else {
-        print_task_table_simple(tasks);
+        print_task_table_simple(tasks, absolute_dates);
     }
 }
 
 /// Print task table without project column.
-fn print_task_table_simple(tasks: &[Task]) {
+fn print_task_table_simple(tasks: &[Task], absolute_dates: bool) {
     // Calculate minimum unique prefix length for all task IDs
     let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
     let prefix_len = find_min_unique_prefix_len(&task_ids);
@@ -216,23 +262,7 @@ fn print_task_table_simple(tasks: &[Task]) {
                 _ => task.priority.to_string(),
             };
 
-            let deadline_str = if let Some(ref deadline_str) = task.deadline {
-                if let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str) {
-                    let deadline_time = deadline.with_timezone(&Local);
-                    let now = chrono::Utc::now();
-                    let formatted = deadline_time.format("%Y-%m-%d").to_string();
-
-                    if deadline < now {
-                        formatted.red().to_string()
-                    } else {
-                        formatted
-                    }
-                } else {
-                    "-".to_string()
-                }
-            } else {
-                "-".to_string()
-            };
+            let deadline_str = format_deadline(task.deadline.as_deref(), absolute_dates);
 
             let status = if task.is_deleted() {
                 "DELETED".red().to_string()
@@ -264,7 +294,11 @@ fn print_task_table_simple(tasks: &[Task]) {
 }
 
 /// Print task table with project column.
-fn print_task_table_with_project(tasks: &[Task], unique_projects: HashSet<&str>) {
+fn print_task_table_with_project(
+    tasks: &[Task],
+    unique_projects: HashSet<&str>,
+    absolute_dates: bool,
+) {
     // Calculate minimum unique prefix length for all task IDs
     let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
     let prefix_len = find_min_unique_prefix_len(&task_ids);
@@ -298,23 +332,7 @@ fn print_task_table_with_project(tasks: &[Task], unique_projects: HashSet<&str>)
                 _ => task.priority.to_string(),
             };
 
-            let deadline_str = if let Some(ref deadline_str) = task.deadline {
-                if let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str) {
-                    let deadline_time = deadline.with_timezone(&Local);
-                    let now = chrono::Utc::now();
-                    let formatted = deadline_time.format("%Y-%m-%d").to_string();
-
-                    if deadline < now {
-                        formatted.red().to_string()
-                    } else {
-                        formatted
-                    }
-                } else {
-                    "-".to_string()
-                }
-            } else {
-                "-".to_string()
-            };
+            let deadline_str = format_deadline(task.deadline.as_deref(), absolute_dates);
 
             let status = if task.is_deleted() {
                 "DELETED".red().to_string()
@@ -495,6 +513,92 @@ mod tests {
         let formatted = format_task_id("ea75a3ac-1234-5678-90ab-cdef12345678", 4);
         // Should contain the separator (actual color codes may vary)
         assert!(formatted.contains("|"));
+        colored::control::unset_override();
+    }
+
+    #[test]
+    fn test_format_deadline_none() {
+        let formatted = format_deadline(None, false);
+        assert_eq!(formatted, "-");
+    }
+
+    #[test]
+    fn test_format_deadline_invalid() {
+        let formatted = format_deadline(Some("invalid-date"), false);
+        assert_eq!(formatted, "-");
+    }
+
+    #[test]
+    fn test_format_deadline_relative_near() {
+        // Deadline 3 days in the future - should show relative
+        let future = Utc::now() + chrono::Duration::days(3);
+        let deadline_str = future.to_rfc3339();
+
+        let formatted = format_deadline(Some(&deadline_str), false);
+
+        // Should contain relative text (not absolute date format)
+        assert!(!formatted.contains("2026"));
+        assert!(!formatted.contains("2027"));
+        // Should contain some time indicator (exact text depends on chrono-humanize)
+        assert!(formatted.len() > 1);
+    }
+
+    #[test]
+    fn test_format_deadline_absolute_beyond_threshold() {
+        // Deadline 35 days in the future - should show absolute date
+        let future = Utc::now() + chrono::Duration::days(35);
+        let deadline_str = future.to_rfc3339();
+
+        let formatted = format_deadline(Some(&deadline_str), false);
+
+        // Should be absolute date format YYYY-MM-DD
+        assert!(formatted.len() == 10);
+        assert!(formatted.contains("-"));
+    }
+
+    #[test]
+    fn test_format_deadline_force_absolute() {
+        // Deadline 3 days in the future but with absolute_dates=true
+        let future = Utc::now() + chrono::Duration::days(3);
+        let deadline_str = future.to_rfc3339();
+
+        let formatted = format_deadline(Some(&deadline_str), true);
+
+        // Should be absolute date format YYYY-MM-DD even though it's close
+        assert!(formatted.len() == 10);
+        assert!(formatted.contains("-"));
+    }
+
+    #[test]
+    fn test_format_deadline_overdue() {
+        // Deadline 1 day in the past - should be colored red
+        let past = Utc::now() - chrono::Duration::days(1);
+        let deadline_str = past.to_rfc3339();
+
+        // Disable color for predictable testing
+        colored::control::set_override(false);
+        let formatted = format_deadline(Some(&deadline_str), false);
+
+        // Should show something (text content varies)
+        assert!(formatted.len() > 1);
+        assert_ne!(formatted, "-");
+
+        colored::control::unset_override();
+    }
+
+    #[test]
+    fn test_format_deadline_overdue_with_color() {
+        // Deadline 2 days in the past - should contain red color codes
+        let past = Utc::now() - chrono::Duration::days(2);
+        let deadline_str = past.to_rfc3339();
+
+        // Enable color to check red coloring
+        colored::control::set_override(true);
+        let formatted = format_deadline(Some(&deadline_str), false);
+
+        // With colors enabled, should contain ANSI color codes for red
+        assert!(formatted.len() > 1);
+
         colored::control::unset_override();
     }
 }

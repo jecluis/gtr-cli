@@ -92,6 +92,10 @@ enum Commands {
         /// Skip sync (use cache only)
         #[arg(long)]
         no_sync: bool,
+
+        /// Show absolute dates instead of relative (e.g., "2026-02-15" instead of "in 4 days")
+        #[arg(long)]
+        absolute: bool,
     },
 
     /// Show a specific task
@@ -436,6 +440,7 @@ async fn run() -> Result<()> {
             limit,
             reversed,
             no_sync,
+            absolute,
         } => {
             let include_done = all || done;
             let include_deleted = all || deleted;
@@ -452,6 +457,7 @@ async fn run() -> Result<()> {
                 limit,
                 reversed,
                 no_sync,
+                absolute,
             )
             .await
         }

@@ -79,7 +79,8 @@ pub async fn run(
 
     println!("{}", format!("Search results for '{}':", query).bold());
     println!();
-    output::print_tasks(&matching_tasks);
+    // Search results default to relative dates for better UX
+    output::print_tasks(&matching_tasks, false);
 
     Ok(())
 }
