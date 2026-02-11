@@ -134,26 +134,26 @@ pub async fn run(
         );
     }
 
-    if let Some(new_priority) = priority {
-        if old_task.priority != new_priority {
-            println!(
-                "  {} {} → {}",
-                "Priority:".bold(),
-                old_task.priority.dimmed().strikethrough(),
-                new_priority.green()
-            );
-        }
+    if let Some(new_priority) = priority
+        && old_task.priority != new_priority
+    {
+        println!(
+            "  {} {} → {}",
+            "Priority:".bold(),
+            old_task.priority.dimmed().strikethrough(),
+            new_priority.green()
+        );
     }
 
-    if let Some(new_size) = size {
-        if old_task.size != new_size {
-            println!(
-                "  {} {} → {}",
-                "Size:".bold(),
-                old_task.size.dimmed().strikethrough(),
-                new_size.green()
-            );
-        }
+    if let Some(new_size) = size
+        && old_task.size != new_size
+    {
+        println!(
+            "  {} {} → {}",
+            "Size:".bold(),
+            old_task.size.dimmed().strikethrough(),
+            new_size.green()
+        );
     }
 
     if deadline.is_some() {

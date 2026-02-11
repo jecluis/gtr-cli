@@ -35,10 +35,10 @@ pub fn get_editor(config: &Config) -> Result<String> {
         return Ok(editor.clone());
     }
 
-    if let Ok(editor) = std::env::var("EDITOR") {
-        if !editor.is_empty() {
-            return Ok(editor);
-        }
+    if let Ok(editor) = std::env::var("EDITOR")
+        && !editor.is_empty()
+    {
+        return Ok(editor);
     }
 
     Err(Error::InvalidInput(
@@ -128,24 +128,24 @@ fn parse_markdown_with_title(content: &str, original_title: &str) -> (Option<Str
     let lines: Vec<&str> = content.lines().collect();
 
     // Check if first line is H1 header
-    if let Some(first) = lines.first() {
-        if let Some(stripped) = first.strip_prefix("# ") {
-            let new_title = stripped.trim().to_string();
+    if let Some(first) = lines.first()
+        && let Some(stripped) = first.strip_prefix("# ")
+    {
+        let new_title = stripped.trim().to_string();
 
-            // Find where body starts (skip empty lines after title)
-            let body_start = lines
-                .iter()
-                .skip(1)
-                .position(|line| !line.trim().is_empty())
-                .map(|pos| pos + 1)
-                .unwrap_or(1);
+        // Find where body starts (skip empty lines after title)
+        let body_start = lines
+            .iter()
+            .skip(1)
+            .position(|line| !line.trim().is_empty())
+            .map(|pos| pos + 1)
+            .unwrap_or(1);
 
-            let new_body = lines[body_start..].join("\n");
+        let new_body = lines[body_start..].join("\n");
 
-            // Return new title only if it changed
-            let title_changed = !new_title.is_empty() && new_title != original_title;
-            return (if title_changed { Some(new_title) } else { None }, new_body);
-        }
+        // Return new title only if it changed
+        let title_changed = !new_title.is_empty() && new_title != original_title;
+        return (if title_changed { Some(new_title) } else { None }, new_body);
     }
 
     // No H1 header found - keep original title, entire content is body

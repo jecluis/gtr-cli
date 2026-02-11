@@ -71,12 +71,12 @@ pub async fn show(config: &Config, project: Option<String>) -> Result<()> {
         }
     }
 
-    if let Some(overrides) = &cfg.overrides {
-        if !overrides.deadline_thresholds.is_empty() {
-            println!("\n{}", "Active Overrides:".bold());
-            for (size, duration) in &overrides.deadline_thresholds {
-                println!("  {} = {}", size.cyan(), duration.yellow());
-            }
+    if let Some(overrides) = &cfg.overrides
+        && !overrides.deadline_thresholds.is_empty()
+    {
+        println!("\n{}", "Active Overrides:".bold());
+        for (size, duration) in &overrides.deadline_thresholds {
+            println!("  {} = {}", size.cyan(), duration.yellow());
         }
     }
 
@@ -109,14 +109,14 @@ pub async fn set(
     println!("{}", "✓ Configuration updated!".green().bold());
     println!("  {} threshold set to {}", size.cyan(), duration.yellow());
 
-    if let Some(merged) = cfg.deadline_thresholds.get(&size) {
-        if merged != &duration {
-            println!(
-                "  {} Effective value: {} (overridden by project config)",
-                "ℹ".blue(),
-                merged.yellow()
-            );
-        }
+    if let Some(merged) = cfg.deadline_thresholds.get(&size)
+        && merged != &duration
+    {
+        println!(
+            "  {} Effective value: {} (overridden by project config)",
+            "ℹ".blue(),
+            merged.yellow()
+        );
     }
 
     Ok(())

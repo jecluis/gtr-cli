@@ -60,10 +60,10 @@ pub async fn run(
                 || task.body.to_lowercase().contains(&query_lower)
             {
                 matching_tasks.push(task);
-                if let Some(lim) = limit {
-                    if matching_tasks.len() >= lim as usize {
-                        break;
-                    }
+                if let Some(lim) = limit
+                    && matching_tasks.len() >= lim as usize
+                {
+                    break;
                 }
             }
         }

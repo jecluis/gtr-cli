@@ -404,39 +404,39 @@ pub fn print_task_details(task: &Task, no_format: bool) {
         println!("  Modified: {}", modified_time.format("%Y-%m-%d %H:%M:%S"));
     }
 
-    if let Some(ref deadline_str) = task.deadline {
-        if let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str) {
-            let deadline_time = deadline.with_timezone(&Local);
-            let now = chrono::Utc::now();
-            let is_overdue = deadline < now;
-            let formatted = format!("Deadline: {}", deadline_time.format("%Y-%m-%d %H:%M:%S"));
+    if let Some(ref deadline_str) = task.deadline
+        && let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str)
+    {
+        let deadline_time = deadline.with_timezone(&Local);
+        let now = chrono::Utc::now();
+        let is_overdue = deadline < now;
+        let formatted = format!("Deadline: {}", deadline_time.format("%Y-%m-%d %H:%M:%S"));
 
-            if is_overdue {
-                println!("  {}", formatted.red().bold());
-            } else {
-                println!("  {}", formatted);
-            }
+        if is_overdue {
+            println!("  {}", formatted.red().bold());
+        } else {
+            println!("  {}", formatted);
         }
     }
 
-    if let Some(ref done_str) = task.done {
-        if let Ok(done) = chrono::DateTime::parse_from_rfc3339(done_str) {
-            let done_time = done.with_timezone(&Local);
-            println!(
-                "  {}",
-                format!("Done:     {}", done_time.format("%Y-%m-%d %H:%M:%S")).blue()
-            );
-        }
+    if let Some(ref done_str) = task.done
+        && let Ok(done) = chrono::DateTime::parse_from_rfc3339(done_str)
+    {
+        let done_time = done.with_timezone(&Local);
+        println!(
+            "  {}",
+            format!("Done:     {}", done_time.format("%Y-%m-%d %H:%M:%S")).blue()
+        );
     }
 
-    if let Some(ref deleted_str) = task.deleted {
-        if let Ok(deleted) = chrono::DateTime::parse_from_rfc3339(deleted_str) {
-            let deleted_time = deleted.with_timezone(&Local);
-            println!(
-                "  {}",
-                format!("Deleted:  {}", deleted_time.format("%Y-%m-%d %H:%M:%S")).red()
-            );
-        }
+    if let Some(ref deleted_str) = task.deleted
+        && let Ok(deleted) = chrono::DateTime::parse_from_rfc3339(deleted_str)
+    {
+        let deleted_time = deleted.with_timezone(&Local);
+        println!(
+            "  {}",
+            format!("Deleted:  {}", deleted_time.format("%Y-%m-%d %H:%M:%S")).red()
+        );
     }
 
     println!("  Version:  {}", task.version);

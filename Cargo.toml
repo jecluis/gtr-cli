@@ -2,7 +2,7 @@
 name = "gtr"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 authors = ["Joao Eduardo Luis <joao@abysmo.tech>"]
 description = "CLI client for Getting Things Rusty - ADHD-friendly task tracker"
 license = "AGPL-3.0-or-later"
@@ -53,7 +53,7 @@ tempfile = "3.8"
 which = "6.0"
 
 # Local storage and CRDT
-automerge = "0.6.1"
+automerge = "0.7.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
