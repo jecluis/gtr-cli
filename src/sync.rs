@@ -51,12 +51,29 @@ impl SyncManager {
         }
     }
 
-    /// Sync all pending changes bidirectionally.
+    /// Sync all pending changes (push only).
+    ///
+    /// This is used for automatic sync after updates. It pushes local changes
+    /// and fetches the merged state, but doesn't pull all tasks to avoid
+    /// unnecessary network traffic.
     pub async fn sync_all(&self) -> Result<()> {
-        // First push local changes
+        // Push local changes (push_task now fetches merged CRDT back)
+        // This ensures local storage has the authoritative merged state
         self.push_pending().await?;
 
-        // Then pull remote changes
+        Ok(())
+    }
+
+    /// Full bidirectional sync (push and pull).
+    ///
+    /// This is used for manual sync commands. It pushes local changes and
+    /// then pulls updates from the server for all tasks, ensuring we have
+    /// the latest state from other devices.
+    pub async fn sync_full(&self) -> Result<()> {
+        // Push local changes first
+        self.push_pending().await?;
+
+        // Pull remote changes for all tasks
         self.pull_updates().await?;
 
         Ok(())
@@ -156,6 +173,12 @@ impl SyncManager {
             .client
             .post_sync(&task.project_id, task_id, &bytes)
             .await?;
+
+        // CRITICAL: Fetch the merged CRDT bytes from server and save locally
+        // This ensures our local CRDT has the server's authoritative merged state
+        let merged_bytes = self.client.fetch_sync(task_id).await?;
+        self.storage
+            .save_task_bytes(&task.project_id, task_id, &merged_bytes)?;
 
         // Update cache with merged result
         self.cache.upsert_task(&merged_task, false)?;

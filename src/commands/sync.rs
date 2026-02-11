@@ -42,7 +42,7 @@ pub async fn now(config: &Config) -> Result<()> {
 
     println!("{}", "Syncing with server...".dimmed());
 
-    match sync.sync_all().await {
+    match sync.sync_full().await {
         Ok(()) => {
             println!("{}", "✓ Sync completed successfully".green());
             Ok(())
