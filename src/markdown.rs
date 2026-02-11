@@ -150,15 +150,21 @@ mod tests {
 
     #[test]
     fn plain_text_unchanged_when_disabled() {
-        std::env::set_var("NO_COLOR", "1");
+        unsafe {
+            std::env::set_var("NO_COLOR", "1");
+        }
         let renderer = MarkdownRenderer::new();
         assert_eq!(renderer.render("plain text"), "plain text");
-        std::env::remove_var("NO_COLOR");
+        unsafe {
+            std::env::remove_var("NO_COLOR");
+        }
     }
 
     #[test]
     fn renders_basic_markdown() {
-        std::env::remove_var("NO_COLOR");
+        unsafe {
+            std::env::remove_var("NO_COLOR");
+        }
         let renderer = MarkdownRenderer::new();
         let input = "**bold** and *italic*";
         let output = renderer.render(input);

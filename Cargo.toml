@@ -41,6 +41,8 @@ directories = "5.0"
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
+chrono-english = "0.1"
+jiff = { version = "0.2", features = ["serde"] }
 
 # UUID
 uuid = { version = "1.6", features = ["serde", "v4"] }

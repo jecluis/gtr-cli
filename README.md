@@ -131,12 +131,12 @@ setlocal formatoptions+=t
 #### Setting Deadlines
 
 Deadlines can be set when creating or updating tasks using the `--deadline` (or
-`-d`) flag. The deadline must be in ISO 8601 / RFC3339 format.
+`-d`) flag. Both strict formats and natural language are supported.
 
-**Supported formats:**
+**ISO 8601 / RFC3339 (strict formats):**
 
 ```bash
-# Full RFC3339 with timezone (recommended)
+# Full RFC3339 with timezone
 gtr update <task-id> -d "2026-02-15T08:00:00Z"
 gtr update <task-id> -d "2026-02-15T08:00:00-05:00"
 
@@ -150,27 +150,87 @@ gtr update <task-id> -d "2026-02-15"
 gtr update <task-id> -d "none"
 ```
 
+**Natural Language (keywords and weekdays):**
+
+```bash
+# Keywords
+gtr update <task-id> -d "tomorrow"
+gtr update <task-id> -d "today"
+gtr update <task-id> -d "yesterday"
+
+# Weekdays
+gtr update <task-id> -d "next friday"
+gtr update <task-id> -d "last monday"
+gtr update <task-id> -d "friday"          # Next occurring Friday
+
+# With time of day
+gtr update <task-id> -d "tomorrow 8am"
+gtr update <task-id> -d "next fri 6pm"
+gtr update <task-id> -d "18:30"           # Today at 18:30
+gtr update <task-id> -d "8.45pm"          # Today at 20:45
+
+# Month names
+gtr update <task-id> -d "next april"      # Next April 1st
+gtr update <task-id> -d "1 April 2026"
+gtr update <task-id> -d "April 1, 2026"
+```
+
+**Duration Expressions (relative to now):**
+
+```bash
+# Simple durations
+gtr update <task-id> -d "3 days"
+gtr update <task-id> -d "2 weeks"
+gtr update <task-id> -d "5 hours"
+gtr update <task-id> -d "30 minutes"
+
+# Decimal durations (hours/minutes/seconds only, not days/weeks)
+gtr update <task-id> -d "2.5 hours"       # 2 hours 30 minutes
+gtr update <task-id> -d "1.5h"            # 1 hour 30 minutes
+
+# Chained units
+gtr update <task-id> -d "1 week 2 days"
+gtr update <task-id> -d "2 days 3 hours"
+gtr update <task-id> -d "1 hour 30 minutes"
+
+# Past dates with "ago"
+gtr update <task-id> -d "2 days ago"
+gtr update <task-id> -d "3 hours ago"
+gtr update <task-id> -d "1 week 2 days ago"
+
+# Compact notation
+gtr update <task-id> -d "3d"              # 3 days
+gtr update <task-id> -d "2h30m"           # 2 hours 30 minutes
+gtr update <task-id> -d "1w4d"            # 1 week 4 days
+```
+
 **Examples:**
 
 ```bash
-# Set deadline when creating a task
-gtr new --project my-project "Important task" -d "2026-02-20T17:00:00Z"
+# Set deadline when creating a task (natural language)
+gtr new --project my-project "Important task" -d "tomorrow 8am"
 
-# Update existing task with deadline
+# Update existing task with weekday deadline
+gtr update abc123 -d "next friday"
+
+# Set deadline 2 weeks from now
+gtr update abc123 -d "2 weeks"
+
+# Set deadline with precise time
 gtr update abc123 -d "2026-03-01 09:00:00"
 
 # Remove deadline from task
 gtr update abc123 -d "none"
 ```
 
-**Invalid formats will be rejected:**
+**What's NOT supported:**
 
 ```bash
-# These will NOT work:
-gtr update abc123 -d "tomorrow"         # No natural language (yet)
-gtr update abc123 -d "tomorrow 8am"     # No natural language (yet)
-gtr update abc123 -d "next week"        # No natural language (yet)
-gtr update abc123 -d "02/15/2026"       # Wrong format (use YYYY-MM-DD)
+# ❌ These will NOT work:
+gtr update abc123 -d "the day after tomorrow"  # Too complex
+gtr update abc123 -d "christmas"               # No holiday names
+gtr update abc123 -d "Q1 2026"                 # No quarters
+gtr update abc123 -d "02/15/2026"              # Use YYYY-MM-DD instead
 ```
 
 ### 6. Delete a Task

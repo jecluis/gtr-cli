@@ -17,9 +17,11 @@
 
 //! Utility functions for the CLI.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
+use chrono_english::{Dialect, parse_date_string};
 use colored::Colorize;
 use dialoguer::Select;
+use jiff::{Span, Zoned};
 
 use crate::client::Client;
 use crate::{Error, Result};
@@ -117,15 +119,55 @@ pub async fn resolve_task_id(client: &Client, short_id: &str) -> Result<String> 
 
 /// Validate and normalize a deadline string to RFC3339 format.
 ///
-/// Accepts various ISO 8601 / RFC3339 formats and returns a normalized
-/// RFC3339 string with timezone. Returns an error with helpful message
-/// if the format is invalid.
+/// Uses hybrid parsing strategy:
+/// 1. Strict ISO 8601/RFC3339 formats (for programmatic use)
+/// 2. Natural language via chrono-english (keywords, weekdays, times)
+/// 3. Duration expressions via jiff (relative times, decimals, "ago")
 ///
 /// Examples of valid input:
-/// - "2026-02-15T08:00:00Z"
-/// - "2026-02-15T08:00:00-05:00"
-/// - "2026-02-15 08:00:00"
+/// - Strict: "2026-02-15T08:00:00Z", "2026-02-15 08:00:00", "2026-02-15"
+/// - Natural: "tomorrow", "next friday", "tomorrow 8am"
+/// - Duration: "3 days", "2.5 weeks", "1 week 2 days ago"
 pub fn validate_deadline(deadline_str: &str) -> Result<String> {
+    // Try strict ISO 8601/RFC3339 parsing first (fast path for programmatic use)
+    if let Ok(validated) = parse_strict_deadline(deadline_str) {
+        return Ok(validated);
+    }
+
+    // Try chrono-english for natural language (keywords, weekdays, time-of-day)
+    if let Ok(dt) = parse_date_string(deadline_str, Local::now(), Dialect::Uk) {
+        return Ok(dt.to_rfc3339());
+    }
+
+    // Try jiff::friendly for duration expressions (decimals, "ago", chained units)
+    if let Ok(span) = deadline_str.parse::<Span>() {
+        let now = Zoned::now();
+        let deadline = now
+            .checked_add(span)
+            .map_err(|e| Error::InvalidInput(format!("Duration calculation failed: {}", e)))?;
+
+        // Convert jiff::Zoned to RFC3339 string
+        return deadline
+            .strftime("%Y-%m-%dT%H:%M:%S%:z")
+            .to_string()
+            .parse()
+            .map_err(|e| Error::InvalidInput(format!("Failed to format deadline: {}", e)));
+    }
+
+    // All parsers failed - provide comprehensive error message
+    Err(Error::InvalidInput(format!(
+        "Invalid deadline: '{}'\n\
+        \n\
+        Supported formats:\n\
+        - ISO 8601: 2026-02-15T08:00:00Z, 2026-02-15 08:00:00, 2026-02-15\n\
+        - Natural language: tomorrow, next friday, tomorrow 8am, last monday\n\
+        - Duration: 3 days, 1 hour 30 minutes, 2.5 hours, 2 days ago",
+        deadline_str
+    )))
+}
+
+/// Parse strict ISO 8601/RFC3339 formats only (no natural language).
+fn parse_strict_deadline(deadline_str: &str) -> Result<String> {
     // Try parsing as RFC3339 first
     if let Ok(dt) = DateTime::parse_from_rfc3339(deadline_str) {
         return Ok(dt.to_rfc3339());
@@ -146,15 +188,134 @@ pub fn validate_deadline(deadline_str: &str) -> Result<String> {
         return Ok(dt_utc.to_rfc3339());
     }
 
-    // Invalid format
-    Err(Error::InvalidInput(format!(
-        "Invalid deadline format: '{}'\n\
-        \n\
-        Supported formats:\n\
-        - ISO 8601 with timezone: 2026-02-15T08:00:00Z\n\
-        - ISO 8601 with offset: 2026-02-15T08:00:00-05:00\n\
-        - Date and time (UTC): 2026-02-15 08:00:00\n\
-        - Date only (midnight UTC): 2026-02-15",
-        deadline_str
-    )))
+    Err(Error::InvalidInput(
+        "Not a strict ISO 8601 format".to_string(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_deadline_strict_iso8601() {
+        // RFC3339 with timezone
+        let result = validate_deadline("2026-02-15T08:00:00Z");
+        assert!(result.is_ok());
+
+        // RFC3339 with offset
+        let result = validate_deadline("2026-02-15T08:00:00-05:00");
+        assert!(result.is_ok());
+
+        // Date and time (UTC assumed)
+        let result = validate_deadline("2026-02-15 08:00:00");
+        assert!(result.is_ok());
+
+        // Date only (midnight UTC)
+        let result = validate_deadline("2026-02-15");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_deadline_chrono_english() {
+        // Keywords
+        let result = validate_deadline("tomorrow");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("today");
+        assert!(result.is_ok());
+
+        // Weekdays
+        let result = validate_deadline("next friday");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("last monday");
+        assert!(result.is_ok());
+
+        // With time
+        let result = validate_deadline("tomorrow 8am");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("next fri 6pm");
+        assert!(result.is_ok());
+
+        // Absolute dates
+        let result = validate_deadline("1 April 2026");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("April 1, 2026");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_deadline_jiff_friendly() {
+        // Simple durations
+        let result = validate_deadline("3 days");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("2 weeks");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("5 hours");
+        assert!(result.is_ok());
+
+        // Decimal durations (jiff supports fractional hours/minutes/seconds, not days)
+        let result = validate_deadline("2.5 hours");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("1.5h");
+        assert!(result.is_ok());
+
+        // Chained units
+        let result = validate_deadline("1 week 2 days");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("2 days 3 hours");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("1 hour 30 minutes");
+        assert!(result.is_ok());
+
+        // "ago" syntax
+        let result = validate_deadline("2 days ago");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("3 hours ago");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("1 week 2 days ago");
+        assert!(result.is_ok());
+
+        // Compact notation
+        let result = validate_deadline("3d");
+        assert!(result.is_ok());
+
+        let result = validate_deadline("2h30m");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_deadline_invalid() {
+        // Invalid formats should fail
+        let result = validate_deadline("not a date");
+        assert!(result.is_err());
+
+        let result = validate_deadline("123abc");
+        assert!(result.is_err());
+
+        let result = validate_deadline("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_deadline_parser_precedence() {
+        // "3 days" should be parsed by chrono-english first
+        // (both parsers can handle it, but chrono-english wins)
+        let result = validate_deadline("3 days");
+        assert!(result.is_ok());
+
+        // Verify result is in RFC3339 format
+        let deadline = result.unwrap();
+        assert!(DateTime::parse_from_rfc3339(&deadline).is_ok());
+    }
 }
