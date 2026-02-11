@@ -90,7 +90,7 @@ pub async fn run(
     // Save locally
     let ctx = LocalContext::new(config, !no_sync)?;
     ctx.storage.create_task(&project_id, &task)?;
-    ctx.cache.upsert_task(&task, !no_sync)?;
+    ctx.cache.upsert_task(&task, true)?;
 
     println!("{}", "✓ Task created locally!".green().bold());
     println!("  ID:       {}", task.id.cyan());

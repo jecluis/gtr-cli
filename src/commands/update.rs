@@ -108,7 +108,7 @@ pub async fn run(
 
     // Save locally
     ctx.storage.update_task(&task.project_id, &task)?;
-    ctx.cache.upsert_task(&task, !no_sync)?;
+    ctx.cache.upsert_task(&task, true)?;
 
     println!("{}", "✓ Task updated locally!".green().bold());
     println!("  ID: {}", task.id.cyan());
