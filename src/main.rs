@@ -209,6 +209,26 @@ enum Commands {
         no_sync: bool,
     },
 
+    /// Set task priority to "now"
+    Now {
+        /// Task ID
+        task_id: String,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
+    },
+
+    /// Set task priority to "later"
+    Later {
+        /// Task ID
+        task_id: String,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
+    },
+
     /// Display task change log
     Log {
         /// Task ID
@@ -480,6 +500,12 @@ async fn run() -> Result<()> {
         }
         Commands::Restore { task_id, no_sync } => {
             gtr::commands::restore::run(&config, &task_id, no_sync).await
+        }
+        Commands::Now { task_id, no_sync } => {
+            gtr::commands::now::run(&config, &task_id, no_sync).await
+        }
+        Commands::Later { task_id, no_sync } => {
+            gtr::commands::later::run(&config, &task_id, no_sync).await
         }
         Commands::Log {
             task_id,
