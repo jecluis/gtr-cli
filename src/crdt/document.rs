@@ -164,6 +164,75 @@ impl TaskDocument {
         Ok(())
     }
 
+    /// Update document with new task data.
+    pub fn update_task(&mut self, task: &Task) -> Result<()> {
+        // Pre-serialize complex fields
+        let custom_json = serde_json::to_string(&task.custom)
+            .map_err(|e| Error::Storage(format!("custom serialization failed: {e}")))?;
+        let log_json = serde_json::to_string(&task.log)
+            .map_err(|e| Error::Storage(format!("log serialization failed: {e}")))?;
+
+        self.doc
+            .transact::<_, _, automerge::AutomergeError>(|tx| {
+                let meta = match tx.get(ROOT, "metadata").ok().flatten() {
+                    Some((automerge::Value::Object(_), id)) => id,
+                    _ => tx.put_object(ROOT, "metadata", ObjType::Map)?,
+                };
+
+                tx.put(&meta, "id", task.id.as_str())?;
+                tx.put(&meta, "project_id", task.project_id.as_str())?;
+                tx.put(&meta, "priority", task.priority.as_str())?;
+                tx.put(&meta, "size", task.size.as_str())?;
+                tx.put(&meta, "created", task.created.as_str())?;
+                tx.put(&meta, "modified", task.modified.as_str())?;
+                tx.put(&meta, "version", task.version as i64)?;
+
+                if let Some(ref done) = task.done {
+                    tx.put(&meta, "done", done.as_str())?;
+                } else {
+                    let _ = tx.delete(&meta, "done");
+                }
+
+                if let Some(ref deleted) = task.deleted {
+                    tx.put(&meta, "deleted", deleted.as_str())?;
+                } else {
+                    let _ = tx.delete(&meta, "deleted");
+                }
+
+                if let Some(ref deadline) = task.deadline {
+                    tx.put(&meta, "deadline", deadline.as_str())?;
+                } else {
+                    let _ = tx.delete(&meta, "deadline");
+                }
+
+                if let Some(ref work_state) = task.current_work_state {
+                    tx.put(&meta, "current_work_state", work_state.as_str())?;
+                } else {
+                    let _ = tx.delete(&meta, "current_work_state");
+                }
+
+                // Rebuild subtasks list
+                let subtasks = tx.put_object(&meta, "subtasks", ObjType::List)?;
+                for (i, subtask_id) in task.subtasks.iter().enumerate() {
+                    tx.insert(&subtasks, i, subtask_id.as_str())?;
+                }
+
+                // Custom fields (stored as JSON string)
+                tx.put(&meta, "custom", custom_json.as_str())?;
+
+                // Log (stored as JSON string)
+                tx.put(&meta, "log", log_json.as_str())?;
+
+                tx.put(ROOT, "title", task.title.as_str())?;
+                tx.put(ROOT, "body", task.body.as_str())?;
+
+                Ok(())
+            })
+            .map_err(|e| Error::Storage(format!("failed to update document: {e:?}")))?;
+
+        Ok(())
+    }
+
     // Helper methods for reading fields
 
     fn get_str(&self, obj: &automerge::ObjId, key: &str) -> Result<String> {

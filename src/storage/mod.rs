@@ -78,11 +78,16 @@ impl TaskStorage {
 
         let paths = self.config.task_paths(project_id, &task_id);
 
-        // Create new document (simpler than loading + updating for now)
-        let doc = TaskDocument::new(task)?;
-        let bytes = doc.save();
+        // Load existing document to preserve CRDT history
+        let bytes = fs::read(&paths.automerge)?;
+        let mut doc = TaskDocument::load(&bytes)?;
 
-        fs::write(&paths.automerge, bytes)?;
+        // Update document with new task data
+        doc.update_task(task)?;
+
+        // Save updated document
+        let updated_bytes = doc.save();
+        fs::write(&paths.automerge, updated_bytes)?;
 
         Ok(())
     }
