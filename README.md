@@ -128,6 +128,51 @@ setlocal textwidth=79
 setlocal formatoptions+=t
 ```
 
+#### Setting Deadlines
+
+Deadlines can be set when creating or updating tasks using the `--deadline` (or
+`-d`) flag. The deadline must be in ISO 8601 / RFC3339 format.
+
+**Supported formats:**
+
+```bash
+# Full RFC3339 with timezone (recommended)
+gtr update <task-id> -d "2026-02-15T08:00:00Z"
+gtr update <task-id> -d "2026-02-15T08:00:00-05:00"
+
+# Date and time (assumes UTC)
+gtr update <task-id> -d "2026-02-15 08:00:00"
+
+# Date only (assumes midnight UTC)
+gtr update <task-id> -d "2026-02-15"
+
+# Clear deadline
+gtr update <task-id> -d "none"
+```
+
+**Examples:**
+
+```bash
+# Set deadline when creating a task
+gtr new --project my-project "Important task" -d "2026-02-20T17:00:00Z"
+
+# Update existing task with deadline
+gtr update abc123 -d "2026-03-01 09:00:00"
+
+# Remove deadline from task
+gtr update abc123 -d "none"
+```
+
+**Invalid formats will be rejected:**
+
+```bash
+# These will NOT work:
+gtr update abc123 -d "tomorrow"         # No natural language (yet)
+gtr update abc123 -d "tomorrow 8am"     # No natural language (yet)
+gtr update abc123 -d "next week"        # No natural language (yet)
+gtr update abc123 -d "02/15/2026"       # Wrong format (use YYYY-MM-DD)
+```
+
 ### 6. Delete a Task
 
 ```bash
