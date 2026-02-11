@@ -154,7 +154,10 @@ impl SyncManager {
         Ok(())
     }
 
-    /// Push a single task to server using change-based sync.
+    /// Push a single task to server.
+    ///
+    /// Uses change-based sync for existing tasks (more efficient, preserves causality).
+    /// Falls back to full-document sync for new tasks or if change-based sync fails.
     async fn push_task(&self, task_id: &str) -> Result<()> {
         // Get project_id from cache
         let summary = self
@@ -164,31 +167,61 @@ impl SyncManager {
 
         // Load local CRDT document
         let bytes = self.storage.get_task_bytes(&summary.project_id, task_id)?;
-        let mut local_doc = crate::crdt::TaskDocument::load(&bytes)?;
 
-        // Get heads that represent last server state (empty for now - we'll track this later)
-        // For initial implementation, we send all changes
-        let last_server_heads: Vec<Vec<u8>> = vec![];
+        // Try change-based sync first (more efficient for updates)
+        let result = {
+            let local_doc = crate::crdt::TaskDocument::load(&bytes)?;
 
-        // Get changes since last sync with server
-        let changes = local_doc.get_changes_since_bytes(&last_server_heads);
+            // Get heads that represent last server state (empty for now - we'll track this later)
+            // For initial implementation, we send all changes
+            let last_server_heads: Vec<Vec<u8>> = vec![];
 
-        // Sync with server
-        let sync_response = self
-            .client
-            .sync_changes(task_id, changes, last_server_heads)
-            .await?;
+            // Get changes since last sync with server
+            let changes = local_doc.get_changes_since_bytes(&last_server_heads);
 
-        // Apply server's changes to our local document
-        local_doc.apply_changes(sync_response.changes)?;
+            // Try change-based sync
+            self.client
+                .sync_changes(task_id, changes, last_server_heads)
+                .await
+        };
+
+        // Handle result or fall back to full-document sync
+        let (merged_task, merged_bytes) = match result {
+            Ok(sync_response) => {
+                // Change-based sync succeeded - apply server's changes
+                let local_doc = crate::crdt::TaskDocument::load(&bytes)?;
+                let mut local_doc = local_doc;
+                local_doc.apply_changes(sync_response.changes)?;
+                let updated_bytes = local_doc.save();
+                (sync_response.task, updated_bytes)
+            }
+            Err(e) => {
+                // Check if it's a 404 error (task doesn't exist)
+                let is_not_found = matches!(e, crate::Error::TaskNotFound(_))
+                    || matches!(&e, crate::Error::Server(msg) if msg.contains("404"));
+
+                if is_not_found {
+                    // Task doesn't exist on server - use full-document sync
+                    let merged_task = self
+                        .client
+                        .post_sync(&summary.project_id, task_id, &bytes)
+                        .await?;
+
+                    // Fetch merged state from server
+                    let merged_bytes = self.client.fetch_sync(task_id).await?;
+                    (merged_task, merged_bytes)
+                } else {
+                    return Err(e);
+                }
+            }
+        };
 
         // Save updated document
-        let updated_bytes = local_doc.save();
         self.storage
-            .save_task_bytes(&summary.project_id, task_id, &updated_bytes)?;
+            .save_task_bytes(&summary.project_id, task_id, &merged_bytes)?;
 
         // Update cache with merged result
-        self.cache.upsert_task(&sync_response.task, false)?;
+        self.cache.upsert_task(&merged_task, false)?;
         self.cache.mark_synced(task_id)?;
 
         Ok(())
