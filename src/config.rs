@@ -24,6 +24,10 @@ use std::path::PathBuf;
 
 use crate::{Error, Result};
 
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
 /// CLI configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -39,6 +43,10 @@ pub struct Config {
     /// Editor command (with optional args) for editing task bodies
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor: Option<String>,
+
+    /// Log level (default: "info"). Overridden by GTR_LOG env var.
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
 
     /// Cache directory (for Phase 1.5)
     #[serde(skip)]
@@ -106,6 +114,7 @@ impl Config {
             auth_token,
             client_id,
             editor: None,
+            log_level: default_log_level(),
             cache_dir,
             config_path: Self::default_config_path()?,
         })

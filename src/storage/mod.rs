@@ -22,6 +22,7 @@ pub mod config;
 pub use config::{StorageConfig, TaskPaths};
 
 use std::fs;
+use tracing::debug;
 
 use crate::Result;
 use crate::crdt::TaskDocument;
@@ -67,6 +68,7 @@ impl TaskStorage {
         }
 
         let bytes = fs::read(&paths.automerge)?;
+        debug!(task_id, bytes_len = bytes.len(), "loaded task from storage");
         let doc = TaskDocument::load(&bytes)?;
         doc.to_task()
     }
@@ -87,6 +89,7 @@ impl TaskStorage {
 
         // Save updated document
         let updated_bytes = doc.save();
+        debug!(task_id = %task.id, old_bytes = bytes.len(), new_bytes = updated_bytes.len(), "updated task in storage");
         fs::write(&paths.automerge, updated_bytes)?;
 
         Ok(())

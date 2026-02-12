@@ -422,6 +422,11 @@ async fn run() -> Result<()> {
     // Load configuration
     let config = Config::load(cli.config.as_deref())?;
 
+    // Initialize file-based logging
+    let log_dir = config.cache_dir.join("logs");
+    std::fs::create_dir_all(&log_dir)?;
+    gtr::logging::init(&log_dir, &config.log_level);
+
     // Override config with CLI arguments
     let mut config = config.with_server(cli.server).with_token(cli.token);
 

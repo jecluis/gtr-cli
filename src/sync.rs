@@ -19,6 +19,7 @@
 
 use automerge::sync::SyncDoc;
 use std::time::Duration;
+use tracing::{debug, info, warn};
 
 use crate::Result;
 use crate::cache::TaskCache;
@@ -50,7 +51,14 @@ impl SyncManager {
         let sync_future = self.sync_all();
         match tokio::time::timeout(timeout, sync_future).await {
             Ok(Ok(())) => true,
-            Ok(Err(_)) | Err(_) => false,
+            Ok(Err(e)) => {
+                warn!("sync failed: {e}");
+                false
+            }
+            Err(_) => {
+                warn!(timeout_ms = timeout.as_millis(), "sync timed out");
+                false
+            }
         }
     }
 
@@ -97,7 +105,7 @@ impl SyncManager {
             for task in tasks {
                 // Always pull and merge - CRDT handles conflicts automatically
                 if let Err(e) = self.pull_task(&project.id, &task.id).await {
-                    eprintln!("Failed to pull task {}: {}", task.id, e);
+                    warn!(task_id = %task.id, "failed to pull task: {e}");
                     // Continue with other tasks
                 }
             }
@@ -110,11 +118,21 @@ impl SyncManager {
     async fn pull_task(&self, project_id: &str, task_id: &str) -> Result<()> {
         // Fetch CRDT bytes from server
         let remote_bytes = self.client.fetch_sync(task_id).await?;
+        debug!(
+            task_id,
+            remote_bytes_len = remote_bytes.len(),
+            "fetched remote CRDT state"
+        );
 
         // Check if we have a local version to merge with
         let merged_bytes = match self.storage.get_task_bytes(project_id, task_id) {
             Ok(local_bytes) => {
                 // We have local version - merge with remote
+                debug!(
+                    task_id,
+                    local_bytes_len = local_bytes.len(),
+                    "merging with local version"
+                );
                 let mut local_doc = crate::crdt::TaskDocument::load(&local_bytes)?;
                 let mut remote_doc = crate::crdt::TaskDocument::load(&remote_bytes)?;
 
@@ -125,6 +143,7 @@ impl SyncManager {
             }
             Err(_) => {
                 // No local version - use remote as-is
+                info!(task_id, "no local version, using remote as-is");
                 remote_bytes
             }
         };
@@ -146,11 +165,11 @@ impl SyncManager {
     /// Push all locally modified tasks to server.
     async fn push_pending(&self) -> Result<()> {
         let pending_ids = self.cache.get_pending_tasks()?;
+        debug!(pending_count = pending_ids.len(), "pushing pending tasks");
 
         for task_id in pending_ids {
             if let Err(e) = self.push_task(&task_id).await {
-                // Log error but continue with other tasks
-                eprintln!("Failed to push task {}: {}", task_id, e);
+                warn!(task_id = %task_id, "failed to push task: {e}");
             }
         }
 
@@ -171,6 +190,7 @@ impl SyncManager {
 
         // Load local CRDT document
         let bytes = self.storage.get_task_bytes(&summary.project_id, task_id)?;
+        debug!(task_id, bytes_len = bytes.len(), project_id = %summary.project_id, "pushing task");
         let mut local_doc = crate::crdt::TaskDocument::load(&bytes)?;
 
         // Load or create sync state for this task
@@ -203,6 +223,7 @@ impl SyncManager {
                 Ok(bytes) => bytes,
                 Err(crate::Error::TaskNotFound(_)) if first_round => {
                     // Task doesn't exist on server yet — use full-document sync
+                    info!(task_id, "task not on server, falling back to full-doc sync");
                     let _merged_task = self
                         .client
                         .post_sync(&summary.project_id, task_id, &bytes)
@@ -237,6 +258,11 @@ impl SyncManager {
 
         // Save updated document and sync state
         let updated_bytes = local_doc.save();
+        debug!(
+            task_id,
+            updated_bytes_len = updated_bytes.len(),
+            "saving merged document"
+        );
         self.storage
             .save_task_bytes(&summary.project_id, task_id, &updated_bytes)?;
 
@@ -245,6 +271,7 @@ impl SyncManager {
 
         // Update cache with merged task
         let task = local_doc.to_task()?;
+        debug!(task_id, version = task.version, deadline = ?task.deadline, "post-sync task state");
         self.cache.upsert_task(&task, false)?;
         self.cache.mark_synced(task_id)?;
 

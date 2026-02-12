@@ -20,6 +20,8 @@
 use chrono::Utc;
 use colored::Colorize;
 
+use tracing::{debug, info};
+
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
@@ -107,6 +109,22 @@ pub async fn run(
     task.version += 1;
 
     // Save locally
+    info!(
+        task_id = %task.id,
+        version = task.version,
+        deadline = ?task.deadline,
+        priority = %task.priority,
+        size = %task.size,
+        "updating task locally"
+    );
+    debug!(
+        task_id = %task.id,
+        old_deadline = ?old_task.deadline,
+        new_deadline = ?task.deadline,
+        old_priority = %old_task.priority,
+        new_priority = %task.priority,
+        "field changes"
+    );
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
 

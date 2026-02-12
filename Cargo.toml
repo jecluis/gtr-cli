@@ -48,6 +48,11 @@ jiff = { version = "0.2", features = ["serde"] }
 # UUID
 uuid = { version = "1.6", features = ["serde", "v4"] }
 
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
 # Editor integration
 tempfile = "3.8"
 which = "6.0"
