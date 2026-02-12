@@ -214,10 +214,3 @@ pub struct ConfigUpdateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deadline_thresholds: Option<std::collections::HashMap<String, Option<String>>>,
 }
-
-/// Response from change-based sync endpoint.
-#[derive(Debug, Clone)]
-pub struct SyncChangesResponse {
-    pub changes: Vec<Vec<u8>>,
-    pub task: Task,
-}

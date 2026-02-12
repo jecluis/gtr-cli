@@ -229,30 +229,6 @@ impl Client {
         self.put(&url, req).await
     }
 
-    /// Mark a task as done.
-    pub async fn mark_done(&self, task_id: &str) -> Result<Task> {
-        let url = format!("{}/api/tasks/{}/done", self.base_url, task_id);
-        self.post(&url, &()).await
-    }
-
-    /// Unmark a task as done (restore to pending).
-    pub async fn mark_undone(&self, task_id: &str) -> Result<Task> {
-        let url = format!("{}/api/tasks/{}/done", self.base_url, task_id);
-        self.delete_with_response(&url).await
-    }
-
-    /// Delete a task (tombstone).
-    pub async fn delete_task(&self, task_id: &str) -> Result<()> {
-        let url = format!("{}/api/tasks/{}", self.base_url, task_id);
-        self.delete(&url).await
-    }
-
-    /// Restore a deleted task.
-    pub async fn restore_task(&self, task_id: &str) -> Result<Task> {
-        let url = format!("{}/api/tasks/{}/restore", self.base_url, task_id);
-        self.post(&url, &()).await
-    }
-
     /// Search tasks.
     pub async fn search_tasks(
         &self,
@@ -312,36 +288,6 @@ impl Client {
             .put(url)
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .json(body)
-            .send()
-            .await?;
-
-        self.handle_response(resp).await
-    }
-
-    /// Generic DELETE request (no response body).
-    async fn delete(&self, url: &str) -> Result<()> {
-        let resp = self
-            .http
-            .delete(url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .send()
-            .await?;
-
-        if resp.status().is_success() {
-            Ok(())
-        } else {
-            let status = resp.status();
-            let text = resp.text().await?;
-            Err(self.error_from_response(status, &text))
-        }
-    }
-
-    /// Generic DELETE request with response body.
-    async fn delete_with_response<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T> {
-        let resp = self
-            .http
-            .delete(url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
             .send()
             .await?;
 
