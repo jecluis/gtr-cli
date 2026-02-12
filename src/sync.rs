@@ -208,8 +208,11 @@ impl SyncManager {
                         .post_sync(&summary.project_id, task_id, &bytes)
                         .await?;
 
-                    // Fetch merged state from server to get updated CRDT
-                    self.client.fetch_sync(task_id).await?
+                    // Fetch merged document from server and merge locally
+                    let server_bytes = self.client.fetch_sync(task_id).await?;
+                    let mut server_doc = crate::crdt::TaskDocument::load(&server_bytes)?;
+                    local_doc.merge(&mut server_doc)?;
+                    break;
                 }
                 Err(e) => return Err(e),
             };
