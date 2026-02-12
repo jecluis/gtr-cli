@@ -117,6 +117,30 @@ pub async fn resolve_task_id(client: &Client, short_id: &str) -> Result<String> 
     }
 }
 
+/// Normalize time-of-day expressions that chrono-english can't handle.
+///
+/// chrono-english parses `8am`, `6pm` etc. but fails on `12pm`, `12am`,
+/// `noon`, and `midnight`. This rewrites those to 24-hour format.
+fn normalize_time_of_day(input: &str) -> String {
+    let lower = input.to_lowercase();
+    let replacements: &[(&str, &str)] = &[
+        ("midnight", "0:00"),
+        ("noon", "12:00"),
+        ("12pm", "12:00"),
+        ("12am", "0:00"),
+    ];
+    for &(pattern, replacement) in replacements {
+        if let Some(pos) = lower.find(pattern) {
+            let mut result = String::with_capacity(input.len());
+            result.push_str(&input[..pos]);
+            result.push_str(replacement);
+            result.push_str(&input[pos + pattern.len()..]);
+            return result;
+        }
+    }
+    input.to_string()
+}
+
 /// Validate and normalize a deadline string to RFC3339 format.
 ///
 /// Uses hybrid parsing strategy:
@@ -126,7 +150,7 @@ pub async fn resolve_task_id(client: &Client, short_id: &str) -> Result<String> 
 ///
 /// Examples of valid input:
 /// - Strict: "2026-02-15T08:00:00Z", "2026-02-15 08:00:00", "2026-02-15"
-/// - Natural: "tomorrow", "next friday", "tomorrow 8am"
+/// - Natural: "tomorrow", "next friday", "tomorrow 8am", "friday noon"
 /// - Duration: "3 days", "2.5 weeks", "1 week 2 days ago"
 pub fn validate_deadline(deadline_str: &str) -> Result<String> {
     // Try strict ISO 8601/RFC3339 parsing first (fast path for programmatic use)
@@ -134,8 +158,12 @@ pub fn validate_deadline(deadline_str: &str) -> Result<String> {
         return Ok(validated);
     }
 
+    // Normalize time-of-day words that chrono-english can't handle:
+    // "noon" → "12:00", "midnight" → "0:00", "12pm" → "12:00", "12am" → "0:00"
+    let normalized = normalize_time_of_day(deadline_str);
+
     // Try chrono-english for natural language (keywords, weekdays, time-of-day)
-    if let Ok(dt) = parse_date_string(deadline_str, Local::now(), Dialect::Uk) {
+    if let Ok(dt) = parse_date_string(&normalized, Local::now(), Dialect::Uk) {
         return Ok(dt.to_rfc3339());
     }
 
@@ -305,6 +333,21 @@ mod tests {
 
         let result = validate_deadline("");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_deadline_noon_midnight() {
+        // "noon" and "midnight" as time-of-day
+        assert!(validate_deadline("tomorrow noon").is_ok());
+        assert!(validate_deadline("tomorrow midnight").is_ok());
+        assert!(validate_deadline("Friday noon").is_ok());
+        assert!(validate_deadline("next friday noon").is_ok());
+
+        // "12pm" and "12am"
+        assert!(validate_deadline("tomorrow 12pm").is_ok());
+        assert!(validate_deadline("tomorrow 12am").is_ok());
+        assert!(validate_deadline("Friday 12pm").is_ok());
+        assert!(validate_deadline("next friday 12pm").is_ok());
     }
 
     #[test]
