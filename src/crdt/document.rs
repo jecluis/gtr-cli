@@ -28,6 +28,11 @@ pub struct TaskDocument {
 }
 
 impl TaskDocument {
+    /// Get mutable reference to inner Automerge document.
+    pub fn inner_mut(&mut self) -> &mut Automerge {
+        &mut self.doc
+    }
+
     /// Create a new document from a task.
     pub fn new(task: &Task) -> Result<Self> {
         let mut doc = Automerge::new();
@@ -165,12 +170,33 @@ impl TaskDocument {
     }
 
     /// Update document with new task data.
+    ///
+    /// Only writes fields that actually changed compared to the current
+    /// document state. This is critical for CRDT correctness: writing
+    /// unchanged fields creates spurious concurrent operations that cause
+    /// Automerge's LWW resolution to discard legitimate changes from
+    /// other clients.
     pub fn update_task(&mut self, task: &Task) -> Result<()> {
-        // Pre-serialize complex fields
-        let custom_json = serde_json::to_string(&task.custom)
-            .map_err(|e| Error::Storage(format!("custom serialization failed: {e}")))?;
-        let log_json = serde_json::to_string(&task.log)
-            .map_err(|e| Error::Storage(format!("log serialization failed: {e}")))?;
+        // Read current state to determine what actually changed
+        let current = self.to_task()?;
+
+        // Pre-serialize complex fields only if changed
+        let custom_json = if task.custom != current.custom {
+            Some(
+                serde_json::to_string(&task.custom)
+                    .map_err(|e| Error::Storage(format!("custom serialization failed: {e}")))?,
+            )
+        } else {
+            None
+        };
+        let log_json = if task.log != current.log {
+            Some(
+                serde_json::to_string(&task.log)
+                    .map_err(|e| Error::Storage(format!("log serialization failed: {e}")))?,
+            )
+        } else {
+            None
+        };
 
         self.doc
             .transact::<_, _, automerge::AutomergeError>(|tx| {
@@ -179,52 +205,75 @@ impl TaskDocument {
                     _ => tx.put_object(ROOT, "metadata", ObjType::Map)?,
                 };
 
-                tx.put(&meta, "id", task.id.as_str())?;
-                tx.put(&meta, "project_id", task.project_id.as_str())?;
-                tx.put(&meta, "priority", task.priority.as_str())?;
-                tx.put(&meta, "size", task.size.as_str())?;
-                tx.put(&meta, "created", task.created.as_str())?;
-                tx.put(&meta, "modified", task.modified.as_str())?;
-                tx.put(&meta, "version", task.version as i64)?;
+                // Identity fields (id, project_id, created) never change.
+                // Only write fields that differ from current state.
 
-                if let Some(ref done) = task.done {
-                    tx.put(&meta, "done", done.as_str())?;
-                } else {
-                    let _ = tx.delete(&meta, "done");
+                if task.priority != current.priority {
+                    tx.put(&meta, "priority", task.priority.as_str())?;
+                }
+                if task.size != current.size {
+                    tx.put(&meta, "size", task.size.as_str())?;
+                }
+                if task.modified != current.modified {
+                    tx.put(&meta, "modified", task.modified.as_str())?;
+                }
+                if task.version != current.version {
+                    tx.put(&meta, "version", task.version as i64)?;
                 }
 
-                if let Some(ref deleted) = task.deleted {
-                    tx.put(&meta, "deleted", deleted.as_str())?;
-                } else {
-                    let _ = tx.delete(&meta, "deleted");
+                if task.done != current.done {
+                    if let Some(ref done) = task.done {
+                        tx.put(&meta, "done", done.as_str())?;
+                    } else {
+                        let _ = tx.delete(&meta, "done");
+                    }
                 }
 
-                if let Some(ref deadline) = task.deadline {
-                    tx.put(&meta, "deadline", deadline.as_str())?;
-                } else {
-                    let _ = tx.delete(&meta, "deadline");
+                if task.deleted != current.deleted {
+                    if let Some(ref deleted) = task.deleted {
+                        tx.put(&meta, "deleted", deleted.as_str())?;
+                    } else {
+                        let _ = tx.delete(&meta, "deleted");
+                    }
                 }
 
-                if let Some(ref work_state) = task.current_work_state {
-                    tx.put(&meta, "current_work_state", work_state.as_str())?;
-                } else {
-                    let _ = tx.delete(&meta, "current_work_state");
+                if task.deadline != current.deadline {
+                    if let Some(ref deadline) = task.deadline {
+                        tx.put(&meta, "deadline", deadline.as_str())?;
+                    } else {
+                        let _ = tx.delete(&meta, "deadline");
+                    }
                 }
 
-                // Rebuild subtasks list
-                let subtasks = tx.put_object(&meta, "subtasks", ObjType::List)?;
-                for (i, subtask_id) in task.subtasks.iter().enumerate() {
-                    tx.insert(&subtasks, i, subtask_id.as_str())?;
+                if task.current_work_state != current.current_work_state {
+                    if let Some(ref work_state) = task.current_work_state {
+                        tx.put(&meta, "current_work_state", work_state.as_str())?;
+                    } else {
+                        let _ = tx.delete(&meta, "current_work_state");
+                    }
                 }
 
-                // Custom fields (stored as JSON string)
-                tx.put(&meta, "custom", custom_json.as_str())?;
+                if task.subtasks != current.subtasks {
+                    let subtasks = tx.put_object(&meta, "subtasks", ObjType::List)?;
+                    for (i, subtask_id) in task.subtasks.iter().enumerate() {
+                        tx.insert(&subtasks, i, subtask_id.as_str())?;
+                    }
+                }
 
-                // Log (stored as JSON string)
-                tx.put(&meta, "log", log_json.as_str())?;
+                if let Some(ref cj) = custom_json {
+                    tx.put::<_, _, &str>(&meta, "custom", cj)?;
+                }
 
-                tx.put(ROOT, "title", task.title.as_str())?;
-                tx.put(ROOT, "body", task.body.as_str())?;
+                if let Some(ref lj) = log_json {
+                    tx.put::<_, _, &str>(&meta, "log", lj)?;
+                }
+
+                if task.title != current.title {
+                    tx.put(ROOT, "title", task.title.as_str())?;
+                }
+                if task.body != current.body {
+                    tx.put(ROOT, "body", task.body.as_str())?;
+                }
 
                 Ok(())
             })
@@ -278,36 +327,5 @@ impl TaskDocument {
         }
 
         Ok(result)
-    }
-
-    /// Get changes since a given set of document heads (as raw bytes).
-    ///
-    /// Returns changes as a list of byte vectors for transmission to server.
-    pub fn get_changes_since_bytes(&self, heads_bytes: &[Vec<u8>]) -> Vec<Vec<u8>> {
-        // Convert byte vectors to ChangeHash
-        let heads: Vec<automerge::ChangeHash> = heads_bytes
-            .iter()
-            .filter_map(|bytes| automerge::ChangeHash::try_from(bytes.as_slice()).ok())
-            .collect();
-
-        self.doc
-            .get_changes(&heads)
-            .iter()
-            .map(|change| change.raw_bytes().to_vec())
-            .collect()
-    }
-
-    /// Apply changes from byte vectors.
-    ///
-    /// Takes a vector of change bytes and applies them to this document.
-    /// This preserves causality and proper Lamport clock ordering.
-    pub fn apply_changes(&mut self, changes: Vec<Vec<u8>>) -> Result<()> {
-        for change_bytes in changes {
-            self.doc
-                .apply_changes([automerge::Change::from_bytes(change_bytes)
-                    .map_err(|e| Error::Storage(format!("invalid change bytes: {e:?}")))?])
-                .map_err(|e| Error::Storage(format!("failed to apply change: {e:?}")))?;
-        }
-        Ok(())
     }
 }

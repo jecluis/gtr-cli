@@ -57,7 +57,7 @@ pub struct Task {
 }
 
 /// A single log entry recording a state change.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LogEntry {
     pub timestamp: DateTime<Utc>,
     pub entry_type: LogEntryType,
@@ -65,7 +65,7 @@ pub struct LogEntry {
 }
 
 /// Source of a log entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LogSource {
     User,
@@ -74,7 +74,7 @@ pub enum LogSource {
 }
 
 /// Type of log entry describing what changed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LogEntryType {
     PriorityChanged {
@@ -103,7 +103,7 @@ pub enum LogEntryType {
 }
 
 /// Task status for logging.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Done,
@@ -112,7 +112,7 @@ pub enum TaskStatus {
 }
 
 /// Work state for time tracking.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkState {
     Doing,

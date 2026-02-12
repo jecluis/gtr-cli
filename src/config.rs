@@ -33,6 +33,9 @@ pub struct Config {
     /// Authentication token
     pub auth_token: String,
 
+    /// Client UUID for sync protocol
+    pub client_id: String,
+
     /// Editor command (with optional args) for editing task bodies
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor: Option<String>,
@@ -95,9 +98,13 @@ impl Config {
         // Ensure cache directory exists
         fs::create_dir_all(&cache_dir)?;
 
+        // Generate unique client ID
+        let client_id = uuid::Uuid::new_v4().to_string();
+
         Ok(Config {
             server_url,
             auth_token,
+            client_id,
             editor: None,
             cache_dir,
             config_path: Self::default_config_path()?,

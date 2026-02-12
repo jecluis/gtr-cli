@@ -110,44 +110,30 @@ impl Client {
         }
     }
 
-    /// Sync changes with server using change-based protocol.
+    /// Sync with server using Automerge sync protocol.
     ///
-    /// Sends local changes and heads, receives server changes and merged task.
-    pub async fn sync_changes(
+    /// Sends a sync::Message and receives the server's sync::Message response.
+    pub async fn sync_message(
         &self,
         task_id: &str,
-        changes: Vec<Vec<u8>>,
-        heads: Vec<Vec<u8>>,
-    ) -> Result<SyncChangesResponse> {
-        #[derive(serde::Serialize)]
-        struct SyncRequest {
-            changes: Vec<Vec<u8>>,
-            heads: Vec<Vec<u8>>,
-        }
-
-        #[derive(serde::Deserialize)]
-        struct SyncResponse {
-            changes: Vec<Vec<u8>>,
-            task: Task,
-        }
-
-        let url = format!("{}/api/sync/changes/{}", self.base_url, task_id);
-        let req = SyncRequest { changes, heads };
+        message_bytes: &[u8],
+        client_id: &str,
+    ) -> Result<Vec<u8>> {
+        let url = format!("{}/api/sync/protocol/{}", self.base_url, task_id);
 
         let resp = self
             .http
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.auth_token))
-            .json(&req)
+            .header("x-client-id", client_id)
+            .header("content-type", "application/octet-stream")
+            .body(message_bytes.to_vec())
             .send()
             .await?;
 
         if resp.status().is_success() {
-            let sync_resp: SyncResponse = resp.json().await?;
-            Ok(SyncChangesResponse {
-                changes: sync_resp.changes,
-                task: sync_resp.task,
-            })
+            let response_bytes = resp.bytes().await?;
+            Ok(response_bytes.to_vec())
         } else {
             let status = resp.status();
             let text = resp.text().await?;
@@ -517,9 +503,10 @@ impl Client {
     fn error_from_response(&self, status: StatusCode, body: &str) -> Error {
         match status {
             StatusCode::NOT_FOUND => {
-                if body.contains("task") {
+                let body_lower = body.to_lowercase();
+                if body_lower.contains("task") {
                     Error::TaskNotFound(body.to_string())
-                } else if body.contains("project") {
+                } else if body_lower.contains("project") {
                     Error::ProjectNotFound(body.to_string())
                 } else {
                     Error::Server(format!("404: {}", body))

@@ -17,6 +17,7 @@
 
 //! Sync logic for bidirectional task synchronization.
 
+use automerge::sync::SyncDoc;
 use std::time::Duration;
 
 use crate::Result;
@@ -30,6 +31,7 @@ pub struct SyncManager {
     client: Client,
     storage: TaskStorage,
     cache: TaskCache,
+    client_id: String,
 }
 
 impl SyncManager {
@@ -39,6 +41,7 @@ impl SyncManager {
             client,
             storage,
             cache,
+            client_id: config.client_id.clone(),
         })
     }
 
@@ -154,10 +157,11 @@ impl SyncManager {
         Ok(())
     }
 
-    /// Push a single task to server.
+    /// Push a single task to server using Automerge sync protocol.
     ///
-    /// Uses change-based sync for existing tasks (more efficient, preserves causality).
-    /// Falls back to full-document sync for new tasks or if change-based sync fails.
+    /// The sync protocol requires multiple round trips: the client and
+    /// server exchange messages until both sides converge. Each round
+    /// trip may transfer heads, bloom filters, or actual changes.
     async fn push_task(&self, task_id: &str) -> Result<()> {
         // Get project_id from cache
         let summary = self
@@ -167,61 +171,78 @@ impl SyncManager {
 
         // Load local CRDT document
         let bytes = self.storage.get_task_bytes(&summary.project_id, task_id)?;
+        let mut local_doc = crate::crdt::TaskDocument::load(&bytes)?;
 
-        // Try change-based sync first (more efficient for updates)
-        let result = {
-            let local_doc = crate::crdt::TaskDocument::load(&bytes)?;
-
-            // Get heads that represent last server state (empty for now - we'll track this later)
-            // For initial implementation, we send all changes
-            let last_server_heads: Vec<Vec<u8>> = vec![];
-
-            // Get changes since last sync with server
-            let changes = local_doc.get_changes_since_bytes(&last_server_heads);
-
-            // Try change-based sync
-            self.client
-                .sync_changes(task_id, changes, last_server_heads)
-                .await
+        // Load or create sync state for this task
+        let mut sync_state = match self.cache.load_sync_state(task_id)? {
+            Some(state_bytes) => automerge::sync::State::decode(&state_bytes)
+                .map_err(|e| crate::Error::Storage(format!("invalid sync state: {:?}", e)))?,
+            None => automerge::sync::State::new(),
         };
 
-        // Handle result or fall back to full-document sync
-        let (merged_task, merged_bytes) = match result {
-            Ok(sync_response) => {
-                // Change-based sync succeeded - apply server's changes
-                let local_doc = crate::crdt::TaskDocument::load(&bytes)?;
-                let mut local_doc = local_doc;
-                local_doc.apply_changes(sync_response.changes)?;
-                let updated_bytes = local_doc.save();
-                (sync_response.task, updated_bytes)
-            }
-            Err(e) => {
-                // Check if it's a 404 error (task doesn't exist)
-                let is_not_found = matches!(e, crate::Error::TaskNotFound(_))
-                    || matches!(&e, crate::Error::Server(msg) if msg.contains("404"));
+        // Sync loop: exchange messages until both sides converge
+        const MAX_ROUNDS: usize = 10;
+        let mut first_round = true;
+        for _ in 0..MAX_ROUNDS {
+            // Generate outgoing sync message
+            let outgoing_msg = match local_doc.inner_mut().generate_sync_message(&mut sync_state) {
+                Some(msg) => msg,
+                None => break, // In sync, nothing more to send
+            };
 
-                if is_not_found {
-                    // Task doesn't exist on server - use full-document sync
-                    let merged_task = self
+            let msg_bytes = outgoing_msg.encode();
+
+            // Send to server and get response
+            let result = self
+                .client
+                .sync_message(task_id, &msg_bytes, &self.client_id)
+                .await;
+
+            // Handle response or fall back to full-document sync for new tasks
+            let response_bytes = match result {
+                Ok(bytes) => bytes,
+                Err(crate::Error::TaskNotFound(_)) if first_round => {
+                    // Task doesn't exist on server yet — use full-document sync
+                    let _merged_task = self
                         .client
                         .post_sync(&summary.project_id, task_id, &bytes)
                         .await?;
 
-                    // Fetch merged state from server
-                    let merged_bytes = self.client.fetch_sync(task_id).await?;
-                    (merged_task, merged_bytes)
-                } else {
-                    return Err(e);
+                    // Fetch merged state from server to get updated CRDT
+                    self.client.fetch_sync(task_id).await?
                 }
+                Err(e) => return Err(e),
+            };
+
+            first_round = false;
+
+            // Apply server's response message (empty means nothing to receive)
+            if !response_bytes.is_empty() {
+                let incoming_msg =
+                    automerge::sync::Message::decode(&response_bytes).map_err(|e| {
+                        crate::Error::Storage(format!("invalid sync response: {:?}", e))
+                    })?;
+
+                local_doc
+                    .inner_mut()
+                    .receive_sync_message(&mut sync_state, incoming_msg)
+                    .map_err(|e| crate::Error::Storage(format!("sync protocol error: {:?}", e)))?;
+            } else {
+                break; // Server sent empty response — nothing left to exchange
             }
-        };
+        }
 
-        // Save updated document
+        // Save updated document and sync state
+        let updated_bytes = local_doc.save();
         self.storage
-            .save_task_bytes(&summary.project_id, task_id, &merged_bytes)?;
+            .save_task_bytes(&summary.project_id, task_id, &updated_bytes)?;
 
-        // Update cache with merged result
-        self.cache.upsert_task(&merged_task, false)?;
+        let state_bytes = sync_state.encode();
+        self.cache.save_sync_state(task_id, &state_bytes)?;
+
+        // Update cache with merged task
+        let task = local_doc.to_task()?;
+        self.cache.upsert_task(&task, false)?;
         self.cache.mark_synced(task_id)?;
 
         Ok(())

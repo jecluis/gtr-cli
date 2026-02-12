@@ -58,7 +58,8 @@ impl TaskCache {
                 deadline TEXT,
                 version INTEGER NOT NULL,
                 needs_push INTEGER NOT NULL DEFAULT 0,
-                last_synced TEXT
+                last_synced TEXT,
+                sync_state BLOB
             );
 
             CREATE INDEX IF NOT EXISTS idx_project ON tasks(project_id);
@@ -256,6 +257,31 @@ impl TaskCache {
             .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
 
         Ok(ids)
+    }
+
+    /// Save sync state for a task.
+    pub fn save_sync_state(&self, task_id: &str, state_bytes: &[u8]) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE tasks SET sync_state = ?1 WHERE id = ?2",
+                params![state_bytes, task_id],
+            )
+            .map_err(|e| Error::Database(format!("save sync state failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Load sync state for a task.
+    pub fn load_sync_state(&self, task_id: &str) -> Result<Option<Vec<u8>>> {
+        match self.conn.query_row(
+            "SELECT sync_state FROM tasks WHERE id = ?1",
+            params![task_id],
+            |row| row.get::<_, Option<Vec<u8>>>(0),
+        ) {
+            Ok(state) => Ok(state),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Error::Database(format!("load sync state failed: {e}"))),
+        }
     }
 }
 
