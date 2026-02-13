@@ -346,10 +346,12 @@ fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskR
         .with_timezone(&Local);
     let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
 
+    // Impact emoji prefix: reserve space for alignment
+    // Emojis are ~2 char widths + 1 space = 3 total visual width
     let impact_prefix = match task.impact {
-        1 => "\u{1f525} ", // 🔥
-        2 => "\u{26a1} ",  // ⚡
-        _ => "",
+        1 => "\u{1f525} ", // 🔥 + space
+        2 => "\u{26a1} ",  // ⚡ + space
+        _ => "   ",        // 3 spaces to match emoji visual width
     };
     let priority_colored = match task.priority.as_str() {
         "now" => format!("{}{}", impact_prefix, task.priority.red()),
