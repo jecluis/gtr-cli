@@ -304,10 +304,8 @@ fn apply_deadline_urgency(mut tasks: Vec<Task>, cached: &CachedThresholds) -> Ve
             let remaining = (deadline_utc - now).num_seconds();
 
             if remaining <= warning_secs {
-                // Warning — emoji + amber title
-                task.title = format!("\u{26a0}\u{fe0f} {}", task.title)
-                    .yellow()
-                    .to_string();
+                // Warning — emoji + amber title (no variation selector for better alignment)
+                task.title = format!("\u{26a0} {}", task.title).yellow().to_string();
             }
         }
     }
