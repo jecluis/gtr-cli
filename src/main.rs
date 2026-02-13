@@ -235,6 +235,20 @@ enum Commands {
         no_sync: bool,
     },
 
+    /// Set task progress percentage
+    Progress {
+        /// Progress value (0-100)
+        #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
+        value: u8,
+
+        /// Task ID (auto-selects from "doing" tasks if omitted)
+        task_id: Option<String>,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
+    },
+
     /// Set task priority to "later"
     Later {
         /// Task ID
@@ -528,6 +542,11 @@ async fn run() -> Result<()> {
         Commands::Restore { task_id, no_sync } => {
             gtr::commands::restore::run(&config, &task_id, no_sync).await
         }
+        Commands::Progress {
+            value,
+            task_id,
+            no_sync,
+        } => gtr::commands::progress::run(&config, value, task_id, no_sync).await,
         Commands::Now { task_id, no_sync } => {
             gtr::commands::now::run(&config, &task_id, no_sync).await
         }

@@ -27,6 +27,7 @@ pub mod later;
 pub mod list;
 pub mod log;
 pub mod now;
+pub mod progress;
 pub mod project;
 pub mod restore;
 pub mod search;
