@@ -31,8 +31,7 @@ use crate::{Result, output, utils};
 #[allow(clippy::too_many_arguments)]
 pub async fn tasks(
     config: &Config,
-    project: Vec<String>,
-    all_projects: bool,
+    project: Option<Vec<String>>,
     priority: Option<String>,
     size: Option<String>,
     include_done: bool,
@@ -50,20 +49,24 @@ pub async fn tasks(
     let ctx = LocalContext::new(config, !no_sync)?;
 
     // Determine which projects to query
-    let project_ids = if all_projects {
-        // Get all projects from server (TODO: cache projects too)
-        client
-            .list_projects()
-            .await?
-            .into_iter()
-            .map(|p| p.id)
-            .collect::<Vec<_>>()
-    } else if !project.is_empty() {
-        // Use specified project IDs
-        project
-    } else {
-        // Resolve single project interactively
-        vec![utils::resolve_project(&client, None).await?]
+    let project_ids = match project {
+        None => {
+            // No -P flag: show all projects (new default)
+            client
+                .list_projects()
+                .await?
+                .into_iter()
+                .map(|p| p.id)
+                .collect::<Vec<_>>()
+        }
+        Some(vec) if vec.is_empty() => {
+            // -P with no args: show picker
+            vec![utils::resolve_project(&client, None).await?]
+        }
+        Some(vec) => {
+            // -P with args: use specified projects
+            vec
+        }
     };
 
     // Collect ALL task IDs from cache (for consistent prefix highlighting)

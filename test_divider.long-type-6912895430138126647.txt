@@ -1,0 +1,1 @@
+tabled::settings::style::HorizontalLine<(), (), ()>: TableOption<VecRecords<Text<String>>, ColoredConfig, CompleteDimension>

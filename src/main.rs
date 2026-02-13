@@ -45,13 +45,9 @@ struct Cli {
 enum Commands {
     /// List tasks
     List {
-        /// Filter by project ID (can be specified multiple times)
-        #[arg(short = 'P', long)]
-        project: Vec<String>,
-
-        /// List tasks from all projects
-        #[arg(long)]
-        all_projects: bool,
+        /// Filter by project ID (can be specified multiple times). If specified without arguments, shows project picker.
+        #[arg(short = 'P', long, num_args = 0.., value_name = "PROJECT")]
+        project: Option<Vec<String>>,
 
         /// Filter by priority (now or later)
         #[arg(short, long, value_parser = ["now", "later"])]
@@ -488,7 +484,6 @@ async fn run() -> Result<()> {
     match cli.command {
         Commands::List {
             project,
-            all_projects,
             priority,
             size,
             done,
@@ -508,7 +503,6 @@ async fn run() -> Result<()> {
             gtr::commands::list::tasks(
                 &config,
                 project,
-                all_projects,
                 priority,
                 size,
                 include_done,
