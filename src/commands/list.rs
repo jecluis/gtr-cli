@@ -218,7 +218,7 @@ async fn fetch_thresholds(client: &Client, no_sync: bool) -> HashMap<String, Str
     }
 
     match tokio::time::timeout(std::time::Duration::from_secs(2), client.get_user_config()).await {
-        Ok(Ok(cfg)) => cfg.deadline_thresholds,
+        Ok(Ok(cfg)) => cfg.promotion_thresholds.deadline,
         _ => utils::default_thresholds(),
     }
 }

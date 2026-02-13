@@ -198,26 +198,46 @@ pub struct VersionInfo {
 
 // -- Config models --
 
+/// Resolved promotion thresholds (all categories merged with defaults).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromotionThresholdsResolved {
+    pub deadline: std::collections::HashMap<String, String>,
+}
+
 /// Configuration response from server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigResponse {
-    pub deadline_thresholds: std::collections::HashMap<String, String>,
+    pub promotion_thresholds: PromotionThresholdsResolved,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides: Option<ConfigOverrides>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub defaults: Option<std::collections::HashMap<String, String>>,
+    pub defaults: Option<PromotionThresholdsResolved>,
+}
+
+/// Promotion thresholds in overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PromotionThresholds {
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub deadline: std::collections::HashMap<String, String>,
 }
 
 /// Configuration overrides.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigOverrides {
-    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub deadline_thresholds: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub promotion_thresholds: PromotionThresholds,
+}
+
+/// Update for promotion thresholds in API requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromotionThresholdsUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<std::collections::HashMap<String, Option<String>>>,
 }
 
 /// Configuration update request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigUpdateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub deadline_thresholds: Option<std::collections::HashMap<String, Option<String>>>,
+    pub promotion_thresholds: Option<PromotionThresholdsUpdate>,
 }

@@ -24,7 +24,7 @@ use colored::Colorize;
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::models::ConfigUpdateRequest;
+use crate::models::{ConfigUpdateRequest, PromotionThresholdsUpdate};
 
 /// Show current configuration.
 pub async fn show(config: &Config, project: Option<String>) -> Result<()> {
@@ -42,7 +42,8 @@ pub async fn show(config: &Config, project: Option<String>) -> Result<()> {
     let sizes = ["XS", "S", "M", "L", "XL"];
     for size in sizes {
         let threshold = cfg
-            .deadline_thresholds
+            .promotion_thresholds
+            .deadline
             .get(size)
             .map(String::as_str)
             .unwrap_or("-");
@@ -51,7 +52,7 @@ pub async fn show(config: &Config, project: Option<String>) -> Result<()> {
         let is_override = cfg
             .overrides
             .as_ref()
-            .and_then(|o| o.deadline_thresholds.get(size))
+            .and_then(|o| o.promotion_thresholds.deadline.get(size))
             .is_some();
 
         if is_override {
@@ -72,10 +73,10 @@ pub async fn show(config: &Config, project: Option<String>) -> Result<()> {
     }
 
     if let Some(overrides) = &cfg.overrides
-        && !overrides.deadline_thresholds.is_empty()
+        && !overrides.promotion_thresholds.deadline.is_empty()
     {
         println!("\n{}", "Active Overrides:".bold());
-        for (size, duration) in &overrides.deadline_thresholds {
+        for (size, duration) in &overrides.promotion_thresholds.deadline {
             println!("  {} = {}", size.cyan(), duration.yellow());
         }
     }
@@ -97,7 +98,9 @@ pub async fn set(
     thresholds.insert(size.clone(), Some(duration.clone()));
 
     let req = ConfigUpdateRequest {
-        deadline_thresholds: Some(thresholds),
+        promotion_thresholds: Some(PromotionThresholdsUpdate {
+            deadline: Some(thresholds),
+        }),
     };
 
     let cfg = if let Some(project_id) = project {
@@ -109,7 +112,7 @@ pub async fn set(
     println!("{}", "✓ Configuration updated!".green().bold());
     println!("  {} threshold set to {}", size.cyan(), duration.yellow());
 
-    if let Some(merged) = cfg.deadline_thresholds.get(&size)
+    if let Some(merged) = cfg.promotion_thresholds.deadline.get(&size)
         && merged != &duration
     {
         println!(
@@ -130,7 +133,9 @@ pub async fn unset(config: &Config, size: String, project: Option<String>) -> Re
     thresholds.insert(size.clone(), None);
 
     let req = ConfigUpdateRequest {
-        deadline_thresholds: Some(thresholds),
+        promotion_thresholds: Some(PromotionThresholdsUpdate {
+            deadline: Some(thresholds),
+        }),
     };
 
     let cfg = if let Some(project_id) = project {
@@ -142,7 +147,7 @@ pub async fn unset(config: &Config, size: String, project: Option<String>) -> Re
     println!("{}", "✓ Override removed!".green().bold());
     println!("  {} threshold reset to default", size.cyan());
 
-    if let Some(default) = cfg.deadline_thresholds.get(&size) {
+    if let Some(default) = cfg.promotion_thresholds.deadline.get(&size) {
         println!("  Current value: {}", default.dimmed());
     }
 
