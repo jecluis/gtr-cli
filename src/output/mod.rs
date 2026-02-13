@@ -325,9 +325,9 @@ fn print_task_table_with_builder(
     header.extend([
         "Priority".into(),
         "Size".into(),
-        "Progress".into(),
         "Modified".into(),
         "Deadline".into(),
+        "Progress".into(),
         "Status".into(),
     ]);
     builder.push_record(header);
@@ -349,9 +349,9 @@ fn print_task_table_with_builder(
         record.extend([
             row.priority,
             row.size,
-            progress_str,
             row.modified,
             row.deadline,
+            progress_str,
             row.status,
         ]);
         builder.push_record(record);
