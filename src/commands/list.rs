@@ -167,9 +167,13 @@ pub async fn tasks(
     // Calculate prefix length based on ALL tasks (not just displayed ones)
     let prefix_len = crate::output::compute_min_prefix_len(&all_task_ids);
 
-    output::print_tasks_grouped(
-        &doing_tasks,
-        &other_tasks,
+    // Combine tasks with doing first, track count for divider
+    let doing_count = doing_tasks.len();
+    let all_tasks = [doing_tasks, other_tasks].concat();
+
+    output::print_tasks_unified(
+        &all_tasks,
+        doing_count,
         prefix_len,
         absolute_dates,
         fancy,
