@@ -32,6 +32,8 @@ pub mod project;
 pub mod restore;
 pub mod search;
 pub mod show;
+pub mod start;
+pub mod stop;
 pub mod sync;
 pub mod undone;
 pub mod update;

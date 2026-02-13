@@ -263,6 +263,26 @@ enum Commands {
         no_sync: bool,
     },
 
+    /// Start working on a task (set to "doing")
+    Start {
+        /// Task ID (picks from pending tasks if omitted)
+        task_id: Option<String>,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
+    },
+
+    /// Stop working on a task (clear "doing" state)
+    Stop {
+        /// Task ID (picks from "doing" tasks if omitted)
+        task_id: Option<String>,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
+    },
+
     /// Display task change log
     Log {
         /// Task ID
@@ -558,6 +578,12 @@ async fn run() -> Result<()> {
         }
         Commands::Later { task_id, no_sync } => {
             gtr::commands::later::run(&config, &task_id, no_sync).await
+        }
+        Commands::Start { task_id, no_sync } => {
+            gtr::commands::start::run(&config, task_id, no_sync).await
+        }
+        Commands::Stop { task_id, no_sync } => {
+            gtr::commands::stop::run(&config, task_id, no_sync).await
         }
         Commands::Log {
             task_id,
