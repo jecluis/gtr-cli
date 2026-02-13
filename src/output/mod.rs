@@ -123,6 +123,42 @@ fn format_task_id(id: &str, prefix_len: usize) -> String {
     }
 }
 
+/// Format progress for display in list tables.
+///
+/// When fancy mode is active and the terminal supports colors, renders a
+/// 10-character progress bar with color-coded fill:
+/// - 0–49%: yellow (amber)
+/// - 50–99%: cyan (calming blue)
+/// - 100%: green (complete)
+///
+/// Falls back to numerical `X%` when fancy is disabled or no color support.
+/// Returns `-` when progress is None.
+fn format_progress(progress: Option<u8>, fancy: bool) -> String {
+    let Some(value) = progress else {
+        return "-".to_string();
+    };
+
+    let use_bar = fancy && colored::control::SHOULD_COLORIZE.should_colorize();
+
+    if !use_bar {
+        return format!("{}%", value);
+    }
+
+    let filled = (value as usize / 10).min(10);
+    let empty = 10 - filled;
+
+    let fill_str = "█".repeat(filled);
+    let empty_str = "░".repeat(empty);
+
+    let colored_fill = match value {
+        0..=49 => fill_str.yellow().to_string(),
+        50..=99 => fill_str.cyan().to_string(),
+        _ => fill_str.green().to_string(),
+    };
+
+    format!("{}{} {:>3}%", colored_fill, empty_str.dimmed(), value)
+}
+
 /// Row type for project table display.
 #[derive(Tabled)]
 struct ProjectRow {
@@ -199,7 +235,12 @@ struct TaskRowWithProject {
 }
 
 /// Print tasks grouped by work state (doing vs others).
-pub fn print_tasks_grouped(doing_tasks: &[Task], other_tasks: &[Task], absolute_dates: bool) {
+pub fn print_tasks_grouped(
+    doing_tasks: &[Task],
+    other_tasks: &[Task],
+    absolute_dates: bool,
+    fancy: bool,
+) {
     if doing_tasks.is_empty() && other_tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
         return;
@@ -207,14 +248,14 @@ pub fn print_tasks_grouped(doing_tasks: &[Task], other_tasks: &[Task], absolute_
 
     if !doing_tasks.is_empty() {
         println!("\n{}", "═══ DOING ═══".bold().cyan());
-        print_task_table(doing_tasks, absolute_dates);
+        print_task_table(doing_tasks, absolute_dates, fancy);
     }
 
     if !other_tasks.is_empty() {
         if !doing_tasks.is_empty() {
             println!("\n{}", "═══ TASKS ═══".bold());
         }
-        print_task_table(other_tasks, absolute_dates);
+        print_task_table(other_tasks, absolute_dates, fancy);
     }
 
     let total = doing_tasks.len() + other_tasks.len();
@@ -222,30 +263,30 @@ pub fn print_tasks_grouped(doing_tasks: &[Task], other_tasks: &[Task], absolute_
 }
 
 /// Print a list of tasks in table format.
-pub fn print_tasks(tasks: &[Task], absolute_dates: bool) {
+pub fn print_tasks(tasks: &[Task], absolute_dates: bool, fancy: bool) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
         return;
     }
-    print_task_table(tasks, absolute_dates);
+    print_task_table(tasks, absolute_dates, fancy);
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
 
 /// Internal function to print task table.
-fn print_task_table(tasks: &[Task], absolute_dates: bool) {
+fn print_task_table(tasks: &[Task], absolute_dates: bool, fancy: bool) {
     // Check if tasks are from multiple projects
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
     let show_project = unique_projects.len() > 1;
 
     if show_project {
-        print_task_table_with_project(tasks, unique_projects, absolute_dates);
+        print_task_table_with_project(tasks, unique_projects, absolute_dates, fancy);
     } else {
-        print_task_table_simple(tasks, absolute_dates);
+        print_task_table_simple(tasks, absolute_dates, fancy);
     }
 }
 
 /// Print task table without project column.
-fn print_task_table_simple(tasks: &[Task], absolute_dates: bool) {
+fn print_task_table_simple(tasks: &[Task], absolute_dates: bool, fancy: bool) {
     let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
     let prefix_len = find_min_unique_prefix_len(&task_ids);
     let has_progress = tasks.iter().any(|t| t.progress.is_some());
@@ -257,6 +298,7 @@ fn print_task_table_simple(tasks: &[Task], absolute_dates: bool) {
             absolute_dates,
             false,
             &std::collections::HashMap::new(),
+            fancy,
         );
     } else {
         let rows: Vec<TaskRow> = tasks
@@ -314,6 +356,7 @@ fn print_task_table_with_builder(
     absolute_dates: bool,
     show_project: bool,
     project_colors: &std::collections::HashMap<&str, colored::Color>,
+    fancy: bool,
 ) {
     let mut builder = Builder::default();
 
@@ -334,10 +377,7 @@ fn print_task_table_with_builder(
 
     for task in tasks {
         let row = build_task_row(task, prefix_len, absolute_dates);
-        let progress_str = task
-            .progress
-            .map(|p| format!("{}%", p))
-            .unwrap_or_else(|| "-".to_string());
+        let progress_str = format_progress(task.progress, fancy);
 
         let mut record: Vec<String> = vec![row.id, row.title];
         if show_project {
@@ -383,6 +423,7 @@ fn print_task_table_with_project(
     tasks: &[Task],
     unique_projects: HashSet<&str>,
     absolute_dates: bool,
+    fancy: bool,
 ) {
     let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
     let prefix_len = find_min_unique_prefix_len(&task_ids);
@@ -404,7 +445,14 @@ fn print_task_table_with_project(
     }
 
     if has_progress {
-        print_task_table_with_builder(tasks, prefix_len, absolute_dates, true, &project_colors);
+        print_task_table_with_builder(
+            tasks,
+            prefix_len,
+            absolute_dates,
+            true,
+            &project_colors,
+            fancy,
+        );
     } else {
         let rows: Vec<TaskRowWithProject> = tasks
             .iter()

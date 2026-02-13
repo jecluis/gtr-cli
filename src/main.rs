@@ -96,6 +96,10 @@ enum Commands {
         /// Show absolute dates instead of relative (e.g., "2026-02-15" instead of "in 4 days")
         #[arg(long)]
         absolute: bool,
+
+        /// Disable progress bar (show numerical percentages)
+        #[arg(long)]
+        no_fancy: bool,
     },
 
     /// Show a specific task
@@ -472,6 +476,7 @@ async fn run() -> Result<()> {
             reversed,
             no_sync,
             absolute,
+            no_fancy,
         } => {
             let include_done = all || done;
             let include_deleted = all || deleted;
@@ -489,6 +494,7 @@ async fn run() -> Result<()> {
                 reversed,
                 no_sync,
                 absolute,
+                !no_fancy,
             )
             .await
         }

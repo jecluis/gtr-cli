@@ -41,6 +41,7 @@ pub async fn tasks(
     reversed: bool,
     no_sync: bool,
     absolute_dates: bool,
+    fancy: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
@@ -138,7 +139,7 @@ pub async fn tasks(
         other_tasks.reverse();
     }
 
-    output::print_tasks_grouped(&doing_tasks, &other_tasks, absolute_dates);
+    output::print_tasks_grouped(&doing_tasks, &other_tasks, absolute_dates, fancy);
     Ok(())
 }
 
