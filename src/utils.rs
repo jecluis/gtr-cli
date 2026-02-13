@@ -221,6 +221,44 @@ fn parse_strict_deadline(deadline_str: &str) -> Result<String> {
     ))
 }
 
+/// Parse a threshold duration string (e.g., "12h", "48h", "7d") into seconds.
+///
+/// Supports:
+/// - `Xh` — hours
+/// - `Xd` — days
+/// - `Xw` — weeks
+///
+/// Returns None for unparseable strings.
+pub fn parse_threshold_secs(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.len() < 2 {
+        return None;
+    }
+
+    let (num_str, unit) = s.split_at(s.len() - 1);
+    let num: f64 = num_str.parse().ok()?;
+
+    let secs = match unit {
+        "h" => num * 3600.0,
+        "d" => num * 86400.0,
+        "w" => num * 604800.0,
+        _ => return None,
+    };
+
+    Some(secs as i64)
+}
+
+/// System default deadline thresholds (same as server defaults).
+pub fn default_thresholds() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    map.insert("XS".to_string(), "12h".to_string());
+    map.insert("S".to_string(), "12h".to_string());
+    map.insert("M".to_string(), "24h".to_string());
+    map.insert("L".to_string(), "48h".to_string());
+    map.insert("XL".to_string(), "7d".to_string());
+    map
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

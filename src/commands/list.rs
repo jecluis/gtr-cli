@@ -17,7 +17,10 @@
 
 //! List command implementation.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Duration, Utc};
+use colored::Colorize;
 
 use crate::client::Client;
 use crate::config::Config;
@@ -139,6 +142,13 @@ pub async fn tasks(
         other_tasks.reverse();
     }
 
+    // Fetch deadline thresholds for urgency indicators
+    let thresholds = fetch_thresholds(&client, no_sync).await;
+
+    // Apply deadline urgency emoji/color to task titles
+    let doing_tasks = apply_deadline_urgency(doing_tasks, &thresholds);
+    let other_tasks = apply_deadline_urgency(other_tasks, &thresholds);
+
     output::print_tasks_grouped(&doing_tasks, &other_tasks, absolute_dates, fancy);
     Ok(())
 }
@@ -189,6 +199,65 @@ fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
         // Then by modification time (ascending: oldest first, newest at bottom)
         a.modified.cmp(&b.modified)
     });
+
+    tasks
+}
+
+/// Fetch deadline thresholds from server, falling back to defaults.
+async fn fetch_thresholds(client: &Client, no_sync: bool) -> HashMap<String, String> {
+    if no_sync {
+        return utils::default_thresholds();
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.get_user_config()).await {
+        Ok(Ok(cfg)) => cfg.deadline_thresholds,
+        _ => utils::default_thresholds(),
+    }
+}
+
+/// Apply deadline urgency indicators to task titles.
+///
+/// - Overdue: prepend boom emoji (no color change)
+/// - Within 25% of threshold remaining: prepend warning emoji + amber title
+fn apply_deadline_urgency(mut tasks: Vec<Task>, thresholds: &HashMap<String, String>) -> Vec<Task> {
+    let now = Utc::now();
+
+    for task in &mut tasks {
+        // Skip done/deleted tasks
+        if task.done.is_some() || task.deleted.is_some() {
+            continue;
+        }
+
+        let Some(ref deadline_str) = task.deadline else {
+            continue;
+        };
+        let Ok(deadline) = DateTime::parse_from_rfc3339(deadline_str) else {
+            continue;
+        };
+
+        let deadline_utc = deadline.with_timezone(&Utc);
+
+        if deadline_utc < now {
+            // Overdue — boom emoji, no colorization
+            task.title = format!("\u{1f4a5} {}", task.title);
+        } else {
+            // Check if within 25% of threshold time remaining
+            let threshold_str = thresholds.get(&task.size);
+            let threshold_secs = threshold_str
+                .and_then(|s| utils::parse_threshold_secs(s))
+                .unwrap_or(86400); // fallback: 24h
+
+            let warning_secs = threshold_secs / 4;
+            let remaining = (deadline_utc - now).num_seconds();
+
+            if remaining <= warning_secs {
+                // Warning — emoji + amber title
+                task.title = format!("\u{26a0}\u{fe0f} {}", task.title)
+                    .yellow()
+                    .to_string();
+            }
+        }
+    }
 
     tasks
 }
