@@ -26,6 +26,7 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
 use crate::models::Task;
+use crate::threshold_cache::{self, CachedThresholds};
 use crate::{Result, output, utils};
 
 /// List tasks (local-first from cache).
@@ -144,7 +145,7 @@ pub async fn tasks(
     }
 
     // Fetch deadline thresholds for urgency indicators
-    let thresholds = fetch_thresholds(&client, no_sync).await;
+    let thresholds = fetch_thresholds(config, &client, no_sync).await;
 
     // Apply deadline urgency emoji/color to task titles
     let doing_tasks = apply_deadline_urgency(doing_tasks, &thresholds);
@@ -211,15 +212,39 @@ fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
     tasks
 }
 
-/// Fetch deadline thresholds from server, falling back to defaults.
-async fn fetch_thresholds(client: &Client, no_sync: bool) -> HashMap<String, String> {
-    if no_sync {
+/// Fetch deadline thresholds, checking cache first and server on sync.
+async fn fetch_thresholds(
+    config: &Config,
+    client: &Client,
+    no_sync: bool,
+) -> HashMap<String, String> {
+    // Try local cache first
+    if let Some(cached) = threshold_cache::read_cache(config) {
+        if no_sync {
+            return cached.deadline;
+        }
+    } else if no_sync {
         return utils::default_thresholds();
     }
 
+    // Fetch from server and update cache
     match tokio::time::timeout(std::time::Duration::from_secs(2), client.get_user_config()).await {
-        Ok(Ok(cfg)) => cfg.promotion_thresholds.deadline,
-        _ => utils::default_thresholds(),
+        Ok(Ok(cfg)) => {
+            let thresholds = cfg.promotion_thresholds.deadline;
+            let _ = threshold_cache::write_cache(
+                config,
+                &CachedThresholds {
+                    deadline: thresholds.clone(),
+                },
+            );
+            thresholds
+        }
+        _ => {
+            // Fall back to cache, then defaults
+            threshold_cache::read_cache(config)
+                .map(|c| c.deadline)
+                .unwrap_or_else(utils::default_thresholds)
+        }
     }
 }
 

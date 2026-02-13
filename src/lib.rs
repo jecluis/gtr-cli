@@ -31,6 +31,7 @@ pub mod models;
 pub mod output;
 pub mod storage;
 pub mod sync;
+pub mod threshold_cache;
 pub mod utils;
 
 pub use client::Client;
