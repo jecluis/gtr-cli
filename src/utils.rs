@@ -259,6 +259,28 @@ pub fn default_thresholds() -> std::collections::HashMap<String, String> {
     map
 }
 
+/// System default impact labels.
+pub fn default_impact_labels() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    map.insert("1".to_string(), "Catastrophic".to_string());
+    map.insert("2".to_string(), "Significant".to_string());
+    map.insert("3".to_string(), "Neutral".to_string());
+    map.insert("4".to_string(), "Minor".to_string());
+    map.insert("5".to_string(), "Negligible".to_string());
+    map
+}
+
+/// System default impact multipliers.
+pub fn default_impact_multipliers() -> std::collections::HashMap<String, f64> {
+    let mut map = std::collections::HashMap::new();
+    map.insert("1".to_string(), 2.0);
+    map.insert("2".to_string(), 1.5);
+    map.insert("3".to_string(), 1.0);
+    map.insert("4".to_string(), 0.5);
+    map.insert("5".to_string(), 0.25);
+    map
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

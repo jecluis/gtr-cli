@@ -24,7 +24,9 @@ use colored::Colorize;
 
 use crate::client::Client;
 use crate::config::Config;
-use crate::models::{ConfigResponse, ConfigUpdateRequest, PromotionThresholdsUpdate};
+use crate::models::{
+    ConfigResponse, ConfigUpdateRequest, ImpactConfigUpdate, PromotionThresholdsUpdate,
+};
 use crate::threshold_cache::{self, CachedThresholds};
 use crate::{Error, Result, utils};
 
@@ -72,12 +74,93 @@ pub async fn show(config: &Config, project: Option<String>) -> Result<()> {
         }
     }
 
-    if let Some(overrides) = &cfg.overrides
-        && !overrides.promotion_thresholds.deadline.is_empty()
-    {
-        println!("\n  {}", "Active Overrides:".bold());
-        for (size, duration) in &overrides.promotion_thresholds.deadline {
-            println!("    {} = {}", size.cyan(), duration.yellow());
+    // Impact labels
+    println!("\n  {}", "Impact Labels".bold());
+    let default_labels = utils::default_impact_labels();
+    let impact = cfg.promotion_thresholds.impact.as_ref();
+    for key in ["1", "2", "3", "4", "5"] {
+        let label = impact
+            .and_then(|i| i.labels.get(key))
+            .or_else(|| default_labels.get(key))
+            .map(String::as_str)
+            .unwrap_or("-");
+
+        let is_override = cfg
+            .overrides
+            .as_ref()
+            .map(|o| o.promotion_thresholds.impact.labels.contains_key(key))
+            .unwrap_or(false);
+
+        if is_override {
+            println!(
+                "    {:<4} {:<18} {}",
+                key.cyan(),
+                label.yellow().bold(),
+                "(override)".dimmed()
+            );
+        } else {
+            println!(
+                "    {:<4} {:<18} {}",
+                key.cyan(),
+                label,
+                "(default)".dimmed()
+            );
+        }
+    }
+
+    // Impact multipliers
+    println!("\n  {}", "Impact Multipliers".bold());
+    let default_mults = utils::default_impact_multipliers();
+    for key in ["1", "2", "3", "4", "5"] {
+        let mult = impact
+            .and_then(|i| i.multipliers.get(key))
+            .or_else(|| default_mults.get(key))
+            .copied()
+            .unwrap_or(1.0);
+
+        let is_override = cfg
+            .overrides
+            .as_ref()
+            .map(|o| o.promotion_thresholds.impact.multipliers.contains_key(key))
+            .unwrap_or(false);
+
+        if is_override {
+            println!(
+                "    {:<4} {:<18} {}",
+                key.cyan(),
+                format!("{:.2}x", mult).yellow().bold(),
+                "(override)".dimmed()
+            );
+        } else {
+            println!(
+                "    {:<4} {:<18} {}",
+                key.cyan(),
+                format!("{:.2}x", mult),
+                "(default)".dimmed()
+            );
+        }
+    }
+
+    if let Some(overrides) = &cfg.overrides {
+        let has_deadline_overrides = !overrides.promotion_thresholds.deadline.is_empty();
+        let has_impact_overrides = !overrides.promotion_thresholds.impact.labels.is_empty()
+            || !overrides.promotion_thresholds.impact.multipliers.is_empty();
+
+        if has_deadline_overrides || has_impact_overrides {
+            println!("\n  {}", "Active Overrides:".bold());
+            for (size, duration) in &overrides.promotion_thresholds.deadline {
+                println!("    deadline {} = {}", size.cyan(), duration.yellow());
+            }
+            for (key, label) in &overrides.promotion_thresholds.impact.labels {
+                println!("    impact label {} = {}", key.cyan(), label.yellow());
+            }
+            for (key, mult) in &overrides.promotion_thresholds.impact.multipliers {
+                println!(
+                    "    impact multiplier {} = {}",
+                    key.cyan(),
+                    format!("{:.2}x", mult).yellow()
+                );
+            }
         }
     }
 
@@ -105,19 +188,22 @@ pub async fn set(config: &Config, project: Option<String>, file: Option<String>)
     let edited: serde_json::Value = serde_json::from_str(&edited_json)
         .map_err(|e| Error::InvalidInput(format!("Invalid JSON: {}", e)))?;
 
-    let edited_map = edited
-        .as_object()
-        .and_then(|o| o.get("deadline"))
+    let edited_obj = edited.as_object().ok_or_else(|| {
+        Error::InvalidInput(
+            "JSON must be an object with \"deadline\" and/or \"impact\"".to_string(),
+        )
+    })?;
+
+    let edited_deadline_map = edited_obj
+        .get("deadline")
         .and_then(|d| d.as_object())
         .ok_or_else(|| {
-            Error::InvalidInput(
-                "JSON must have shape: { \"deadline\": { \"XS\": \"12h\", ... } }".to_string(),
-            )
+            Error::InvalidInput("JSON must have \"deadline\": { \"XS\": \"12h\", ... }".to_string())
         })?;
 
-    // Parse edited values into a HashMap
+    // Parse edited deadline values
     let mut edited_deadline = HashMap::new();
-    for (key, val) in edited_map {
+    for (key, val) in edited_deadline_map {
         let duration = val
             .as_str()
             .ok_or_else(|| Error::InvalidInput(format!("Value for '{}' must be a string", key)))?
@@ -125,16 +211,31 @@ pub async fn set(config: &Config, project: Option<String>, file: Option<String>)
         edited_deadline.insert(key.clone(), duration);
     }
 
-    // Compute diff against the original merged config
-    let diff = compute_diff(&cfg.promotion_thresholds.deadline, &edited_deadline)?;
+    // Compute deadline diff
+    let deadline_diff = compute_diff(&cfg.promotion_thresholds.deadline, &edited_deadline)?;
 
-    if diff.is_empty() {
+    // Parse and compute impact diff
+    let impact_update = if let Some(impact_val) = edited_obj.get("impact") {
+        parse_impact_diff(impact_val, &cfg)?
+    } else {
+        None
+    };
+
+    let has_deadline_changes = !deadline_diff.is_empty();
+    let has_impact_changes = impact_update.is_some();
+
+    if !has_deadline_changes && !has_impact_changes {
         println!("{}", "No changes detected.".dimmed());
         return Ok(());
     }
 
     // Show diff and confirm
-    show_diff_summary(&diff, &cfg.promotion_thresholds.deadline);
+    if has_deadline_changes {
+        show_diff_summary(&deadline_diff, &cfg.promotion_thresholds.deadline);
+    }
+    if let Some(ref impact) = impact_update {
+        show_impact_diff_summary(impact);
+    }
 
     if !confirm_push()? {
         println!("{}", "Cancelled.".dimmed());
@@ -144,7 +245,12 @@ pub async fn set(config: &Config, project: Option<String>, file: Option<String>)
     // Build update request and send
     let req = ConfigUpdateRequest {
         promotion_thresholds: Some(PromotionThresholdsUpdate {
-            deadline: Some(diff),
+            deadline: if has_deadline_changes {
+                Some(deadline_diff)
+            } else {
+                None
+            },
+            impact: impact_update,
         }),
     };
 
@@ -185,6 +291,8 @@ pub async fn reset(config: &Config, project: Option<String>) -> Result<()> {
         config,
         &CachedThresholds {
             deadline: utils::default_thresholds(),
+            impact_labels: utils::default_impact_labels(),
+            impact_multipliers: utils::default_impact_multipliers(),
         },
     );
 
@@ -211,8 +319,42 @@ fn build_editor_json(cfg: &ConfigResponse) -> String {
         }
     }
 
+    // Build impact section
+    let default_labels = utils::default_impact_labels();
+    let default_mults = utils::default_impact_multipliers();
+    let impact_cfg = cfg.promotion_thresholds.impact.as_ref();
+
+    let mut labels = serde_json::Map::new();
+    let mut multipliers = serde_json::Map::new();
+    for key in ["1", "2", "3", "4", "5"] {
+        let label = impact_cfg
+            .and_then(|i| i.labels.get(key))
+            .or_else(|| default_labels.get(key))
+            .cloned()
+            .unwrap_or_default();
+        labels.insert(key.to_string(), serde_json::Value::String(label));
+
+        let mult = impact_cfg
+            .and_then(|i| i.multipliers.get(key))
+            .or_else(|| default_mults.get(key))
+            .copied()
+            .unwrap_or(1.0);
+        multipliers.insert(
+            key.to_string(),
+            serde_json::Value::Number(serde_json::Number::from_f64(mult).unwrap()),
+        );
+    }
+
+    let mut impact = serde_json::Map::new();
+    impact.insert("labels".to_string(), serde_json::Value::Object(labels));
+    impact.insert(
+        "multipliers".to_string(),
+        serde_json::Value::Object(multipliers),
+    );
+
     let mut root = serde_json::Map::new();
     root.insert("deadline".to_string(), serde_json::Value::Object(deadline));
+    root.insert("impact".to_string(), serde_json::Value::Object(impact));
 
     serde_json::to_string_pretty(&root).unwrap()
 }
@@ -347,12 +489,154 @@ fn confirm_push() -> Result<bool> {
 
 /// Update the local threshold cache from a config response.
 fn update_cache_from_response(config: &Config, cfg: &ConfigResponse) {
+    let impact = cfg.promotion_thresholds.impact.as_ref();
     let _ = threshold_cache::write_cache(
         config,
         &CachedThresholds {
             deadline: cfg.promotion_thresholds.deadline.clone(),
+            impact_labels: impact
+                .map(|i| i.labels.clone())
+                .unwrap_or_else(utils::default_impact_labels),
+            impact_multipliers: impact
+                .map(|i| i.multipliers.clone())
+                .unwrap_or_else(utils::default_impact_multipliers),
         },
     );
+}
+
+/// Parse impact changes from edited JSON and compute diff against current config.
+fn parse_impact_diff(
+    impact_val: &serde_json::Value,
+    cfg: &ConfigResponse,
+) -> Result<Option<ImpactConfigUpdate>> {
+    let impact_obj = impact_val
+        .as_object()
+        .ok_or_else(|| Error::InvalidInput("\"impact\" must be an object".to_string()))?;
+
+    let default_labels = utils::default_impact_labels();
+    let default_mults = utils::default_impact_multipliers();
+    let current_impact = cfg.promotion_thresholds.impact.as_ref();
+
+    let mut label_diff: HashMap<String, Option<String>> = HashMap::new();
+    let mut mult_diff: HashMap<String, Option<f64>> = HashMap::new();
+
+    // Parse labels
+    if let Some(labels_val) = impact_obj.get("labels") {
+        let labels_obj = labels_val
+            .as_object()
+            .ok_or_else(|| Error::InvalidInput("\"labels\" must be an object".to_string()))?;
+
+        let valid_keys = ["1", "2", "3", "4", "5"];
+        for (key, val) in labels_obj {
+            if !valid_keys.contains(&key.as_str()) {
+                return Err(Error::InvalidInput(format!(
+                    "Invalid impact key: '{}'. Must be 1-5",
+                    key
+                )));
+            }
+            let new_label = val
+                .as_str()
+                .ok_or_else(|| {
+                    Error::InvalidInput(format!("Impact label for '{}' must be a string", key))
+                })?
+                .to_string();
+
+            let current_label = current_impact
+                .and_then(|i| i.labels.get(key))
+                .or_else(|| default_labels.get(key))
+                .cloned()
+                .unwrap_or_default();
+
+            if new_label != current_label {
+                label_diff.insert(key.clone(), Some(new_label));
+            }
+        }
+    }
+
+    // Parse multipliers
+    if let Some(mults_val) = impact_obj.get("multipliers") {
+        let mults_obj = mults_val
+            .as_object()
+            .ok_or_else(|| Error::InvalidInput("\"multipliers\" must be an object".to_string()))?;
+
+        let valid_keys = ["1", "2", "3", "4", "5"];
+        for (key, val) in mults_obj {
+            if !valid_keys.contains(&key.as_str()) {
+                return Err(Error::InvalidInput(format!(
+                    "Invalid impact key: '{}'. Must be 1-5",
+                    key
+                )));
+            }
+            let new_mult = val.as_f64().ok_or_else(|| {
+                Error::InvalidInput(format!("Impact multiplier for '{}' must be a number", key))
+            })?;
+
+            if new_mult <= 0.0 {
+                return Err(Error::InvalidInput(format!(
+                    "Impact multiplier for {} must be positive, got {}",
+                    key, new_mult
+                )));
+            }
+
+            let current_mult = current_impact
+                .and_then(|i| i.multipliers.get(key))
+                .or_else(|| default_mults.get(key))
+                .copied()
+                .unwrap_or(1.0);
+
+            if (new_mult - current_mult).abs() > f64::EPSILON {
+                mult_diff.insert(key.clone(), Some(new_mult));
+            }
+        }
+    }
+
+    if label_diff.is_empty() && mult_diff.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(ImpactConfigUpdate {
+        labels: if label_diff.is_empty() {
+            None
+        } else {
+            Some(label_diff)
+        },
+        multipliers: if mult_diff.is_empty() {
+            None
+        } else {
+            Some(mult_diff)
+        },
+    }))
+}
+
+/// Display a summary of impact configuration changes.
+fn show_impact_diff_summary(update: &ImpactConfigUpdate) {
+    println!("\n{}", "Impact Changes:".bold());
+
+    if let Some(ref labels) = update.labels {
+        let mut keys: Vec<&String> = labels.keys().collect();
+        keys.sort();
+        for key in keys {
+            if let Some(Some(label)) = labels.get(key) {
+                println!("  label {} -> {}", key.cyan(), label.yellow().bold());
+            }
+        }
+    }
+
+    if let Some(ref multipliers) = update.multipliers {
+        let mut keys: Vec<&String> = multipliers.keys().collect();
+        keys.sort();
+        for key in keys {
+            if let Some(Some(mult)) = multipliers.get(key) {
+                println!(
+                    "  multiplier {} -> {}",
+                    key.cyan(),
+                    format!("{:.2}x", mult).yellow().bold()
+                );
+            }
+        }
+    }
+
+    println!();
 }
 
 #[cfg(test)]

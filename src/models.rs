@@ -57,6 +57,12 @@ pub struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub progress: Option<u8>,
+    #[serde(default = "default_impact")]
+    pub impact: u8,
+}
+
+fn default_impact() -> u8 {
+    3
 }
 
 /// A single log entry recording a state change.
@@ -107,6 +113,10 @@ pub enum LogEntryType {
         from: Option<u8>,
         to: Option<u8>,
     },
+    ImpactChanged {
+        from: u8,
+        to: u8,
+    },
 }
 
 /// Task status for logging.
@@ -152,6 +162,8 @@ pub struct CreateTaskRequest {
     pub size: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deadline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub impact: Option<u8>,
 }
 
 /// Request to update a task.
@@ -167,6 +179,8 @@ pub struct UpdateTaskRequest {
     pub size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deadline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub impact: Option<u8>,
 }
 
 impl Task {
@@ -198,10 +212,19 @@ pub struct VersionInfo {
 
 // -- Config models --
 
+/// Resolved impact configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImpactConfigResolved {
+    pub labels: std::collections::HashMap<String, String>,
+    pub multipliers: std::collections::HashMap<String, f64>,
+}
+
 /// Resolved promotion thresholds (all categories merged with defaults).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromotionThresholdsResolved {
     pub deadline: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub impact: Option<ImpactConfigResolved>,
 }
 
 /// Configuration response from server.
@@ -214,11 +237,22 @@ pub struct ConfigResponse {
     pub defaults: Option<PromotionThresholdsResolved>,
 }
 
+/// Impact configuration in overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImpactConfig {
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub labels: std::collections::HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub multipliers: std::collections::HashMap<String, f64>,
+}
+
 /// Promotion thresholds in overrides.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PromotionThresholds {
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub deadline: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub impact: ImpactConfig,
 }
 
 /// Configuration overrides.
@@ -228,11 +262,22 @@ pub struct ConfigOverrides {
     pub promotion_thresholds: PromotionThresholds,
 }
 
+/// Update for impact config in API requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImpactConfigUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::HashMap<String, Option<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multipliers: Option<std::collections::HashMap<String, Option<f64>>>,
+}
+
 /// Update for promotion thresholds in API requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromotionThresholdsUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deadline: Option<std::collections::HashMap<String, Option<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub impact: Option<ImpactConfigUpdate>,
 }
 
 /// Configuration update request.

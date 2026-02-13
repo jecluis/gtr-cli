@@ -39,6 +39,7 @@ pub async fn run(
     size: &str,
     deadline: Option<String>,
     progress: Option<u8>,
+    impact: Option<u8>,
     no_sync: bool,
 ) -> Result<()> {
     // Get project ID (may require server)
@@ -87,6 +88,7 @@ pub async fn run(
         log: vec![],
         current_work_state: None,
         progress,
+        impact: impact.unwrap_or(3),
     };
 
     // Save locally

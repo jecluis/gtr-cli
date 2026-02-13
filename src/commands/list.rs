@@ -17,8 +17,6 @@
 
 //! List command implementation.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Duration, Utc};
 use colored::Colorize;
 
@@ -144,12 +142,12 @@ pub async fn tasks(
         other_tasks.reverse();
     }
 
-    // Fetch deadline thresholds for urgency indicators
-    let thresholds = fetch_thresholds(config, &client, no_sync).await;
+    // Fetch promotion thresholds for urgency indicators
+    let cached = fetch_thresholds(config, &client, no_sync).await;
 
     // Apply deadline urgency emoji/color to task titles
-    let doing_tasks = apply_deadline_urgency(doing_tasks, &thresholds);
-    let other_tasks = apply_deadline_urgency(other_tasks, &thresholds);
+    let doing_tasks = apply_deadline_urgency(doing_tasks, &cached);
+    let other_tasks = apply_deadline_urgency(other_tasks, &cached);
 
     output::print_tasks_grouped(&doing_tasks, &other_tasks, absolute_dates, fancy, verbose);
     Ok(())
@@ -171,9 +169,9 @@ fn split_by_work_state(tasks: &mut [Task]) -> (Vec<Task>, Vec<Task>) {
     (doing, other)
 }
 
-/// Sort tasks by priority (now > later), deadline (sooner first),
-/// modification time (descending: recently touched at top), then
-/// creation time (ascending: new arrivals at bottom).
+/// Sort tasks by priority (now > later), impact (1 first),
+/// deadline (sooner first), modification time (descending: recently
+/// touched at top), then creation time (ascending: new arrivals at bottom).
 fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
     tasks.sort_by(|a, b| {
         // First by priority (now < later for sorting, so now comes first)
@@ -185,6 +183,12 @@ fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
 
         if priority_cmp != std::cmp::Ordering::Equal {
             return priority_cmp;
+        }
+
+        // Then by impact (lower = higher impact, comes first)
+        let impact_cmp = a.impact.cmp(&b.impact);
+        if impact_cmp != std::cmp::Ordering::Equal {
+            return impact_cmp;
         }
 
         // Then by deadline (sooner first, None last)
@@ -212,38 +216,44 @@ fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
     tasks
 }
 
-/// Fetch deadline thresholds, checking cache first and server on sync.
-async fn fetch_thresholds(
-    config: &Config,
-    client: &Client,
-    no_sync: bool,
-) -> HashMap<String, String> {
+/// Fetch promotion thresholds (deadline + impact), checking cache first.
+async fn fetch_thresholds(config: &Config, client: &Client, no_sync: bool) -> CachedThresholds {
     // Try local cache first
     if let Some(cached) = threshold_cache::read_cache(config) {
         if no_sync {
-            return cached.deadline;
+            return cached;
         }
     } else if no_sync {
-        return utils::default_thresholds();
+        return CachedThresholds {
+            deadline: utils::default_thresholds(),
+            impact_labels: utils::default_impact_labels(),
+            impact_multipliers: utils::default_impact_multipliers(),
+        };
     }
 
     // Fetch from server and update cache
     match tokio::time::timeout(std::time::Duration::from_secs(2), client.get_user_config()).await {
         Ok(Ok(cfg)) => {
-            let thresholds = cfg.promotion_thresholds.deadline;
-            let _ = threshold_cache::write_cache(
-                config,
-                &CachedThresholds {
-                    deadline: thresholds.clone(),
-                },
-            );
-            thresholds
+            let impact = cfg.promotion_thresholds.impact.as_ref();
+            let cached = CachedThresholds {
+                deadline: cfg.promotion_thresholds.deadline,
+                impact_labels: impact
+                    .map(|i| i.labels.clone())
+                    .unwrap_or_else(utils::default_impact_labels),
+                impact_multipliers: impact
+                    .map(|i| i.multipliers.clone())
+                    .unwrap_or_else(utils::default_impact_multipliers),
+            };
+            let _ = threshold_cache::write_cache(config, &cached);
+            cached
         }
         _ => {
             // Fall back to cache, then defaults
-            threshold_cache::read_cache(config)
-                .map(|c| c.deadline)
-                .unwrap_or_else(utils::default_thresholds)
+            threshold_cache::read_cache(config).unwrap_or_else(|| CachedThresholds {
+                deadline: utils::default_thresholds(),
+                impact_labels: utils::default_impact_labels(),
+                impact_multipliers: utils::default_impact_multipliers(),
+            })
         }
     }
 }
@@ -252,7 +262,9 @@ async fn fetch_thresholds(
 ///
 /// - Overdue: prepend boom emoji (no color change)
 /// - Within 25% of threshold remaining: prepend warning emoji + amber title
-fn apply_deadline_urgency(mut tasks: Vec<Task>, thresholds: &HashMap<String, String>) -> Vec<Task> {
+///
+/// Thresholds are scaled by the task's impact multiplier.
+fn apply_deadline_urgency(mut tasks: Vec<Task>, cached: &CachedThresholds) -> Vec<Task> {
     let now = Utc::now();
 
     for task in &mut tasks {
@@ -275,12 +287,20 @@ fn apply_deadline_urgency(mut tasks: Vec<Task>, thresholds: &HashMap<String, Str
             task.title = format!("\u{1f4a5} {}", task.title);
         } else {
             // Check if within 25% of threshold time remaining
-            let threshold_str = thresholds.get(&task.size);
-            let threshold_secs = threshold_str
+            let threshold_str = cached.deadline.get(&task.size);
+            let base_secs = threshold_str
                 .and_then(|s| utils::parse_threshold_secs(s))
                 .unwrap_or(86400); // fallback: 24h
 
-            let warning_secs = threshold_secs / 4;
+            // Scale by impact multiplier
+            let multiplier = cached
+                .impact_multipliers
+                .get(&task.impact.to_string())
+                .copied()
+                .unwrap_or(1.0);
+            let effective_secs = (base_secs as f64 * multiplier) as i64;
+
+            let warning_secs = effective_secs / 4;
             let remaining = (deadline_utc - now).num_seconds();
 
             if remaining <= warning_secs {

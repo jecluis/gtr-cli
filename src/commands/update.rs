@@ -39,6 +39,7 @@ pub async fn run(
     size: Option<String>,
     deadline: Option<String>,
     progress: Option<u8>,
+    impact: Option<u8>,
     no_sync: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
@@ -51,9 +52,10 @@ pub async fn run(
         && size.is_none()
         && deadline.is_none()
         && progress.is_none()
+        && impact.is_none()
     {
         return Err(Error::UserFacing(
-            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, --deadline, or --progress)".to_string(),
+            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, --deadline, --progress, or --impact)".to_string(),
         ));
     }
 
@@ -103,6 +105,9 @@ pub async fn run(
     }
     if let Some(new_progress) = progress {
         task.progress = Some(new_progress);
+    }
+    if let Some(new_impact) = impact {
+        task.impact = new_impact;
     }
 
     // Update metadata
@@ -207,6 +212,15 @@ pub async fn run(
                 new_progress_str.green()
             );
         }
+    }
+
+    if impact.is_some() && old_task.impact != task.impact {
+        println!(
+            "  {} {} → {}",
+            "Impact:".bold(),
+            old_task.impact.to_string().dimmed().strikethrough(),
+            task.impact.to_string().green()
+        );
     }
 
     if edit_body && old_task.body != task.body {

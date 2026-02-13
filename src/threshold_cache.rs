@@ -31,6 +31,10 @@ use crate::config::Config;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedThresholds {
     pub deadline: HashMap<String, String>,
+    #[serde(default)]
+    pub impact_labels: HashMap<String, String>,
+    #[serde(default)]
+    pub impact_multipliers: HashMap<String, f64>,
 }
 
 /// Get the path to the threshold cache file.
@@ -79,6 +83,8 @@ mod tests {
 
         let thresholds = CachedThresholds {
             deadline: [("M".to_string(), "48h".to_string())].into_iter().collect(),
+            impact_labels: HashMap::new(),
+            impact_multipliers: HashMap::new(),
         };
 
         write_cache(&config, &thresholds).unwrap();

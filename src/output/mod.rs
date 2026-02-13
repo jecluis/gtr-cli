@@ -328,9 +328,14 @@ fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskR
         .with_timezone(&Local);
     let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
 
+    let impact_prefix = match task.impact {
+        1 => "\u{1f525} ", // 🔥
+        2 => "\u{26a1} ",  // ⚡
+        _ => "",
+    };
     let priority_colored = match task.priority.as_str() {
-        "now" => task.priority.red().to_string(),
-        _ => task.priority.to_string(),
+        "now" => format!("{}{}", impact_prefix, task.priority.red()),
+        _ => format!("{}{}", impact_prefix, task.priority),
     };
 
     let deadline_str = format_deadline(task.deadline.as_deref(), absolute_dates);
@@ -561,6 +566,16 @@ pub fn print_task_details(task: &Task, no_format: bool, no_wrap: bool) {
             format!("Deleted:  {}", deleted_time.format("%Y-%m-%d %H:%M:%S")).red()
         );
     }
+
+    let impact_label = match task.impact {
+        1 => "Catastrophic",
+        2 => "Significant",
+        3 => "Neutral",
+        4 => "Minor",
+        5 => "Negligible",
+        _ => "Unknown",
+    };
+    println!("  Impact:   {} ({})", impact_label, task.impact);
 
     if let Some(progress) = task.progress {
         println!("  Progress: {}%", progress);

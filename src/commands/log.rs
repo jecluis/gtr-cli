@@ -118,6 +118,9 @@ pub async fn run(
                     .unwrap_or_else(|| "none".to_string());
                 format!("Progress: {} → {}", from_str, to_str)
             }
+            LogEntryType::ImpactChanged { from, to } => {
+                format!("Impact: {} → {}", from, to)
+            }
         };
 
         println!("\n  {} | {}", time_str.cyan(), source_str);

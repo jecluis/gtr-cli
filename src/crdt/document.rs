@@ -75,6 +75,8 @@ impl TaskDocument {
                 tx.put(&meta, "progress", progress as i64)?;
             }
 
+            tx.put(&meta, "impact", task.impact as i64)?;
+
             // Subtasks list
             let subtasks = tx.put_object(&meta, "subtasks", ObjType::List)?;
             for (i, subtask_id) in task.subtasks.iter().enumerate() {
@@ -137,6 +139,11 @@ impl TaskDocument {
             _ => None,
         };
 
+        let impact = match self.doc.get(&meta_id, "impact") {
+            Ok(Some((automerge::Value::Scalar(s), _))) => s.to_i64().unwrap_or(3) as u8,
+            _ => 3,
+        };
+
         // Parse subtasks
         let subtasks = self.read_subtasks(&meta_id)?;
 
@@ -168,6 +175,7 @@ impl TaskDocument {
             log,
             current_work_state,
             progress,
+            impact,
         })
     }
 
@@ -269,6 +277,10 @@ impl TaskDocument {
                     } else {
                         let _ = tx.delete(&meta, "progress");
                     }
+                }
+
+                if task.impact != current.impact {
+                    tx.put(&meta, "impact", task.impact as i64)?;
                 }
 
                 if task.subtasks != current.subtasks {

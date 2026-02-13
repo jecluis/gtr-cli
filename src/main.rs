@@ -154,6 +154,10 @@ enum Commands {
         #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
         progress: Option<u8>,
 
+        /// Impact level (1=Catastrophic, 2=Significant, 3=Neutral, 4=Minor, 5=Negligible)
+        #[arg(short, long, value_parser = clap::value_parser!(u8).range(1..=5))]
+        impact: Option<u8>,
+
         /// Skip sync (work offline)
         #[arg(long)]
         no_sync: bool,
@@ -187,6 +191,10 @@ enum Commands {
         /// New progress percentage (0-100)
         #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
         progress: Option<u8>,
+
+        /// New impact level (1=Catastrophic, 2=Significant, 3=Neutral, 4=Minor, 5=Negligible)
+        #[arg(short, long, value_parser = clap::value_parser!(u8).range(1..=5))]
+        impact: Option<u8>,
 
         /// Skip sync (work offline)
         #[arg(long)]
@@ -530,11 +538,13 @@ async fn run() -> Result<()> {
             size,
             deadline,
             progress,
+            impact,
             no_sync,
         } => {
             let title_str = title.join(" ");
             gtr::commands::create::run(
-                &config, project, &title_str, body, &priority, &size, deadline, progress, no_sync,
+                &config, project, &title_str, body, &priority, &size, deadline, progress, impact,
+                no_sync,
             )
             .await
         }
@@ -546,10 +556,11 @@ async fn run() -> Result<()> {
             size,
             deadline,
             progress,
+            impact,
             no_sync,
         } => {
             gtr::commands::update::run(
-                &config, &task_id, title, body, priority, size, deadline, progress, no_sync,
+                &config, &task_id, title, body, priority, size, deadline, progress, impact, no_sync,
             )
             .await
         }

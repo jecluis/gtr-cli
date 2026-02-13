@@ -46,7 +46,8 @@ gtr list --projects
 gtr create --project my-project "My task title" \
   --body "Task description" \
   --priority for-now \
-  --size M
+  --size M \
+  --impact 1
 ```
 
 ### 4. Show a Task
@@ -62,6 +63,9 @@ Shows task with pretty markdown rendering.
 ```bash
 # Update specific fields
 gtr update <task-id> --title "New title" --priority for-now
+
+# Update impact level
+gtr update <task-id> --impact 2
 
 # Edit body in your $EDITOR
 gtr update <task-id> --body
@@ -233,6 +237,48 @@ gtr update abc123 -d "Q1 2026"                 # No quarters
 gtr update abc123 -d "02/15/2026"              # Use YYYY-MM-DD instead
 ```
 
+#### Impact Levels
+
+Tasks carry an impact level (1-5) that affects how urgently they get promoted
+from "later" to "now" as their deadline approaches.
+
+| Level | Label        | Multiplier | Effect                          |
+| ----- | ------------ | ---------- | ------------------------------- |
+| 1     | Catastrophic | 2.0x       | Promotes with 2x lead time      |
+| 2     | Significant  | 1.5x       | Promotes with 1.5x lead time    |
+| 3     | Neutral      | 1.0x       | Default behavior                |
+| 4     | Minor        | 0.5x       | Promotes with half lead time    |
+| 5     | Negligible   | 0.25x      | Promotes with quarter lead time |
+
+```bash
+# Set impact when creating
+gtr new "Critical bug" -d "3 days" --impact 1
+
+# Update impact
+gtr update <task-id> -i 5
+```
+
+In `gtr list`, high-impact tasks show emoji indicators in the priority column:
+
+- Impact 1: 🔥 (fire)
+- Impact 2: ⚡ (lightning)
+- Impact 3-5: no indicator
+
+Tasks are sorted by priority, then impact (highest first), then deadline.
+
+**Configuring impact labels and multipliers:**
+
+```bash
+# View current impact configuration
+gtr config promotion show
+
+# Edit impact labels and multipliers (opens editor with JSON)
+gtr config promotion set
+
+# Reset all overrides to defaults
+gtr config promotion reset
+```
+
 ### 6. Delete a Task
 
 ```bash
@@ -363,6 +409,7 @@ auth_token = "your-auth-token"
 - [x] **Pretty table output** - Color-coded task lists
 - [x] **Sync commands** - Manual sync (`sync now`, `sync status`)
 - [x] **Offline mode flag** - `--no-sync` for fully offline operation
+- [x] **Impact levels** - Configurable urgency scaling for deadline promotion
 
 ### Planned
 

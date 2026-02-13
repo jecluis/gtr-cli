@@ -59,7 +59,8 @@ impl TaskCache {
                 version INTEGER NOT NULL,
                 needs_push INTEGER NOT NULL DEFAULT 0,
                 last_synced TEXT,
-                sync_state BLOB
+                sync_state BLOB,
+                impact INTEGER NOT NULL DEFAULT 3
             );
 
             CREATE INDEX IF NOT EXISTS idx_project ON tasks(project_id);
@@ -69,6 +70,12 @@ impl TaskCache {
             "#,
             )
             .map_err(|e| Error::Database(format!("schema init failed: {e}")))?;
+
+        // Migrate existing caches: add impact column if missing
+        let _ = self.conn.execute(
+            "ALTER TABLE tasks ADD COLUMN impact INTEGER NOT NULL DEFAULT 3",
+            [],
+        );
 
         Ok(())
     }
