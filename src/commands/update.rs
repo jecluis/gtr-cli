@@ -231,7 +231,8 @@ pub async fn run(
     ctx.cache.upsert_task(&task, true)?;
 
     println!("{}", "✓ Task updated locally!".green().bold());
-    println!("  ID: {}", task.id.cyan());
+    println!("  ID:    {}", task.id.cyan());
+    println!("  Title: {}", task.title);
 
     // Show what changed with highlighting
     if let Some(new_title) = title {
