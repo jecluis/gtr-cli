@@ -24,7 +24,7 @@ use dialoguer::Select;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
-use crate::models::Task;
+use crate::models::{LogEntry, LogEntryType, Task, WorkState};
 use crate::{Result, utils};
 
 /// Stop working on a task (clear work state).
@@ -51,9 +51,19 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
         return Ok(());
     }
 
+    let now = Utc::now();
     task.current_work_state = None;
-    task.modified = Utc::now().to_rfc3339();
+    task.modified = now.to_rfc3339();
     task.version += 1;
+
+    // Add log entry for work state change
+    task.log.push(LogEntry {
+        timestamp: now,
+        entry_type: LogEntryType::WorkStateChanged {
+            state: WorkState::Stopped,
+        },
+        source: crate::models::LogSource::User,
+    });
 
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;

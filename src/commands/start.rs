@@ -24,7 +24,7 @@ use dialoguer::Select;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
-use crate::models::Task;
+use crate::models::{LogEntry, LogEntryType, Task, WorkState};
 use crate::{Result, utils};
 
 /// Start working on a task (set work state to "doing").
@@ -52,12 +52,33 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
         return Ok(());
     }
 
+    let now = Utc::now();
     task.current_work_state = Some("doing".to_string());
-    if task.progress.is_none() {
-        task.progress = Some(0);
-    }
-    task.modified = Utc::now().to_rfc3339();
+    task.modified = now.to_rfc3339();
     task.version += 1;
+
+    // Add log entry for work state change
+    task.log.push(LogEntry {
+        timestamp: now,
+        entry_type: LogEntryType::WorkStateChanged {
+            state: WorkState::Doing,
+        },
+        source: crate::models::LogSource::User,
+    });
+
+    // Auto-set progress to 0% if not set
+    if task.progress.is_none() {
+        let old_progress = task.progress;
+        task.progress = Some(0);
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::ProgressChanged {
+                from: old_progress,
+                to: Some(0),
+            },
+            source: crate::models::LogSource::User,
+        });
+    }
 
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
