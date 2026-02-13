@@ -24,6 +24,7 @@ use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
+use crate::models::{LogEntry, LogEntryType, TaskStatus};
 use crate::utils;
 
 /// Unmark a task as done (local-first with optional sync).
@@ -40,10 +41,31 @@ pub async fn run(
 
     let mut task = ctx.load_task(&client, &full_id).await?;
 
+    let now = Utc::now();
     task.done = None;
-    task.progress = Some(progress.unwrap_or(50));
-    task.modified = Utc::now().to_rfc3339();
+    task.modified = now.to_rfc3339();
     task.version += 1;
+
+    // Add log entry for status change
+    task.log.push(LogEntry {
+        timestamp: now,
+        entry_type: LogEntryType::StatusChanged {
+            status: TaskStatus::Restored,
+        },
+        source: crate::models::LogSource::User,
+    });
+
+    // Auto-set progress to 50% (or user-provided value)
+    let old_progress = task.progress;
+    task.progress = Some(progress.unwrap_or(50));
+    task.log.push(LogEntry {
+        timestamp: now,
+        entry_type: LogEntryType::ProgressChanged {
+            from: old_progress,
+            to: task.progress,
+        },
+        source: crate::models::LogSource::User,
+    });
 
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
