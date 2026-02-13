@@ -159,7 +159,8 @@ fn split_by_work_state(tasks: &mut [Task]) -> (Vec<Task>, Vec<Task>) {
     (doing, other)
 }
 
-/// Sort tasks by priority (now > later) then deadline (sooner first).
+/// Sort tasks by priority (now > later), deadline (sooner first),
+/// then modification time (oldest first, so newest appear at bottom).
 fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
     tasks.sort_by(|a, b| {
         // First by priority (now < later for sorting, so now comes first)
@@ -174,12 +175,19 @@ fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
         }
 
         // Then by deadline (sooner first, None last)
-        match (&a.deadline, &b.deadline) {
+        let deadline_cmp = match (&a.deadline, &b.deadline) {
             (Some(a_deadline), Some(b_deadline)) => a_deadline.cmp(b_deadline),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
+        };
+
+        if deadline_cmp != std::cmp::Ordering::Equal {
+            return deadline_cmp;
         }
+
+        // Then by modification time (ascending: oldest first, newest at bottom)
+        a.modified.cmp(&b.modified)
     });
 
     tasks
