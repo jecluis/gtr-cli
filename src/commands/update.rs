@@ -25,6 +25,7 @@ use tracing::{debug, info};
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
+use crate::models::{LogEntry, LogEntryType};
 use crate::utils;
 use crate::{Error, Result};
 
@@ -68,12 +69,30 @@ pub async fn run(
     let old_task = task.clone();
 
     // Edit body if requested (includes title as H1 header)
+    let now = Utc::now();
     if edit_body {
         match crate::editor::edit_task_body(config, &task.title, &task.body) {
             Ok((new_title, new_body)) => {
-                task.body = new_body;
+                if task.body != new_body {
+                    task.log.push(LogEntry {
+                        timestamp: now,
+                        entry_type: LogEntryType::BodyChanged,
+                        source: crate::models::LogSource::User,
+                    });
+                    task.body = new_body;
+                }
                 // Update title if it changed in editor
-                if let Some(title_from_editor) = new_title {
+                if let Some(title_from_editor) = new_title
+                    && task.title != title_from_editor
+                {
+                    task.log.push(LogEntry {
+                        timestamp: now,
+                        entry_type: LogEntryType::TitleChanged {
+                            from: task.title.clone(),
+                            to: title_from_editor.clone(),
+                        },
+                        source: crate::models::LogSource::User,
+                    });
                     task.title = title_from_editor;
                 }
             }
@@ -85,33 +104,110 @@ pub async fn run(
         }
     }
 
-    // Apply updates
-    if let Some(ref new_title) = title {
+    // Apply updates with logging
+    if let Some(ref new_title) = title
+        && task.title != *new_title
+    {
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::TitleChanged {
+                from: task.title.clone(),
+                to: new_title.clone(),
+            },
+            source: crate::models::LogSource::User,
+        });
         task.title = new_title.clone();
     }
-    if let Some(ref new_priority) = priority {
+
+    if let Some(ref new_priority) = priority
+        && task.priority != *new_priority
+    {
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::PriorityChanged {
+                from: task.priority.clone(),
+                to: new_priority.clone(),
+            },
+            source: crate::models::LogSource::User,
+        });
         task.priority = new_priority.clone();
     }
-    if let Some(ref new_size) = size {
+
+    if let Some(ref new_size) = size
+        && task.size != *new_size
+    {
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::SizeChanged {
+                from: task.size.clone(),
+                to: new_size.clone(),
+            },
+            source: crate::models::LogSource::User,
+        });
         task.size = new_size.clone();
     }
+
     if let Some(ref new_deadline) = deadline {
-        task.deadline = if new_deadline == "none" {
+        let new_deadline_parsed = if new_deadline == "none" {
             None
         } else {
             // Validate deadline format
             Some(crate::utils::validate_deadline(new_deadline)?)
         };
+
+        if task.deadline != new_deadline_parsed {
+            let old_deadline_dt = task
+                .deadline
+                .as_ref()
+                .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+            let new_deadline_dt = new_deadline_parsed
+                .as_ref()
+                .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+
+            task.log.push(LogEntry {
+                timestamp: now,
+                entry_type: LogEntryType::DeadlineChanged {
+                    from: old_deadline_dt,
+                    to: new_deadline_dt,
+                },
+                source: crate::models::LogSource::User,
+            });
+            task.deadline = new_deadline_parsed;
+        }
     }
-    if let Some(new_progress) = progress {
+
+    if let Some(new_progress) = progress
+        && task.progress != Some(new_progress)
+    {
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::ProgressChanged {
+                from: task.progress,
+                to: Some(new_progress),
+            },
+            source: crate::models::LogSource::User,
+        });
         task.progress = Some(new_progress);
     }
-    if let Some(new_impact) = impact {
+
+    if let Some(new_impact) = impact
+        && task.impact != new_impact
+    {
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::ImpactChanged {
+                from: task.impact,
+                to: new_impact,
+            },
+            source: crate::models::LogSource::User,
+        });
         task.impact = new_impact;
     }
 
     // Update metadata
-    task.modified = Utc::now().to_rfc3339();
+    task.modified = now.to_rfc3339();
     task.version += 1;
 
     // Save locally
