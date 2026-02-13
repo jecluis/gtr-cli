@@ -53,11 +53,12 @@ impl LocalContext {
         })
     }
 
-    /// Load a task from local storage, falling back to server fetch.
+    /// Load a task from local storage, falling back to server CRDT fetch.
     ///
     /// Resolves the project_id from cache to find the correct storage path.
-    /// If the task is not available locally, fetches from the server and
-    /// creates a local copy.
+    /// If the task is not available locally, fetches the raw CRDT bytes from
+    /// the server (preserving document history) rather than creating a new
+    /// independent document.
     pub async fn load_task(&self, client: &Client, task_id: &str) -> Result<Task> {
         // Try loading from local storage using cache for project_id
         if let Some(summary) = self.cache.get_task_summary(task_id)? {
@@ -82,17 +83,24 @@ impl LocalContext {
             debug!(task_id, "task not in local cache, fetching from server");
         }
 
-        // Fetch from server and create local copy
-        let fetched = client.get_task(task_id).await?;
-        self.storage.create_task(&fetched.project_id, &fetched)?;
-        self.cache.upsert_task(&fetched, false)?;
+        // Fetch CRDT bytes from server to preserve document history.
+        // Using raw bytes instead of JSON + TaskDocument::new() avoids
+        // creating an independent document whose metadata map object
+        // would conflict with the server's during CRDT merge.
+        let remote_bytes = client.fetch_sync(task_id).await?;
+        let doc = crate::crdt::TaskDocument::load(&remote_bytes)?;
+        let task = doc.to_task()?;
+
+        self.storage
+            .save_task_bytes(&task.project_id, task_id, &remote_bytes)?;
+        self.cache.upsert_task(&task, false)?;
 
         info!(
             task_id,
-            project_id = %fetched.project_id,
-            "fetched task from server"
+            project_id = %task.project_id,
+            "fetched task CRDT from server"
         );
-        Ok(fetched)
+        Ok(task)
     }
 
     /// Attempt sync with timeout if enabled.
