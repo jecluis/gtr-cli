@@ -38,7 +38,7 @@ pub async fn run(
     // Load from local storage (or fetch from server if not cached)
     let task = ctx.load_task(&client, &full_id).await?;
 
-    output::print_task_details(&task, no_format, no_wrap);
+    output::print_task_details(config, &task, no_format, no_wrap);
 
     // Try to refresh from server in background if sync enabled
     if !no_sync {

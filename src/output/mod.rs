@@ -499,7 +499,12 @@ fn print_task_table_with_project(
 ///
 /// If `no_format` is true or NO_COLOR is set, markdown will not be rendered.
 /// If `no_wrap` is true, the body will not be hard-wrapped at 80 columns.
-pub fn print_task_details(task: &Task, no_format: bool, no_wrap: bool) {
+pub fn print_task_details(
+    config: &crate::config::Config,
+    task: &Task,
+    no_format: bool,
+    no_wrap: bool,
+) {
     let renderer = if no_format {
         MarkdownRenderer::with_override(Some(false)) // Force disable
     } else {
@@ -576,14 +581,15 @@ pub fn print_task_details(task: &Task, no_format: bool, no_wrap: bool) {
         );
     }
 
-    let impact_label = match task.impact {
-        1 => "Catastrophic",
-        2 => "Significant",
-        3 => "Neutral",
-        4 => "Minor",
-        5 => "Negligible",
-        _ => "Unknown",
-    };
+    // Get impact label from cache (with fallback to defaults)
+    let impact_label = crate::threshold_cache::read_cache(config)
+        .and_then(|cached| cached.impact_labels.get(&task.impact.to_string()).cloned())
+        .or_else(|| {
+            crate::utils::default_impact_labels()
+                .get(&task.impact.to_string())
+                .cloned()
+        })
+        .unwrap_or_else(|| "Unknown".to_string());
     println!("  Impact:   {} ({})", impact_label, task.impact);
 
     if let Some(progress) = task.progress {
