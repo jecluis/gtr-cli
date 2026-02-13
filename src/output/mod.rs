@@ -33,7 +33,7 @@ use crate::models::{Project, Task};
 ///
 /// Uses optimized O(N log N) algorithm by sorting IDs and comparing adjacent pairs.
 /// Always returns at least 2 to avoid single-character typos.
-fn find_min_unique_prefix_len(task_ids: &[String]) -> usize {
+pub fn compute_min_prefix_len(task_ids: &[String]) -> usize {
     if task_ids.len() <= 1 {
         return 2; // minimum
     }
@@ -240,6 +240,7 @@ struct TaskRowWithProject {
 pub fn print_tasks_grouped(
     doing_tasks: &[Task],
     other_tasks: &[Task],
+    prefix_len: usize,
     absolute_dates: bool,
     fancy: bool,
     verbose: bool,
@@ -251,14 +252,14 @@ pub fn print_tasks_grouped(
 
     if !doing_tasks.is_empty() {
         println!("\n{}", "═══ DOING ═══".bold().cyan());
-        print_task_table(doing_tasks, absolute_dates, fancy, verbose);
+        print_task_table(doing_tasks, prefix_len, absolute_dates, fancy, verbose);
     }
 
     if !other_tasks.is_empty() {
         if !doing_tasks.is_empty() {
             println!("\n{}", "═══ TASKS ═══".bold());
         }
-        print_task_table(other_tasks, absolute_dates, fancy, verbose);
+        print_task_table(other_tasks, prefix_len, absolute_dates, fancy, verbose);
     }
 
     let total = doing_tasks.len() + other_tasks.len();
@@ -266,32 +267,49 @@ pub fn print_tasks_grouped(
 }
 
 /// Print a list of tasks in table format.
-pub fn print_tasks(tasks: &[Task], absolute_dates: bool, fancy: bool) {
+pub fn print_tasks(tasks: &[Task], prefix_len: usize, absolute_dates: bool, fancy: bool) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
         return;
     }
-    print_task_table(tasks, absolute_dates, fancy, false);
+    print_task_table(tasks, prefix_len, absolute_dates, fancy, false);
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
 
 /// Internal function to print task table.
-fn print_task_table(tasks: &[Task], absolute_dates: bool, fancy: bool, verbose: bool) {
+fn print_task_table(
+    tasks: &[Task],
+    prefix_len: usize,
+    absolute_dates: bool,
+    fancy: bool,
+    verbose: bool,
+) {
     // Check if tasks are from multiple projects
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
     let show_project = unique_projects.len() > 1;
 
     if show_project {
-        print_task_table_with_project(tasks, unique_projects, absolute_dates, fancy, verbose);
+        print_task_table_with_project(
+            tasks,
+            unique_projects,
+            prefix_len,
+            absolute_dates,
+            fancy,
+            verbose,
+        );
     } else {
-        print_task_table_simple(tasks, absolute_dates, fancy, verbose);
+        print_task_table_simple(tasks, prefix_len, absolute_dates, fancy, verbose);
     }
 }
 
 /// Print task table without project column.
-fn print_task_table_simple(tasks: &[Task], absolute_dates: bool, fancy: bool, verbose: bool) {
-    let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
-    let prefix_len = find_min_unique_prefix_len(&task_ids);
+fn print_task_table_simple(
+    tasks: &[Task],
+    prefix_len: usize,
+    absolute_dates: bool,
+    fancy: bool,
+    verbose: bool,
+) {
     let has_progress = tasks.iter().any(|t| t.progress.is_some());
     let use_builder = has_progress || verbose;
 
@@ -431,12 +449,11 @@ fn print_task_table_with_builder(
 fn print_task_table_with_project(
     tasks: &[Task],
     unique_projects: HashSet<&str>,
+    prefix_len: usize,
     absolute_dates: bool,
     fancy: bool,
     verbose: bool,
 ) {
-    let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
-    let prefix_len = find_min_unique_prefix_len(&task_ids);
     let has_progress = tasks.iter().any(|t| t.progress.is_some());
     let use_builder = has_progress || verbose;
 
@@ -628,38 +645,38 @@ mod tests {
     }
 
     #[test]
-    fn test_find_min_unique_prefix_len_single_task() {
+    fn test_compute_min_prefix_len_single_task() {
         let ids = vec!["ea75a3ac".to_string()];
-        assert_eq!(find_min_unique_prefix_len(&ids), 2);
+        assert_eq!(compute_min_prefix_len(&ids), 2);
     }
 
     #[test]
-    fn test_find_min_unique_prefix_len_all_different() {
+    fn test_compute_min_prefix_len_all_different() {
         let ids = vec![
             "ea75a3ac".to_string(),
             "b35bcda6".to_string(),
             "d240111c".to_string(),
         ];
         // All differ at position 0, but minimum is 2
-        assert_eq!(find_min_unique_prefix_len(&ids), 2);
+        assert_eq!(compute_min_prefix_len(&ids), 2);
     }
 
     #[test]
-    fn test_find_min_unique_prefix_len_similar_prefix() {
+    fn test_compute_min_prefix_len_similar_prefix() {
         let ids = vec![
             "d240111c".to_string(),
             "ea75a3ac".to_string(),
             "ea7bc84d".to_string(),
         ];
         // ea75a3ac vs ea7bc84d differ at position 3, so need 4 chars
-        assert_eq!(find_min_unique_prefix_len(&ids), 4);
+        assert_eq!(compute_min_prefix_len(&ids), 4);
     }
 
     #[test]
-    fn test_find_min_unique_prefix_len_longer_prefix() {
+    fn test_compute_min_prefix_len_longer_prefix() {
         let ids = vec!["ea75a3ac".to_string(), "ea75a3bc".to_string()];
         // Differ at position 6, so need 7 chars
-        assert_eq!(find_min_unique_prefix_len(&ids), 7);
+        assert_eq!(compute_min_prefix_len(&ids), 7);
     }
 
     #[test]

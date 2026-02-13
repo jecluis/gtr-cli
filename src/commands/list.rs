@@ -66,6 +66,18 @@ pub async fn tasks(
         vec![utils::resolve_project(&client, None).await?]
     };
 
+    // Collect ALL task IDs from cache (for consistent prefix highlighting)
+    let all_task_ids = {
+        let all_projects = client.list_projects().await.unwrap_or_default();
+        let mut ids = Vec::new();
+        for proj in &all_projects {
+            if let Ok(summaries) = ctx.cache.list_tasks(&proj.id) {
+                ids.extend(summaries.iter().map(|s| s.id.clone()));
+            }
+        }
+        ids
+    };
+
     // Load tasks from local cache and storage
     let mut all_tasks = Vec::new();
 
@@ -149,7 +161,17 @@ pub async fn tasks(
     let doing_tasks = apply_deadline_urgency(doing_tasks, &cached);
     let other_tasks = apply_deadline_urgency(other_tasks, &cached);
 
-    output::print_tasks_grouped(&doing_tasks, &other_tasks, absolute_dates, fancy, verbose);
+    // Calculate prefix length based on ALL tasks (not just displayed ones)
+    let prefix_len = crate::output::compute_min_prefix_len(&all_task_ids);
+
+    output::print_tasks_grouped(
+        &doing_tasks,
+        &other_tasks,
+        prefix_len,
+        absolute_dates,
+        fancy,
+        verbose,
+    );
     Ok(())
 }
 

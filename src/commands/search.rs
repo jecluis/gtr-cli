@@ -53,15 +53,15 @@ pub async fn run(
     let query_lower = query.to_lowercase();
     let mut matching_tasks = Vec::new();
 
-    for task_id in task_ids {
+    for task_id in &task_ids {
         let project_id = ctx
             .cache
-            .get_task_summary(&task_id)
+            .get_task_summary(task_id)
             .ok()
             .flatten()
             .map(|s| s.project_id)
             .unwrap_or_default();
-        if let Ok(task) = ctx.storage.load_task(&project_id, &task_id) {
+        if let Ok(task) = ctx.storage.load_task(&project_id, task_id) {
             // Search in title and body (case-insensitive)
             if task.title.to_lowercase().contains(&query_lower)
                 || task.body.to_lowercase().contains(&query_lower)
@@ -86,8 +86,12 @@ pub async fn run(
 
     println!("{}", format!("Search results for '{}':", query).bold());
     println!();
+
+    // Calculate prefix length based on ALL tasks (not just search results)
+    let prefix_len = crate::output::compute_min_prefix_len(&task_ids);
+
     // Search results default to relative dates for better UX
-    output::print_tasks(&matching_tasks, false, true);
+    output::print_tasks(&matching_tasks, prefix_len, false, true);
 
     Ok(())
 }
