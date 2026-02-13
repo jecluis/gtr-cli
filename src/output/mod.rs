@@ -362,6 +362,12 @@ fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskR
         "DELETED".red().to_string()
     } else if task.is_done() {
         "done".blue().to_string()
+    } else if let Some(ref work_state) = task.current_work_state {
+        match work_state.as_str() {
+            "doing" => "doing".green().bold().to_string(),
+            "stopped" => "stopped".yellow().to_string(),
+            _ => "pending".green().to_string(),
+        }
     } else {
         "pending".green().to_string()
     };

@@ -42,7 +42,7 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
 
     let mut task = ctx.load_task(&client, &full_id).await?;
 
-    if task.current_work_state.is_none() {
+    if task.current_work_state.as_deref() != Some("doing") {
         println!(
             "{} {} is not currently in progress",
             "ℹ".blue(),
@@ -52,7 +52,7 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
     }
 
     let now = Utc::now();
-    task.current_work_state = None;
+    task.current_work_state = Some("stopped".to_string());
     task.modified = now.to_rfc3339();
     task.version += 1;
 
