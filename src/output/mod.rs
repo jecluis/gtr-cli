@@ -22,6 +22,7 @@ use std::collections::HashSet;
 use chrono::{DateTime, Local, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use colored::Colorize;
+use tabled::builder::Builder;
 use tabled::settings::{Alignment, Modify, Style, object::Columns};
 use tabled::{Table, Tabled};
 
@@ -245,50 +246,131 @@ fn print_task_table(tasks: &[Task], absolute_dates: bool) {
 
 /// Print task table without project column.
 fn print_task_table_simple(tasks: &[Task], absolute_dates: bool) {
-    // Calculate minimum unique prefix length for all task IDs
     let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
     let prefix_len = find_min_unique_prefix_len(&task_ids);
+    let has_progress = tasks.iter().any(|t| t.progress.is_some());
 
-    let rows: Vec<TaskRow> = tasks
-        .iter()
-        .map(|task| {
-            let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
-                .unwrap()
-                .with_timezone(&Local);
-            let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
+    if has_progress {
+        print_task_table_with_builder(
+            tasks,
+            prefix_len,
+            absolute_dates,
+            false,
+            &std::collections::HashMap::new(),
+        );
+    } else {
+        let rows: Vec<TaskRow> = tasks
+            .iter()
+            .map(|task| build_task_row(task, prefix_len, absolute_dates))
+            .collect();
 
-            let priority_colored = match task.priority.as_str() {
-                "now" => task.priority.red().to_string(),
-                _ => task.priority.to_string(),
-            };
+        let mut binding = Table::new(rows);
+        let table = binding
+            .with(Style::rounded())
+            .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
+            .with(Modify::new(Columns::new(2..7)).with(Alignment::center()));
 
-            let deadline_str = format_deadline(task.deadline.as_deref(), absolute_dates);
+        println!("{}", table);
+    }
+}
 
-            let status = if task.is_deleted() {
-                "DELETED".red().to_string()
-            } else if task.is_done() {
-                "done".blue().to_string()
+/// Build a TaskRow from a Task.
+fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskRow {
+    let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
+        .unwrap()
+        .with_timezone(&Local);
+    let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
+
+    let priority_colored = match task.priority.as_str() {
+        "now" => task.priority.red().to_string(),
+        _ => task.priority.to_string(),
+    };
+
+    let deadline_str = format_deadline(task.deadline.as_deref(), absolute_dates);
+
+    let status = if task.is_deleted() {
+        "DELETED".red().to_string()
+    } else if task.is_done() {
+        "done".blue().to_string()
+    } else {
+        "pending".green().to_string()
+    };
+
+    TaskRow {
+        id: format_task_id(&task.id, prefix_len),
+        title: task.title.clone(),
+        priority: priority_colored,
+        size: task.size.clone(),
+        modified: modified_str,
+        deadline: deadline_str,
+        status,
+    }
+}
+
+/// Print task table using Builder (supports conditional Progress column).
+fn print_task_table_with_builder(
+    tasks: &[Task],
+    prefix_len: usize,
+    absolute_dates: bool,
+    show_project: bool,
+    project_colors: &std::collections::HashMap<&str, colored::Color>,
+) {
+    let mut builder = Builder::default();
+
+    // Header
+    let mut header: Vec<String> = vec!["ID".into(), "Title".into()];
+    if show_project {
+        header.push("Project".into());
+    }
+    header.extend([
+        "Priority".into(),
+        "Size".into(),
+        "Progress".into(),
+        "Modified".into(),
+        "Deadline".into(),
+        "Status".into(),
+    ]);
+    builder.push_record(header);
+
+    for task in tasks {
+        let row = build_task_row(task, prefix_len, absolute_dates);
+        let progress_str = task.progress.map(|p| format!("{}%", p)).unwrap_or_default();
+
+        let mut record: Vec<String> = vec![row.id, row.title];
+        if show_project {
+            let color = project_colors.get(task.project_id.as_str());
+            let project = if let Some(c) = color {
+                task.project_id.color(*c).to_string()
             } else {
-                "pending".green().to_string()
+                task.project_id.clone()
             };
+            record.push(project);
+        }
+        record.extend([
+            row.priority,
+            row.size,
+            progress_str,
+            row.modified,
+            row.deadline,
+            row.status,
+        ]);
+        builder.push_record(record);
+    }
 
-            TaskRow {
-                id: format_task_id(&task.id, prefix_len),
-                title: task.title.clone(),
-                priority: priority_colored,
-                size: task.size.clone(),
-                modified: modified_str,
-                deadline: deadline_str,
-                status,
-            }
-        })
-        .collect();
-
-    let mut binding = Table::new(rows);
-    let table = binding
+    let mut table = builder.build();
+    table
         .with(Style::rounded())
-        .with(Modify::new(Columns::new(0..1)).with(Alignment::center())) // ID
-        .with(Modify::new(Columns::new(2..7)).with(Alignment::center())); // Priority, Size, Modified, Deadline, Status
+        .with(Modify::new(Columns::new(0..1)).with(Alignment::center()));
+
+    if show_project {
+        // Project + Priority..Status columns
+        table
+            .with(Modify::new(Columns::new(2..3)).with(Alignment::center()))
+            .with(Modify::new(Columns::new(3..9)).with(Alignment::center()));
+    } else {
+        // Priority..Status columns
+        table.with(Modify::new(Columns::new(2..8)).with(Alignment::center()));
+    }
 
     println!("{}", table);
 }
@@ -299,11 +381,10 @@ fn print_task_table_with_project(
     unique_projects: HashSet<&str>,
     absolute_dates: bool,
 ) {
-    // Calculate minimum unique prefix length for all task IDs
     let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
     let prefix_len = find_min_unique_prefix_len(&task_ids);
+    let has_progress = tasks.iter().any(|t| t.progress.is_some());
 
-    // Generate colors for each project (cycle through a set of colors)
     let colors = [
         colored::Color::Cyan,
         colored::Color::Green,
@@ -319,53 +400,38 @@ fn print_task_table_with_project(
         project_colors.insert(*project_id, colors[idx % colors.len()]);
     }
 
-    let rows: Vec<TaskRowWithProject> = tasks
-        .iter()
-        .map(|task| {
-            let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
-                .unwrap()
-                .with_timezone(&Local);
-            let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
+    if has_progress {
+        print_task_table_with_builder(tasks, prefix_len, absolute_dates, true, &project_colors);
+    } else {
+        let rows: Vec<TaskRowWithProject> = tasks
+            .iter()
+            .map(|task| {
+                let row = build_task_row(task, prefix_len, absolute_dates);
+                let color = project_colors.get(task.project_id.as_str()).unwrap();
+                let project = task.project_id.color(*color).to_string();
 
-            let priority_colored = match task.priority.as_str() {
-                "now" => task.priority.red().to_string(),
-                _ => task.priority.to_string(),
-            };
+                TaskRowWithProject {
+                    id: row.id,
+                    title: row.title,
+                    project,
+                    priority: row.priority,
+                    size: row.size,
+                    modified: row.modified,
+                    deadline: row.deadline,
+                    status: row.status,
+                }
+            })
+            .collect();
 
-            let deadline_str = format_deadline(task.deadline.as_deref(), absolute_dates);
+        let mut binding = Table::new(rows);
+        let table = binding
+            .with(Style::rounded())
+            .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
+            .with(Modify::new(Columns::new(2..3)).with(Alignment::center()))
+            .with(Modify::new(Columns::new(3..8)).with(Alignment::center()));
 
-            let status = if task.is_deleted() {
-                "DELETED".red().to_string()
-            } else if task.is_done() {
-                "done".blue().to_string()
-            } else {
-                "pending".green().to_string()
-            };
-
-            let color = project_colors.get(task.project_id.as_str()).unwrap();
-            let project = task.project_id.color(*color).to_string();
-
-            TaskRowWithProject {
-                id: format_task_id(&task.id, prefix_len),
-                title: task.title.clone(),
-                project,
-                priority: priority_colored,
-                size: task.size.clone(),
-                modified: modified_str,
-                deadline: deadline_str,
-                status,
-            }
-        })
-        .collect();
-
-    let mut binding = Table::new(rows);
-    let table = binding
-        .with(Style::rounded())
-        .with(Modify::new(Columns::new(0..1)).with(Alignment::center())) // ID
-        .with(Modify::new(Columns::new(2..3)).with(Alignment::center())) // Project
-        .with(Modify::new(Columns::new(3..8)).with(Alignment::center())); // Priority, Size, Modified, Deadline, Status
-
-    println!("{}", table);
+        println!("{}", table);
+    }
 }
 
 /// Print a single task with full details and markdown rendering.
@@ -437,6 +503,10 @@ pub fn print_task_details(task: &Task, no_format: bool) {
             "  {}",
             format!("Deleted:  {}", deleted_time.format("%Y-%m-%d %H:%M:%S")).red()
         );
+    }
+
+    if let Some(progress) = task.progress {
+        println!("  Progress: {}%", progress);
     }
 
     println!("  Version:  {}", task.version);
