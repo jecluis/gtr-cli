@@ -334,7 +334,10 @@ fn print_task_table_with_builder(
 
     for task in tasks {
         let row = build_task_row(task, prefix_len, absolute_dates);
-        let progress_str = task.progress.map(|p| format!("{}%", p)).unwrap_or_default();
+        let progress_str = task
+            .progress
+            .map(|p| format!("{}%", p))
+            .unwrap_or_else(|| "-".to_string());
 
         let mut record: Vec<String> = vec![row.id, row.title];
         if show_project {
