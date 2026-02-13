@@ -26,7 +26,7 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
 use crate::models::Task;
-use crate::utils;
+use crate::{threshold_cache, utils};
 
 /// Create a new task (local-first with optional sync).
 #[allow(clippy::too_many_arguments)]
@@ -101,6 +101,21 @@ pub async fn run(
     println!("  Title:    {}", task.title);
     println!("  Priority: {}", task.priority);
     println!("  Size:     {}", task.size);
+
+    if let Some(ref deadline_str) = task.deadline {
+        println!("  Deadline: {}", deadline_str);
+    }
+
+    // Get impact label from cache (with fallback to defaults)
+    let impact_label = threshold_cache::read_cache(config)
+        .and_then(|cached| cached.impact_labels.get(&task.impact.to_string()).cloned())
+        .or_else(|| {
+            utils::default_impact_labels()
+                .get(&task.impact.to_string())
+                .cloned()
+        })
+        .unwrap_or_else(|| "Unknown".to_string());
+    println!("  Impact:   {} ({})", impact_label, task.impact);
 
     // Attempt sync if enabled
     if !no_sync {
