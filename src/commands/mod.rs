@@ -19,7 +19,6 @@
 
 pub mod config;
 pub mod create;
-pub mod deadline;
 pub mod delete;
 pub mod done;
 pub mod init;
@@ -29,6 +28,7 @@ pub mod log;
 pub mod now;
 pub mod progress;
 pub mod project;
+pub mod promotion;
 pub mod restore;
 pub mod search;
 pub mod show;

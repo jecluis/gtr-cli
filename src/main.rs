@@ -333,13 +333,7 @@ enum Commands {
         command: ProjectCommands,
     },
 
-    /// Manage deadline promotion thresholds
-    Deadline {
-        #[command(subcommand)]
-        command: DeadlineCommands,
-    },
-
-    /// Manage general configuration (editor, etc.)
+    /// Manage configuration (editor, promotion thresholds)
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
@@ -402,46 +396,6 @@ enum SyncCommands {
 }
 
 #[derive(Subcommand, Debug)]
-enum DeadlineCommands {
-    /// Show current deadline promotion thresholds
-    Show {
-        /// Show project-specific configuration
-        #[arg(short = 'P', long)]
-        project: Option<String>,
-    },
-
-    /// Set deadline threshold for a specific task size
-    Set {
-        /// Task size (XS, S, M, L, XL)
-        size: String,
-
-        /// Threshold duration (e.g., "24h", "3d", "1w")
-        duration: String,
-
-        /// Set for project instead of user
-        #[arg(short = 'P', long)]
-        project: Option<String>,
-    },
-
-    /// Remove deadline threshold override for a specific size
-    Unset {
-        /// Task size (XS, S, M, L, XL)
-        size: String,
-
-        /// Remove from project instead of user
-        #[arg(short = 'P', long)]
-        project: Option<String>,
-    },
-
-    /// Reset all overrides to defaults
-    Reset {
-        /// Reset project configuration instead of user
-        #[arg(short = 'P', long)]
-        project: Option<String>,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 enum ConfigCommands {
     /// Show or manage editor configuration
     Editor {
@@ -452,6 +406,40 @@ enum ConfigCommands {
         /// Unset editor (fall back to $EDITOR or default)
         #[arg(long)]
         unset: bool,
+    },
+
+    /// Manage promotion thresholds
+    Promotion {
+        #[command(subcommand)]
+        command: PromotionCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PromotionCommands {
+    /// Show current promotion thresholds
+    Show {
+        /// Show project-specific configuration
+        #[arg(short = 'P', long)]
+        project: Option<String>,
+    },
+
+    /// Edit promotion thresholds (opens editor with JSON)
+    Set {
+        /// Set for project instead of user
+        #[arg(short = 'P', long)]
+        project: Option<String>,
+
+        /// Read thresholds from file instead of opening editor
+        #[arg(short, long)]
+        file: Option<String>,
+    },
+
+    /// Reset all overrides to defaults
+    Reset {
+        /// Reset project configuration instead of user
+        #[arg(short = 'P', long)]
+        project: Option<String>,
     },
 }
 
@@ -618,22 +606,6 @@ async fn run() -> Result<()> {
             } => gtr::commands::project::update(&config, &project_id, description).await,
             ProjectCommands::List => gtr::commands::project::list(&config).await,
         },
-        Commands::Deadline { command } => match command {
-            DeadlineCommands::Show { project } => {
-                gtr::commands::deadline::show(&config, project).await
-            }
-            DeadlineCommands::Set {
-                size,
-                duration,
-                project,
-            } => gtr::commands::deadline::set(&config, size, duration, project).await,
-            DeadlineCommands::Unset { size, project } => {
-                gtr::commands::deadline::unset(&config, size, project).await
-            }
-            DeadlineCommands::Reset { project } => {
-                gtr::commands::deadline::reset(&config, project).await
-            }
-        },
         Commands::Config { command } => match command {
             ConfigCommands::Editor { set, unset } => {
                 if unset {
@@ -644,6 +616,17 @@ async fn run() -> Result<()> {
                     gtr::commands::config::show_editor(&config)
                 }
             }
+            ConfigCommands::Promotion { command } => match command {
+                PromotionCommands::Show { project } => {
+                    gtr::commands::promotion::show(&config, project).await
+                }
+                PromotionCommands::Set { project, file } => {
+                    gtr::commands::promotion::set(&config, project, file).await
+                }
+                PromotionCommands::Reset { project } => {
+                    gtr::commands::promotion::reset(&config, project).await
+                }
+            },
         },
         Commands::Sync { command } => match command {
             SyncCommands::Now => gtr::commands::sync::now(&config).await,
