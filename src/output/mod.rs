@@ -195,6 +195,10 @@ pub fn print_projects(projects: &[Project]) {
 }
 
 /// Row type for task table display (without project column).
+///
+/// The `modified` field is always populated but hidden from the derive
+/// path via `#[tabled(skip)]`. It is included explicitly by the Builder
+/// path when verbose mode is active.
 #[derive(Tabled)]
 struct TaskRow {
     #[tabled(rename = "ID")]
@@ -205,7 +209,7 @@ struct TaskRow {
     priority: String,
     #[tabled(rename = "Size")]
     size: String,
-    #[tabled(rename = "Modified")]
+    #[tabled(skip)]
     modified: String,
     #[tabled(rename = "Deadline")]
     deadline: String,
@@ -226,8 +230,6 @@ struct TaskRowWithProject {
     priority: String,
     #[tabled(rename = "Size")]
     size: String,
-    #[tabled(rename = "Modified")]
-    modified: String,
     #[tabled(rename = "Deadline")]
     deadline: String,
     #[tabled(rename = "Status")]
@@ -240,6 +242,7 @@ pub fn print_tasks_grouped(
     other_tasks: &[Task],
     absolute_dates: bool,
     fancy: bool,
+    verbose: bool,
 ) {
     if doing_tasks.is_empty() && other_tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
@@ -248,14 +251,14 @@ pub fn print_tasks_grouped(
 
     if !doing_tasks.is_empty() {
         println!("\n{}", "═══ DOING ═══".bold().cyan());
-        print_task_table(doing_tasks, absolute_dates, fancy);
+        print_task_table(doing_tasks, absolute_dates, fancy, verbose);
     }
 
     if !other_tasks.is_empty() {
         if !doing_tasks.is_empty() {
             println!("\n{}", "═══ TASKS ═══".bold());
         }
-        print_task_table(other_tasks, absolute_dates, fancy);
+        print_task_table(other_tasks, absolute_dates, fancy, verbose);
     }
 
     let total = doing_tasks.len() + other_tasks.len();
@@ -268,30 +271,31 @@ pub fn print_tasks(tasks: &[Task], absolute_dates: bool, fancy: bool) {
         println!("{}", "No tasks found".yellow());
         return;
     }
-    print_task_table(tasks, absolute_dates, fancy);
+    print_task_table(tasks, absolute_dates, fancy, false);
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
 
 /// Internal function to print task table.
-fn print_task_table(tasks: &[Task], absolute_dates: bool, fancy: bool) {
+fn print_task_table(tasks: &[Task], absolute_dates: bool, fancy: bool, verbose: bool) {
     // Check if tasks are from multiple projects
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
     let show_project = unique_projects.len() > 1;
 
     if show_project {
-        print_task_table_with_project(tasks, unique_projects, absolute_dates, fancy);
+        print_task_table_with_project(tasks, unique_projects, absolute_dates, fancy, verbose);
     } else {
-        print_task_table_simple(tasks, absolute_dates, fancy);
+        print_task_table_simple(tasks, absolute_dates, fancy, verbose);
     }
 }
 
 /// Print task table without project column.
-fn print_task_table_simple(tasks: &[Task], absolute_dates: bool, fancy: bool) {
+fn print_task_table_simple(tasks: &[Task], absolute_dates: bool, fancy: bool, verbose: bool) {
     let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
     let prefix_len = find_min_unique_prefix_len(&task_ids);
     let has_progress = tasks.iter().any(|t| t.progress.is_some());
+    let use_builder = has_progress || verbose;
 
-    if has_progress {
+    if use_builder {
         print_task_table_with_builder(
             tasks,
             prefix_len,
@@ -299,6 +303,7 @@ fn print_task_table_simple(tasks: &[Task], absolute_dates: bool, fancy: bool) {
             false,
             &std::collections::HashMap::new(),
             fancy,
+            verbose,
         );
     } else {
         let rows: Vec<TaskRow> = tasks
@@ -310,7 +315,7 @@ fn print_task_table_simple(tasks: &[Task], absolute_dates: bool, fancy: bool) {
         let table = binding
             .with(Style::rounded())
             .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
-            .with(Modify::new(Columns::new(2..7)).with(Alignment::center()));
+            .with(Modify::new(Columns::new(2..6)).with(Alignment::center()));
 
         println!("{}", table);
     }
@@ -349,7 +354,7 @@ fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskR
     }
 }
 
-/// Print task table using Builder (supports conditional Progress column).
+/// Print task table using Builder (supports conditional columns).
 fn print_task_table_with_builder(
     tasks: &[Task],
     prefix_len: usize,
@@ -357,7 +362,9 @@ fn print_task_table_with_builder(
     show_project: bool,
     project_colors: &std::collections::HashMap<&str, colored::Color>,
     fancy: bool,
+    verbose: bool,
 ) {
+    let has_progress = tasks.iter().any(|t| t.progress.is_some());
     let mut builder = Builder::default();
 
     // Header
@@ -365,19 +372,21 @@ fn print_task_table_with_builder(
     if show_project {
         header.push("Project".into());
     }
-    header.extend([
-        "Priority".into(),
-        "Size".into(),
-        "Modified".into(),
-        "Deadline".into(),
-        "Progress".into(),
-        "Status".into(),
-    ]);
+    header.push("Priority".into());
+    header.push("Size".into());
+    if verbose {
+        header.push("Modified".into());
+    }
+    header.push("Deadline".into());
+    if has_progress {
+        header.push("Progress".into());
+    }
+    header.push("Status".into());
+    let num_cols = header.len();
     builder.push_record(header);
 
     for task in tasks {
         let row = build_task_row(task, prefix_len, absolute_dates);
-        let progress_str = format_progress(task.progress, fancy);
 
         let mut record: Vec<String> = vec![row.id, row.title];
         if show_project {
@@ -389,14 +398,16 @@ fn print_task_table_with_builder(
             };
             record.push(project);
         }
-        record.extend([
-            row.priority,
-            row.size,
-            row.modified,
-            row.deadline,
-            progress_str,
-            row.status,
-        ]);
+        record.push(row.priority);
+        record.push(row.size);
+        if verbose {
+            record.push(row.modified);
+        }
+        record.push(row.deadline);
+        if has_progress {
+            record.push(format_progress(task.progress, fancy));
+        }
+        record.push(row.status);
         builder.push_record(record);
     }
 
@@ -405,15 +416,8 @@ fn print_task_table_with_builder(
         .with(Style::rounded())
         .with(Modify::new(Columns::new(0..1)).with(Alignment::center()));
 
-    if show_project {
-        // Project + Priority..Status columns
-        table
-            .with(Modify::new(Columns::new(2..3)).with(Alignment::center()))
-            .with(Modify::new(Columns::new(3..9)).with(Alignment::center()));
-    } else {
-        // Priority..Status columns
-        table.with(Modify::new(Columns::new(2..8)).with(Alignment::center()));
-    }
+    // Center all columns after Title (index 2..end)
+    table.with(Modify::new(Columns::new(2..num_cols)).with(Alignment::center()));
 
     println!("{}", table);
 }
@@ -424,10 +428,12 @@ fn print_task_table_with_project(
     unique_projects: HashSet<&str>,
     absolute_dates: bool,
     fancy: bool,
+    verbose: bool,
 ) {
     let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
     let prefix_len = find_min_unique_prefix_len(&task_ids);
     let has_progress = tasks.iter().any(|t| t.progress.is_some());
+    let use_builder = has_progress || verbose;
 
     let colors = [
         colored::Color::Cyan,
@@ -444,7 +450,7 @@ fn print_task_table_with_project(
         project_colors.insert(*project_id, colors[idx % colors.len()]);
     }
 
-    if has_progress {
+    if use_builder {
         print_task_table_with_builder(
             tasks,
             prefix_len,
@@ -452,6 +458,7 @@ fn print_task_table_with_project(
             true,
             &project_colors,
             fancy,
+            verbose,
         );
     } else {
         let rows: Vec<TaskRowWithProject> = tasks
@@ -467,7 +474,6 @@ fn print_task_table_with_project(
                     project,
                     priority: row.priority,
                     size: row.size,
-                    modified: row.modified,
                     deadline: row.deadline,
                     status: row.status,
                 }
@@ -478,8 +484,7 @@ fn print_task_table_with_project(
         let table = binding
             .with(Style::rounded())
             .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
-            .with(Modify::new(Columns::new(2..3)).with(Alignment::center()))
-            .with(Modify::new(Columns::new(3..8)).with(Alignment::center()));
+            .with(Modify::new(Columns::new(2..7)).with(Alignment::center()));
 
         println!("{}", table);
     }

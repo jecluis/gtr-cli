@@ -100,6 +100,10 @@ enum Commands {
         /// Disable progress bar (show numerical percentages)
         #[arg(long)]
         no_fancy: bool,
+
+        /// Show extra columns (e.g. Modified)
+        #[arg(short, long)]
+        verbose: bool,
     },
 
     /// Show a specific task
@@ -501,6 +505,7 @@ async fn run() -> Result<()> {
             no_sync,
             absolute,
             no_fancy,
+            verbose,
         } => {
             let include_done = all || done;
             let include_deleted = all || deleted;
@@ -519,6 +524,7 @@ async fn run() -> Result<()> {
                 no_sync,
                 absolute,
                 !no_fancy,
+                verbose,
             )
             .await
         }

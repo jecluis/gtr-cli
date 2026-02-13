@@ -45,6 +45,7 @@ pub async fn tasks(
     no_sync: bool,
     absolute_dates: bool,
     fancy: bool,
+    verbose: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
@@ -149,7 +150,7 @@ pub async fn tasks(
     let doing_tasks = apply_deadline_urgency(doing_tasks, &thresholds);
     let other_tasks = apply_deadline_urgency(other_tasks, &thresholds);
 
-    output::print_tasks_grouped(&doing_tasks, &other_tasks, absolute_dates, fancy);
+    output::print_tasks_grouped(&doing_tasks, &other_tasks, absolute_dates, fancy, verbose);
     Ok(())
 }
 
