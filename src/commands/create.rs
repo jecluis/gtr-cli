@@ -38,6 +38,7 @@ pub async fn run(
     priority: &str,
     size: &str,
     deadline: Option<String>,
+    progress: Option<u8>,
     no_sync: bool,
 ) -> Result<()> {
     // Get project ID (may require server)
@@ -85,6 +86,7 @@ pub async fn run(
         custom: serde_json::Value::Object(serde_json::Map::new()),
         log: vec![],
         current_work_state: None,
+        progress,
     };
 
     // Save locally

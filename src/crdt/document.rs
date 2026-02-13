@@ -71,6 +71,10 @@ impl TaskDocument {
                 tx.put(&meta, "current_work_state", work_state.as_str())?;
             }
 
+            if let Some(progress) = task.progress {
+                tx.put(&meta, "progress", progress as i64)?;
+            }
+
             // Subtasks list
             let subtasks = tx.put_object(&meta, "subtasks", ObjType::List)?;
             for (i, subtask_id) in task.subtasks.iter().enumerate() {
@@ -128,6 +132,11 @@ impl TaskDocument {
         let deadline = self.try_get_str(&meta_id, "deadline")?;
         let current_work_state = self.try_get_str(&meta_id, "current_work_state")?;
 
+        let progress = match self.doc.get(&meta_id, "progress") {
+            Ok(Some((automerge::Value::Scalar(s), _))) => s.to_i64().map(|v| v as u8),
+            _ => None,
+        };
+
         // Parse subtasks
         let subtasks = self.read_subtasks(&meta_id)?;
 
@@ -158,6 +167,7 @@ impl TaskDocument {
             custom,
             log,
             current_work_state,
+            progress,
         })
     }
 
@@ -250,6 +260,14 @@ impl TaskDocument {
                         tx.put(&meta, "current_work_state", work_state.as_str())?;
                     } else {
                         let _ = tx.delete(&meta, "current_work_state");
+                    }
+                }
+
+                if task.progress != current.progress {
+                    if let Some(progress) = task.progress {
+                        tx.put(&meta, "progress", progress as i64)?;
+                    } else {
+                        let _ = tx.delete(&meta, "progress");
                     }
                 }
 

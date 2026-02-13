@@ -109,6 +109,15 @@ pub async fn run(
                 format!("Title: \"{}\" → \"{}\"", from, to)
             }
             LogEntryType::BodyChanged => "Body changed".to_string(),
+            LogEntryType::ProgressChanged { from, to } => {
+                let from_str = from
+                    .map(|p| format!("{}%", p))
+                    .unwrap_or_else(|| "none".to_string());
+                let to_str = to
+                    .map(|p| format!("{}%", p))
+                    .unwrap_or_else(|| "none".to_string());
+                format!("Progress: {} → {}", from_str, to_str)
+            }
         };
 
         println!("\n  {} | {}", time_str.cyan(), source_str);

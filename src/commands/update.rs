@@ -38,15 +38,22 @@ pub async fn run(
     priority: Option<String>,
     size: Option<String>,
     deadline: Option<String>,
+    progress: Option<u8>,
     no_sync: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
     // Check if at least one field is provided
-    if title.is_none() && !edit_body && priority.is_none() && size.is_none() && deadline.is_none() {
+    if title.is_none()
+        && !edit_body
+        && priority.is_none()
+        && size.is_none()
+        && deadline.is_none()
+        && progress.is_none()
+    {
         return Err(Error::UserFacing(
-            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, or --deadline)".to_string(),
+            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, --deadline, or --progress)".to_string(),
         ));
     }
 
@@ -93,6 +100,9 @@ pub async fn run(
             // Validate deadline format
             Some(crate::utils::validate_deadline(new_deadline)?)
         };
+    }
+    if let Some(new_progress) = progress {
+        task.progress = Some(new_progress);
     }
 
     // Update metadata
@@ -175,6 +185,26 @@ pub async fn run(
                 "Deadline:".bold(),
                 old_deadline_str.dimmed().strikethrough(),
                 new_deadline_str.green()
+            );
+        }
+    }
+
+    if progress.is_some() {
+        let old_progress_str = old_task
+            .progress
+            .map(|p| format!("{}%", p))
+            .unwrap_or_else(|| "none".to_string());
+        let new_progress_str = task
+            .progress
+            .map(|p| format!("{}%", p))
+            .unwrap_or_else(|| "none".to_string());
+
+        if old_progress_str != new_progress_str {
+            println!(
+                "  {} {} → {}",
+                "Progress:".bold(),
+                old_progress_str.dimmed().strikethrough(),
+                new_progress_str.green()
             );
         }
     }

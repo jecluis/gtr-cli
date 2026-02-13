@@ -27,7 +27,12 @@ use crate::local::LocalContext;
 use crate::utils;
 
 /// Unmark a task as done (local-first with optional sync).
-pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
+pub async fn run(
+    config: &Config,
+    task_id: &str,
+    progress: Option<u8>,
+    no_sync: bool,
+) -> Result<()> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
@@ -36,6 +41,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     let mut task = ctx.load_task(&client, &full_id).await?;
 
     task.done = None;
+    task.progress = Some(progress.unwrap_or(50));
     task.modified = Utc::now().to_rfc3339();
     task.version += 1;
 

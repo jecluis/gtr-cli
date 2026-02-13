@@ -54,6 +54,9 @@ pub struct Task {
     pub log: Vec<LogEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_work_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub progress: Option<u8>,
 }
 
 /// A single log entry recording a state change.
@@ -100,6 +103,10 @@ pub enum LogEntryType {
         to: String,
     },
     BodyChanged,
+    ProgressChanged {
+        from: Option<u8>,
+        to: Option<u8>,
+    },
 }
 
 /// Task status for logging.

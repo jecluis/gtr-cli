@@ -38,6 +38,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
 
     // Mark as done
     task.done = Some(Utc::now().to_rfc3339());
+    task.progress = Some(100);
     task.modified = Utc::now().to_rfc3339();
     task.version += 1;
 

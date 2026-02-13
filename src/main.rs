@@ -138,6 +138,10 @@ enum Commands {
         #[arg(short, long)]
         deadline: Option<String>,
 
+        /// Initial progress percentage (0-100)
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        progress: Option<u8>,
+
         /// Skip sync (work offline)
         #[arg(long)]
         no_sync: bool,
@@ -168,6 +172,10 @@ enum Commands {
         #[arg(short, long)]
         deadline: Option<String>,
 
+        /// New progress percentage (0-100)
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        progress: Option<u8>,
+
         /// Skip sync (work offline)
         #[arg(long)]
         no_sync: bool,
@@ -187,6 +195,10 @@ enum Commands {
     Undone {
         /// Task ID
         task_id: String,
+
+        /// Progress percentage after restoring (default: 50)
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        progress: Option<u8>,
 
         /// Skip sync (work offline)
         #[arg(long)]
@@ -478,11 +490,12 @@ async fn run() -> Result<()> {
             priority,
             size,
             deadline,
+            progress,
             no_sync,
         } => {
             let title_str = title.join(" ");
             gtr::commands::create::run(
-                &config, project, &title_str, body, &priority, &size, deadline, no_sync,
+                &config, project, &title_str, body, &priority, &size, deadline, progress, no_sync,
             )
             .await
         }
@@ -493,19 +506,22 @@ async fn run() -> Result<()> {
             priority,
             size,
             deadline,
+            progress,
             no_sync,
         } => {
             gtr::commands::update::run(
-                &config, &task_id, title, body, priority, size, deadline, no_sync,
+                &config, &task_id, title, body, priority, size, deadline, progress, no_sync,
             )
             .await
         }
         Commands::Done { task_id, no_sync } => {
             gtr::commands::done::run(&config, &task_id, no_sync).await
         }
-        Commands::Undone { task_id, no_sync } => {
-            gtr::commands::undone::run(&config, &task_id, no_sync).await
-        }
+        Commands::Undone {
+            task_id,
+            progress,
+            no_sync,
+        } => gtr::commands::undone::run(&config, &task_id, progress, no_sync).await,
         Commands::Delete { task_id, no_sync } => {
             gtr::commands::delete::run(&config, &task_id, no_sync).await
         }
