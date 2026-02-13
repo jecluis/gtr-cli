@@ -54,7 +54,14 @@ pub async fn run(
     let mut matching_tasks = Vec::new();
 
     for task_id in task_ids {
-        if let Ok(task) = ctx.storage.load_task("", &task_id) {
+        let project_id = ctx
+            .cache
+            .get_task_summary(&task_id)
+            .ok()
+            .flatten()
+            .map(|s| s.project_id)
+            .unwrap_or_default();
+        if let Ok(task) = ctx.storage.load_task(&project_id, &task_id) {
             // Search in title and body (case-insensitive)
             if task.title.to_lowercase().contains(&query_lower)
                 || task.body.to_lowercase().contains(&query_lower)

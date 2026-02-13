@@ -33,15 +33,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
 
     let ctx = LocalContext::new(config, !no_sync)?;
 
-    let mut task = match ctx.storage.load_task("", &full_id) {
-        Ok(t) => t,
-        Err(_) => {
-            let fetched = client.get_task(&full_id).await?;
-            ctx.storage.create_task(&fetched.project_id, &fetched)?;
-            ctx.cache.upsert_task(&fetched, false)?;
-            fetched
-        }
-    };
+    let mut task = ctx.load_task(&client, &full_id).await?;
 
     task.deleted = None;
     task.modified = Utc::now().to_rfc3339();

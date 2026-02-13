@@ -29,17 +29,8 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool, no_format: bool)
 
     let ctx = LocalContext::new(config, !no_sync)?;
 
-    // Try to load from local storage
-    let task = match ctx.storage.load_task("", &full_id) {
-        Ok(t) => t,
-        Err(_) => {
-            // Not cached, fetch from server
-            let fetched = client.get_task(&full_id).await?;
-            ctx.storage.create_task(&fetched.project_id, &fetched)?;
-            ctx.cache.upsert_task(&fetched, false)?;
-            fetched
-        }
-    };
+    // Load from local storage (or fetch from server if not cached)
+    let task = ctx.load_task(&client, &full_id).await?;
 
     output::print_task_details(&task, no_format);
 

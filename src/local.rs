@@ -18,10 +18,13 @@
 //! Local-first operations with optional sync.
 
 use std::time::Duration;
+use tracing::{debug, info, warn};
 
 use crate::Result;
 use crate::cache::TaskCache;
+use crate::client::Client;
 use crate::config::Config;
+use crate::models::Task;
 use crate::storage::{StorageConfig, TaskStorage};
 use crate::sync::SyncManager;
 
@@ -48,6 +51,48 @@ impl LocalContext {
             config: config.clone(),
             enable_sync,
         })
+    }
+
+    /// Load a task from local storage, falling back to server fetch.
+    ///
+    /// Resolves the project_id from cache to find the correct storage path.
+    /// If the task is not available locally, fetches from the server and
+    /// creates a local copy.
+    pub async fn load_task(&self, client: &Client, task_id: &str) -> Result<Task> {
+        // Try loading from local storage using cache for project_id
+        if let Some(summary) = self.cache.get_task_summary(task_id)? {
+            match self.storage.load_task(&summary.project_id, task_id) {
+                Ok(task) => {
+                    debug!(
+                        task_id,
+                        project_id = %summary.project_id,
+                        "loaded task from local storage"
+                    );
+                    return Ok(task);
+                }
+                Err(e) => {
+                    warn!(
+                        task_id,
+                        project_id = %summary.project_id,
+                        "task in cache but missing from storage, fetching from server: {e}"
+                    );
+                }
+            }
+        } else {
+            debug!(task_id, "task not in local cache, fetching from server");
+        }
+
+        // Fetch from server and create local copy
+        let fetched = client.get_task(task_id).await?;
+        self.storage.create_task(&fetched.project_id, &fetched)?;
+        self.cache.upsert_task(&fetched, false)?;
+
+        info!(
+            task_id,
+            project_id = %fetched.project_id,
+            "fetched task from server"
+        );
+        Ok(fetched)
     }
 
     /// Attempt sync with timeout if enabled.

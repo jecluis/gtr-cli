@@ -39,17 +39,8 @@ pub async fn run(
 
     let ctx = LocalContext::new(config, !no_sync)?;
 
-    // Load from local storage
-    let task = match ctx.storage.load_task("", &full_id) {
-        Ok(t) => t,
-        Err(_) => {
-            // Not cached, fetch from server
-            let fetched = client.get_task(&full_id).await?;
-            ctx.storage.create_task(&fetched.project_id, &fetched)?;
-            ctx.cache.upsert_task(&fetched, false)?;
-            fetched
-        }
-    };
+    // Load from local storage (or fetch from server if not cached)
+    let task = ctx.load_task(&client, &full_id).await?;
 
     if task.log.is_empty() {
         println!("{}", "No log entries found".yellow());
