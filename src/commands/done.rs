@@ -42,6 +42,9 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     task.modified = Utc::now().to_rfc3339();
     task.version += 1;
 
+    // Clear work state when marking as done
+    task.current_work_state = None;
+
     // Save locally
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
