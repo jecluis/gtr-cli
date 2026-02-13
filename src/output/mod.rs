@@ -522,6 +522,15 @@ pub fn print_task_details(task: &Task, no_format: bool, no_wrap: bool) {
     println!("  Priority: {}", priority_colored);
     println!("  Size:     {}", task.size);
 
+    if let Some(ref work_state) = task.current_work_state {
+        let status_colored = match work_state.as_str() {
+            "doing" => work_state.green().bold(),
+            "stopped" => work_state.yellow(),
+            _ => work_state.normal(),
+        };
+        println!("  Status:   {}", status_colored);
+    }
+
     if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&task.created) {
         let created_time = created.with_timezone(&Local);
         println!("  Created:  {}", created_time.format("%Y-%m-%d %H:%M:%S"));

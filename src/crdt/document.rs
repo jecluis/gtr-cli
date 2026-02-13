@@ -43,6 +43,15 @@ impl TaskDocument {
         let log_json = serde_json::to_string(&task.log)
             .map_err(|e| Error::Storage(format!("log serialization failed: {e}")))?;
 
+        // Serialize current_work_state as JSON (matching server format)
+        let work_state_json = task
+            .current_work_state
+            .as_ref()
+            .map(|ws| serde_json::Value::String(ws.clone()))
+            .map(|v| serde_json::to_string(&v))
+            .transpose()
+            .map_err(|e| Error::Storage(format!("work state serialization failed: {e}")))?;
+
         doc.transact::<_, _, automerge::AutomergeError>(|tx| {
             // Create metadata map
             let meta = tx.put_object(ROOT, "metadata", ObjType::Map)?;
@@ -67,8 +76,9 @@ impl TaskDocument {
                 tx.put(&meta, "deadline", deadline.as_str())?;
             }
 
-            if let Some(ref work_state) = task.current_work_state {
-                tx.put(&meta, "current_work_state", work_state.as_str())?;
+            // Current work state (stored as JSON string, matching server format)
+            if let Some(ref ws_json) = work_state_json {
+                tx.put(&meta, "current_work_state", ws_json.as_str())?;
             }
 
             if let Some(progress) = task.progress {
@@ -132,7 +142,18 @@ impl TaskDocument {
         let done = self.try_get_str(&meta_id, "done")?;
         let deleted = self.try_get_str(&meta_id, "deleted")?;
         let deadline = self.try_get_str(&meta_id, "deadline")?;
-        let current_work_state = self.try_get_str(&meta_id, "current_work_state")?;
+
+        // Parse current_work_state from JSON format (for compatibility with server)
+        let current_work_state = self
+            .try_get_str(&meta_id, "current_work_state")?
+            .and_then(|s| {
+                // Try parsing as JSON first (new format)
+                serde_json::from_str::<serde_json::Value>(&s)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    // Fallback: treat as plain string (old format)
+                    .or(Some(s))
+            });
 
         let progress = match self.doc.get(&meta_id, "progress") {
             Ok(Some((automerge::Value::Scalar(s), _))) => s.to_i64().map(|v| v as u8),
@@ -216,6 +237,18 @@ impl TaskDocument {
             None
         };
 
+        // Pre-serialize work_state only if changed (matching server format)
+        let work_state_json = if task.current_work_state != current.current_work_state {
+            task.current_work_state
+                .as_ref()
+                .map(|ws| serde_json::Value::String(ws.clone()))
+                .map(|v| serde_json::to_string(&v))
+                .transpose()
+                .map_err(|e| Error::Storage(format!("work state serialization failed: {e}")))?
+        } else {
+            None
+        };
+
         self.doc
             .transact::<_, _, automerge::AutomergeError>(|tx| {
                 let meta = match tx.get(ROOT, "metadata").ok().flatten() {
@@ -263,12 +296,12 @@ impl TaskDocument {
                     }
                 }
 
-                if task.current_work_state != current.current_work_state {
-                    if let Some(ref work_state) = task.current_work_state {
-                        tx.put(&meta, "current_work_state", work_state.as_str())?;
-                    } else {
-                        let _ = tx.delete(&meta, "current_work_state");
-                    }
+                // Only update work_state if actually changed (already checked above)
+                if let Some(ref ws_json) = work_state_json {
+                    tx.put(&meta, "current_work_state", ws_json.as_str())?;
+                } else if task.current_work_state.is_none() && current.current_work_state.is_some()
+                {
+                    let _ = tx.delete(&meta, "current_work_state");
                 }
 
                 if task.progress != current.progress {
