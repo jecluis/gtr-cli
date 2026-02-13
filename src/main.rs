@@ -114,6 +114,10 @@ enum Commands {
         /// Disable markdown formatting (plain text)
         #[arg(long)]
         no_format: bool,
+
+        /// Disable line wrapping (preserves long URLs)
+        #[arg(long)]
+        no_wrap: bool,
     },
 
     /// Create a new task
@@ -522,7 +526,8 @@ async fn run() -> Result<()> {
             task_id,
             no_sync,
             no_format,
-        } => gtr::commands::show::run(&config, &task_id, no_sync, no_format).await,
+            no_wrap,
+        } => gtr::commands::show::run(&config, &task_id, no_sync, no_format, no_wrap).await,
         Commands::New {
             project,
             title,

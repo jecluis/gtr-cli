@@ -488,7 +488,8 @@ fn print_task_table_with_project(
 /// Print a single task with full details and markdown rendering.
 ///
 /// If `no_format` is true or NO_COLOR is set, markdown will not be rendered.
-pub fn print_task_details(task: &Task, no_format: bool) {
+/// If `no_wrap` is true, the body will not be hard-wrapped at 80 columns.
+pub fn print_task_details(task: &Task, no_format: bool, no_wrap: bool) {
     let renderer = if no_format {
         MarkdownRenderer::with_override(Some(false)) // Force disable
     } else {
@@ -566,7 +567,11 @@ pub fn print_task_details(task: &Task, no_format: bool) {
     if !task.body.is_empty() {
         println!("\n{}", "Description:".bold());
         println!("{}", "─".repeat(80));
-        print!("{}", renderer.render(&task.body));
+        if no_wrap {
+            print!("{}", renderer.render_no_wrap(&task.body));
+        } else {
+            print!("{}", renderer.render(&task.body));
+        }
     } else {
         println!("\n{}", "(No description)".italic().dimmed());
     }

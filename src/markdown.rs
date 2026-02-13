@@ -90,15 +90,24 @@ impl MarkdownRenderer {
     /// If markdown rendering is disabled (NO_COLOR set or --no-format),
     /// returns the input text unchanged.
     ///
-    /// Output is hard-wrapped at 80 columns for consistent display across
-    /// terminal widths.
+    /// Output is hard-wrapped at 80 columns by default. Use `render_no_wrap`
+    /// to disable wrapping (useful for content with URLs or other
+    /// non-wrappable text).
     pub fn render(&self, markdown: &str) -> String {
+        self.render_with_width(markdown, Some(80))
+    }
+
+    /// Render markdown without line wrapping.
+    pub fn render_no_wrap(&self, markdown: &str) -> String {
+        self.render_with_width(markdown, None)
+    }
+
+    fn render_with_width(&self, markdown: &str, width: Option<usize>) -> String {
         if !self.enabled || markdown.is_empty() {
             return markdown.to_string();
         }
 
-        // Render with fixed 80-column width for consistent wrapping
-        self.skin.text(markdown, Some(80)).to_string()
+        self.skin.text(markdown, width).to_string()
     }
 
     /// Check if markdown rendering is enabled.
