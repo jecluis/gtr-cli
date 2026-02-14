@@ -34,8 +34,10 @@ pub async fn tasks(
     project: Option<Vec<String>>,
     priority: Option<String>,
     size: Option<String>,
-    include_done: bool,
-    include_deleted: bool,
+    with_done: bool,
+    done: bool,
+    deleted: bool,
+    all: bool,
     due_soon: bool,
     overdue: bool,
     limit: Option<u32>,
@@ -99,10 +101,19 @@ pub async fn tasks(
     // Apply filters
     all_tasks.retain(|task| {
         // Filter by done/deleted status
-        let status_ok = match (task.done.is_some(), task.deleted.is_some()) {
-            (true, _) => include_done,
-            (_, true) => include_deleted,
-            _ => true,
+        let status_ok = if done {
+            // --done flag: show ONLY done tasks
+            task.done.is_some()
+        } else {
+            // Normal filtering logic
+            let include_done = all || with_done;
+            let include_deleted = all || deleted;
+
+            match (task.done.is_some(), task.deleted.is_some()) {
+                (true, _) => include_done,
+                (_, true) => include_deleted,
+                _ => true,
+            }
         };
 
         // Filter by priority

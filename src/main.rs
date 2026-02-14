@@ -57,7 +57,11 @@ enum Commands {
         #[arg(short, long)]
         size: Option<String>,
 
-        /// Include done tasks
+        /// Include done tasks alongside pending
+        #[arg(long = "with-done")]
+        with_done: bool,
+
+        /// Show only done tasks
         #[arg(long)]
         done: bool,
 
@@ -487,6 +491,7 @@ async fn run() -> Result<()> {
             project,
             priority,
             size,
+            with_done,
             done,
             deleted,
             all,
@@ -499,23 +504,9 @@ async fn run() -> Result<()> {
             no_fancy,
             verbose,
         } => {
-            let include_done = all || done;
-            let include_deleted = all || deleted;
             gtr::commands::list::tasks(
-                &config,
-                project,
-                priority,
-                size,
-                include_done,
-                include_deleted,
-                due_soon,
-                overdue,
-                limit,
-                reversed,
-                no_sync,
-                absolute,
-                !no_fancy,
-                verbose,
+                &config, project, priority, size, with_done, done, deleted, all, due_soon, overdue,
+                limit, reversed, no_sync, absolute, !no_fancy, verbose,
             )
             .await
         }
