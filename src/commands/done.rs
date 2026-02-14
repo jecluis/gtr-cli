@@ -27,8 +27,50 @@ use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, TaskStatus};
 use crate::utils;
 
-/// Mark a task as done (local-first with optional sync).
-pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
+/// Mark one or more tasks as done (local-first with optional sync).
+pub async fn run(config: &Config, task_ids: Vec<String>, no_sync: bool) -> Result<()> {
+    let mut success_count = 0;
+    let mut failures = Vec::new();
+
+    for task_id in task_ids {
+        match mark_task_done(config, &task_id, no_sync).await {
+            Ok(title) => {
+                success_count += 1;
+                println!("{}", "✓ Task marked as done locally!".green().bold());
+                println!("  ID:    {}", task_id.cyan());
+                println!("  Title: {}", title);
+            }
+            Err(e) => {
+                failures.push((task_id, e));
+            }
+        }
+    }
+
+    // Print summary
+    if success_count > 0 {
+        println!(
+            "\n{}",
+            format!("✓ Marked {} task(s) as done", success_count)
+                .green()
+                .bold()
+        );
+    }
+
+    if !failures.is_empty() {
+        eprintln!("\n{}", "✗ Failures:".red().bold());
+        for (id, err) in failures {
+            eprintln!("  {} - {}", id.red(), err);
+        }
+        return Err(crate::Error::UserFacing(
+            "Some tasks failed to be marked as done".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Mark a single task as done.
+async fn mark_task_done(config: &Config, task_id: &str, no_sync: bool) -> Result<String> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
@@ -36,6 +78,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
 
     // Load task
     let mut task = ctx.load_task(&client, &full_id).await?;
+    let title = task.title.clone();
 
     // Mark as done
     let now = Utc::now();
@@ -71,10 +114,6 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
 
-    println!("{}", "✓ Task marked as done locally!".green().bold());
-    println!("  ID:    {}", task.id.cyan());
-    println!("  Title: {}", task.title);
-
     // Sync
     if !no_sync {
         if ctx.try_sync().await {
@@ -84,5 +123,5 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(title)
 }

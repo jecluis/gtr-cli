@@ -199,8 +199,9 @@ enum Commands {
 
     /// Mark a task as done
     Done {
-        /// Task ID
-        task_id: String,
+        /// Task IDs to mark as done
+        #[arg(num_args = 1.., value_name = "TASK_ID")]
+        task_ids: Vec<String>,
 
         /// Skip sync (work offline)
         #[arg(long)]
@@ -558,8 +559,8 @@ async fn run() -> Result<()> {
             )
             .await
         }
-        Commands::Done { task_id, no_sync } => {
-            gtr::commands::done::run(&config, &task_id, no_sync).await
+        Commands::Done { task_ids, no_sync } => {
+            gtr::commands::done::run(&config, task_ids, no_sync).await
         }
         Commands::Undone {
             task_id,
