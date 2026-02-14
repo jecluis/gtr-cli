@@ -24,6 +24,8 @@ use dialoguer::Select;
 use jiff::{Span, Zoned};
 
 use crate::client::Client;
+use crate::local::LocalContext;
+use crate::models::Task;
 use crate::{Error, Result};
 
 /// Resolve project ID: use provided, or auto-select if 1, or prompt.
@@ -279,6 +281,87 @@ pub fn default_impact_multipliers() -> std::collections::HashMap<String, f64> {
     map.insert("4".to_string(), 0.5);
     map.insert("5".to_string(), 0.25);
     map
+}
+
+/// Interactive task picker with optional doing-first sorting and emoji indicators.
+///
+/// # Arguments
+/// * `client` - Client for fetching projects
+/// * `ctx` - LocalContext for loading tasks
+/// * `prompt` - Prompt text for the picker
+/// * `show_doing_first` - If true, sort tasks with "doing" state first
+///
+/// # Returns
+/// Selected task ID
+pub async fn pick_task(
+    client: &Client,
+    ctx: &LocalContext,
+    prompt: &str,
+    show_doing_first: bool,
+) -> Result<String> {
+    // Get all projects
+    let projects = client.list_projects().await?;
+
+    // Load all pending tasks
+    let mut pending_tasks: Vec<Task> = Vec::new();
+    for project in &projects {
+        let summaries = ctx.cache.list_tasks(&project.id)?;
+        for summary in summaries {
+            if summary.done.is_none()
+                && summary.deleted.is_none()
+                && let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id)
+                && task.is_pending()
+            {
+                pending_tasks.push(task);
+            }
+        }
+    }
+
+    if pending_tasks.is_empty() {
+        return Err(Error::UserFacing("No pending tasks found".to_string()));
+    }
+
+    // Sort: doing tasks first if requested
+    if show_doing_first {
+        pending_tasks.sort_by_key(|t| {
+            let is_doing = t.current_work_state.as_deref() == Some("doing");
+            (
+                !is_doing,
+                t.priority != "now",
+                t.deadline.clone(),
+                t.modified.clone(),
+            )
+        });
+    }
+
+    // Format display with emoji for doing tasks
+    let items: Vec<String> = pending_tasks
+        .iter()
+        .map(|t| {
+            let doing_prefix = if t.current_work_state.as_deref() == Some("doing") {
+                "🔨 "
+            } else {
+                "   "
+            };
+            let progress_str = t.progress.map(|p| format!(" ({}%)", p)).unwrap_or_default();
+            format!(
+                "{}{} {}{}",
+                doing_prefix,
+                t.id[..8].cyan(),
+                t.title,
+                progress_str.dimmed()
+            )
+        })
+        .collect();
+
+    let selection = Select::new()
+        .with_prompt(prompt)
+        .items(&items)
+        .default(0)
+        .interact()
+        .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
+
+    Ok(pending_tasks[selection].id.clone())
 }
 
 #[cfg(test)]

@@ -19,13 +19,12 @@
 
 use chrono::Utc;
 use colored::Colorize;
-use dialoguer::Select;
 
+use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
-use crate::models::Task;
-use crate::{Result, utils};
+use crate::utils;
 
 /// Set task progress (local-first with optional sync).
 ///
@@ -38,7 +37,7 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
     let full_id = if let Some(ref id) = task_id {
         utils::resolve_task_id(&client, id).await?
     } else {
-        resolve_doing_task(&client, &ctx).await?
+        utils::pick_task(&client, &ctx, "Select task to update progress", true).await?
     };
 
     let mut task = ctx.load_task(&client, &full_id).await?;
@@ -74,78 +73,4 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
     }
 
     Ok(())
-}
-
-/// Resolve a task when no task_id is provided.
-///
-/// 1. Load all pending tasks from cache/storage
-/// 2. Filter to "doing" tasks
-/// 3. Exactly 1 → use it
-/// 4. Multiple doing → dialoguer::Select picker
-/// 5. 0 doing → picker with ALL pending tasks
-async fn resolve_doing_task(client: &Client, ctx: &LocalContext) -> Result<String> {
-    // Get all projects
-    let projects = client.list_projects().await?;
-
-    // Load all pending tasks
-    let mut pending_tasks: Vec<Task> = Vec::new();
-    for project in &projects {
-        let summaries = ctx.cache.list_tasks(&project.id)?;
-        for summary in summaries {
-            if summary.done.is_none()
-                && summary.deleted.is_none()
-                && let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id)
-                && task.is_pending()
-            {
-                pending_tasks.push(task);
-            }
-        }
-    }
-
-    if pending_tasks.is_empty() {
-        return Err(crate::Error::UserFacing(
-            "No pending tasks found".to_string(),
-        ));
-    }
-
-    // Filter to "doing" tasks
-    let doing_tasks: Vec<&Task> = pending_tasks
-        .iter()
-        .filter(|t| t.current_work_state.as_deref() == Some("doing"))
-        .collect();
-
-    let selected = match doing_tasks.len() {
-        1 => return Ok(doing_tasks[0].id.clone()),
-        0 => {
-            // No doing tasks — pick from all pending
-            pick_task(&pending_tasks)?
-        }
-        _ => {
-            // Multiple doing tasks — pick from doing
-            let doing_owned: Vec<Task> = doing_tasks.into_iter().cloned().collect();
-            pick_task(&doing_owned)?
-        }
-    };
-
-    Ok(selected)
-}
-
-/// Interactive task picker using dialoguer::Select.
-fn pick_task(tasks: &[Task]) -> Result<String> {
-    let items: Vec<String> = tasks
-        .iter()
-        .map(|t| {
-            let progress_str = t.progress.map(|p| format!(" ({}%)", p)).unwrap_or_default();
-            format!("{} {}{}", t.id[..8].cyan(), t.title, progress_str.dimmed())
-        })
-        .collect();
-
-    let selection = Select::new()
-        .with_prompt("Select task")
-        .items(&items)
-        .default(0)
-        .interact()
-        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
-
-    Ok(tasks[selection].id.clone())
 }
