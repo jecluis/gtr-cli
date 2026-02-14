@@ -271,7 +271,7 @@ impl SyncManager {
 
         // Update cache with merged task
         let task = local_doc.to_task()?;
-        debug!(task_id, version = task.version, deadline = ?task.deadline, "post-sync task state");
+        debug!(task_id, version = task.version, deadline = ?task.deadline, priority = %task.priority, "post-sync task state");
         self.cache.upsert_task(&task, false)?;
         self.cache.mark_synced(task_id)?;
 
