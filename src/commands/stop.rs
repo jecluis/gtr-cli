@@ -21,11 +21,12 @@ use chrono::Utc;
 use colored::Colorize;
 use dialoguer::Select;
 
+use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, Task, WorkState};
-use crate::{Result, utils};
+use crate::utils;
 
 /// Stop working on a task (clear work state).
 ///
@@ -104,7 +105,7 @@ async fn resolve_doing_task(client: &Client, ctx: &LocalContext) -> Result<Strin
 
     if doing_tasks.is_empty() {
         return Err(crate::Error::UserFacing(
-            "No tasks currently in progress".to_string(),
+            "No started tasks found".to_string(),
         ));
     }
 
