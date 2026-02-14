@@ -25,7 +25,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::client::Client;
 use crate::config::Config;
+use crate::utils;
 
 /// Cached promotion thresholds (matches the resolved shape).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +60,53 @@ pub fn write_cache(config: &Config, thresholds: &CachedThresholds) -> crate::Res
         .map_err(|e| crate::Error::Config(format!("failed to serialize cache: {}", e)))?;
     std::fs::write(path, json)?;
     Ok(())
+}
+
+/// Fetch promotion thresholds (deadline + impact), checking cache first.
+///
+/// Resolution order:
+/// 1. Local cache (always checked first)
+/// 2. Server fetch with 2-second timeout (unless `no_sync`)
+/// 3. Defaults
+pub async fn fetch_thresholds(config: &Config, client: &Client, no_sync: bool) -> CachedThresholds {
+    // Try local cache first
+    if let Some(cached) = read_cache(config) {
+        if no_sync {
+            return cached;
+        }
+    } else if no_sync {
+        return CachedThresholds {
+            deadline: utils::default_thresholds(),
+            impact_labels: utils::default_impact_labels(),
+            impact_multipliers: utils::default_impact_multipliers(),
+        };
+    }
+
+    // Fetch from server and update cache
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.get_user_config()).await {
+        Ok(Ok(cfg)) => {
+            let impact = cfg.promotion_thresholds.impact.as_ref();
+            let cached = CachedThresholds {
+                deadline: cfg.promotion_thresholds.deadline,
+                impact_labels: impact
+                    .map(|i| i.labels.clone())
+                    .unwrap_or_else(utils::default_impact_labels),
+                impact_multipliers: impact
+                    .map(|i| i.multipliers.clone())
+                    .unwrap_or_else(utils::default_impact_multipliers),
+            };
+            let _ = write_cache(config, &cached);
+            cached
+        }
+        _ => {
+            // Fall back to cache, then defaults
+            read_cache(config).unwrap_or_else(|| CachedThresholds {
+                deadline: utils::default_thresholds(),
+                impact_labels: utils::default_impact_labels(),
+                impact_multipliers: utils::default_impact_multipliers(),
+            })
+        }
+    }
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
-use crate::{Result, output, utils};
+use crate::{Result, output, threshold_cache, utils};
 
 /// Show a specific task (local-first with optional refresh).
 pub async fn run(
@@ -38,7 +38,8 @@ pub async fn run(
     // Load from local storage (or fetch from server if not cached)
     let task = ctx.load_task(&client, &full_id).await?;
 
-    output::print_task_details(config, &task, no_format, no_wrap);
+    let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
+    output::print_task_details(config, &task, no_format, no_wrap, &cached);
 
     // Try to refresh from server in background if sync enabled
     if !no_sync {

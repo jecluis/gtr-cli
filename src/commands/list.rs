@@ -25,7 +25,7 @@ use crate::config::Config;
 use crate::local::LocalContext;
 use crate::models::Task;
 use crate::threshold_cache::{self, CachedThresholds};
-use crate::{Result, output, utils};
+use crate::{Result, output, promotion, utils};
 
 /// List tasks (local-first from cache).
 #[allow(clippy::too_many_arguments)]
@@ -99,6 +99,9 @@ pub async fn tasks(
         }
     }
 
+    // Fetch promotion thresholds early — needed for filtering and sorting
+    let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
+
     // Apply filters
     all_tasks.retain(|task| {
         // Filter by done/deleted status
@@ -120,10 +123,11 @@ pub async fn tasks(
             }
         };
 
-        // Filter by priority
+        // Filter by priority (using effective priority so --priority now
+        // includes tasks promoted by approaching deadlines)
         let priority_ok = priority
             .as_ref()
-            .map(|p| task.priority == *p)
+            .map(|p| promotion::effective_priority(task, &cached) == p.as_str())
             .unwrap_or(true);
 
         // Filter by size
@@ -164,16 +168,13 @@ pub async fn tasks(
     let (doing_tasks, other_tasks) = split_by_work_state(&mut all_tasks);
 
     // Sort both groups by priority then deadline
-    let doing_tasks = sort_tasks(doing_tasks);
-    let mut other_tasks = sort_tasks(other_tasks);
+    let doing_tasks = sort_tasks(doing_tasks, &cached);
+    let mut other_tasks = sort_tasks(other_tasks, &cached);
 
     // Reverse other tasks if flag is set
     if reversed {
         other_tasks.reverse();
     }
-
-    // Fetch promotion thresholds for urgency indicators
-    let cached = fetch_thresholds(config, &client, no_sync).await;
 
     // Apply deadline urgency emoji/color to task titles
     let doing_tasks = apply_deadline_urgency(doing_tasks, &cached);
@@ -204,6 +205,7 @@ pub async fn tasks(
         fancy,
         verbose,
         Some(doing_count),
+        &cached,
     );
     Ok(())
 }
@@ -224,13 +226,15 @@ fn split_by_work_state(tasks: &mut [Task]) -> (Vec<Task>, Vec<Task>) {
     (doing, other)
 }
 
-/// Sort tasks by priority (now > later), impact (1 first),
+/// Sort tasks by effective priority (now > later), impact (1 first),
 /// deadline (sooner first), modification time (descending: recently
 /// touched at top), then creation time (ascending: new arrivals at bottom).
-fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
+fn sort_tasks(mut tasks: Vec<Task>, thresholds: &CachedThresholds) -> Vec<Task> {
     tasks.sort_by(|a, b| {
-        // First by priority (now < later for sorting, so now comes first)
-        let priority_cmp = match (a.priority.as_str(), b.priority.as_str()) {
+        // First by effective priority (now < later for sorting, so now comes first)
+        let a_prio = promotion::effective_priority(a, thresholds);
+        let b_prio = promotion::effective_priority(b, thresholds);
+        let priority_cmp = match (a_prio, b_prio) {
             ("now", "later") => std::cmp::Ordering::Less,
             ("later", "now") => std::cmp::Ordering::Greater,
             _ => std::cmp::Ordering::Equal,
@@ -269,48 +273,6 @@ fn sort_tasks(mut tasks: Vec<Task>) -> Vec<Task> {
     });
 
     tasks
-}
-
-/// Fetch promotion thresholds (deadline + impact), checking cache first.
-async fn fetch_thresholds(config: &Config, client: &Client, no_sync: bool) -> CachedThresholds {
-    // Try local cache first
-    if let Some(cached) = threshold_cache::read_cache(config) {
-        if no_sync {
-            return cached;
-        }
-    } else if no_sync {
-        return CachedThresholds {
-            deadline: utils::default_thresholds(),
-            impact_labels: utils::default_impact_labels(),
-            impact_multipliers: utils::default_impact_multipliers(),
-        };
-    }
-
-    // Fetch from server and update cache
-    match tokio::time::timeout(std::time::Duration::from_secs(2), client.get_user_config()).await {
-        Ok(Ok(cfg)) => {
-            let impact = cfg.promotion_thresholds.impact.as_ref();
-            let cached = CachedThresholds {
-                deadline: cfg.promotion_thresholds.deadline,
-                impact_labels: impact
-                    .map(|i| i.labels.clone())
-                    .unwrap_or_else(utils::default_impact_labels),
-                impact_multipliers: impact
-                    .map(|i| i.multipliers.clone())
-                    .unwrap_or_else(utils::default_impact_multipliers),
-            };
-            let _ = threshold_cache::write_cache(config, &cached);
-            cached
-        }
-        _ => {
-            // Fall back to cache, then defaults
-            threshold_cache::read_cache(config).unwrap_or_else(|| CachedThresholds {
-                deadline: utils::default_thresholds(),
-                impact_labels: utils::default_impact_labels(),
-                impact_multipliers: utils::default_impact_multipliers(),
-            })
-        }
-    }
 }
 
 /// Apply deadline urgency indicators to task titles.

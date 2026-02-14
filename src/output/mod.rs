@@ -31,6 +31,8 @@ use tabled::{Table, Tabled};
 
 use crate::markdown::MarkdownRenderer;
 use crate::models::{Project, Task};
+use crate::promotion;
+use crate::threshold_cache::CachedThresholds;
 
 /// Detect terminal width, with fallback to 80 if detection fails.
 fn detect_terminal_width() -> usize {
@@ -234,6 +236,7 @@ struct TaskRowData {
 /// Print a list of tasks in table format.
 ///
 /// If `doing_count` is Some, inserts a visual divider after that many tasks.
+#[allow(clippy::too_many_arguments)]
 pub fn print_tasks(
     tasks: &[Task],
     prefix_len: usize,
@@ -241,6 +244,7 @@ pub fn print_tasks(
     fancy: bool,
     verbose: bool,
     doing_count: Option<usize>,
+    thresholds: &CachedThresholds,
 ) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
@@ -253,11 +257,13 @@ pub fn print_tasks(
         fancy,
         verbose,
         doing_count,
+        thresholds,
     );
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
 
 /// Internal function to print task table.
+#[allow(clippy::too_many_arguments)]
 fn print_task_table(
     tasks: &[Task],
     prefix_len: usize,
@@ -265,6 +271,7 @@ fn print_task_table(
     fancy: bool,
     verbose: bool,
     doing_count: Option<usize>,
+    thresholds: &CachedThresholds,
 ) {
     // Detect which columns to show
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
@@ -303,6 +310,7 @@ fn print_task_table(
             &project_colors,
             fancy,
             doing_count,
+            thresholds,
         );
     } else {
         // Narrow terminal: use simplified format
@@ -314,12 +322,18 @@ fn print_task_table(
             &project_colors,
             fancy,
             doing_count,
+            thresholds,
         );
     }
 }
 
 /// Build formatted task row data from a Task.
-fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskRowData {
+fn build_task_row(
+    task: &Task,
+    prefix_len: usize,
+    absolute_dates: bool,
+    thresholds: &CachedThresholds,
+) -> TaskRowData {
     let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
         .unwrap()
         .with_timezone(&Local);
@@ -332,9 +346,10 @@ fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskR
         2 => "\u{26a1} ",  // ⚡ + space
         _ => "   ",        // 3 spaces to match emoji visual width
     };
-    let priority_colored = match task.priority.as_str() {
-        "now" => format!("{}{}", impact_prefix, task.priority.red()),
-        _ => format!("{}{}", impact_prefix, task.priority),
+    let eff_priority = promotion::effective_priority(task, thresholds);
+    let priority_colored = match eff_priority {
+        "now" => format!("{}{}", impact_prefix, eff_priority.red()),
+        _ => format!("{}{}", impact_prefix, eff_priority),
     };
 
     let deadline_str = format_deadline(task.deadline.as_deref(), absolute_dates);
@@ -374,6 +389,7 @@ fn render_task_table(
     project_colors: &std::collections::HashMap<&str, colored::Color>,
     fancy: bool,
     doing_count: Option<usize>,
+    thresholds: &CachedThresholds,
 ) {
     let mut builder = Builder::default();
 
@@ -397,7 +413,7 @@ fn render_task_table(
 
     // Build rows based on column configuration
     for task in tasks {
-        let row = build_task_row(task, prefix_len, absolute_dates);
+        let row = build_task_row(task, prefix_len, absolute_dates, thresholds);
 
         let mut record: Vec<String> = vec![row.id, row.title];
         if columns.show_project {
@@ -467,9 +483,10 @@ fn render_simplified_table(
     project_colors: &std::collections::HashMap<&str, colored::Color>,
     _fancy: bool,
     doing_count: Option<usize>,
+    thresholds: &CachedThresholds,
 ) {
     for (idx, task) in tasks.iter().enumerate() {
-        let row = build_task_row(task, prefix_len, absolute_dates);
+        let row = build_task_row(task, prefix_len, absolute_dates, thresholds);
 
         // Insert separator between doing and other tasks
         if let Some(count) = doing_count
@@ -548,6 +565,7 @@ pub fn print_task_details(
     task: &Task,
     no_format: bool,
     no_wrap: bool,
+    thresholds: &CachedThresholds,
 ) {
     let renderer = if no_format {
         MarkdownRenderer::with_override(Some(false)) // Force disable
@@ -564,11 +582,17 @@ pub fn print_task_details(
     println!("\n{}", "Metadata:".bold());
     println!("  ID:       {}", task.id.cyan());
 
-    let priority_colored = match task.priority.as_str() {
-        "now" => task.priority.red(),
-        _ => task.priority.normal(),
+    let eff_priority = promotion::effective_priority(task, thresholds);
+    let promoted = eff_priority != task.priority.as_str();
+    let priority_colored = match eff_priority {
+        "now" => eff_priority.red(),
+        _ => eff_priority.normal(),
     };
-    println!("  Priority: {}", priority_colored);
+    if promoted {
+        println!("  Priority: {} {}", priority_colored, "(promoted)".dimmed());
+    } else {
+        println!("  Priority: {}", priority_colored);
+    }
     println!("  Size:     {}", task.size);
 
     // Always show status (priority: done > deleted > work_state > pending)

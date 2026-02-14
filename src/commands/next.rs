@@ -26,6 +26,8 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, Task, WorkState};
+use crate::promotion;
+use crate::threshold_cache::{self, CachedThresholds};
 
 /// Suggest next tasks to work on, ordered by urgency.
 ///
@@ -74,14 +76,17 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
         ));
     }
 
+    // Fetch thresholds for effective priority computation
+    let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
+
     // Sort by urgency (highest to lowest)
     tasks.sort_by(|a, b| {
         let now = Utc::now();
-        calculate_urgency_score(a, &now).cmp(&calculate_urgency_score(b, &now))
+        calculate_urgency_score(a, &now, &cached).cmp(&calculate_urgency_score(b, &now, &cached))
     });
 
     // Show picker (always, even for 1 task)
-    let selected_id = pick_next_task(&tasks)?;
+    let selected_id = pick_next_task(&tasks, &cached)?;
 
     // Load the selected task and transition to "doing"
     let mut task = ctx.load_task(&client, &selected_id).await?;
@@ -149,9 +154,10 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
 fn calculate_urgency_score(
     task: &Task,
     now: &chrono::DateTime<chrono::Utc>,
+    thresholds: &CachedThresholds,
 ) -> (u8, i64, u8, u8, u8, i64) {
-    // Priority: now=0, later=1
-    let priority_score = match task.priority.as_str() {
+    // Priority: now=0, later=1 (uses effective priority for promotion)
+    let priority_score = match promotion::effective_priority(task, thresholds) {
         "now" => 0,
         _ => 1,
     };
@@ -207,15 +213,15 @@ fn calculate_urgency_score(
 }
 
 /// Interactive task picker showing urgency context.
-fn pick_next_task(tasks: &[Task]) -> Result<String> {
+fn pick_next_task(tasks: &[Task], thresholds: &CachedThresholds) -> Result<String> {
     let items: Vec<String> = tasks
         .iter()
         .map(|t| {
             // Build urgency context (only add items with actual content)
             let mut context_parts: Vec<String> = Vec::new();
 
-            // Priority indicator
-            if t.priority == "now" {
+            // Priority indicator (uses effective priority)
+            if promotion::effective_priority(t, thresholds) == "now" {
                 context_parts.push("🔴".to_string());
             }
 

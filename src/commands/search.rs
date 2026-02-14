@@ -22,7 +22,7 @@ use colored::Colorize;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
-use crate::{Result, output};
+use crate::{Result, output, threshold_cache};
 
 /// Search tasks (local full-text search on cache).
 pub async fn run(
@@ -97,7 +97,16 @@ pub async fn run(
     let prefix_len = crate::output::compute_min_prefix_len(&task_ids);
 
     // Search results default to relative dates for better UX
-    output::print_tasks(&matching_tasks, prefix_len, false, true, false, None);
+    let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
+    output::print_tasks(
+        &matching_tasks,
+        prefix_len,
+        false,
+        true,
+        false,
+        None,
+        &cached,
+    );
 
     Ok(())
 }
