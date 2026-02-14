@@ -67,10 +67,14 @@ pub async fn resolve_project(client: &Client, provided: Option<String>) -> Resul
         .with_prompt("Select project")
         .items(&items)
         .default(0)
-        .interact()
+        .interact_opt()
         .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
 
-    Ok(projects[selection].id.clone())
+    let Some(idx) = selection else {
+        return Err(Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    Ok(projects[idx].id.clone())
 }
 
 /// Resolve a potentially shortened task ID to a full UUID.
@@ -358,10 +362,14 @@ pub async fn pick_task(
         .with_prompt(prompt)
         .items(&items)
         .default(0)
-        .interact()
+        .interact_opt()
         .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
 
-    Ok(pending_tasks[selection].id.clone())
+    let Some(idx) = selection else {
+        return Err(Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    Ok(pending_tasks[idx].id.clone())
 }
 
 #[cfg(test)]

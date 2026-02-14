@@ -130,8 +130,12 @@ fn pick_task(tasks: &[Task]) -> Result<String> {
         .with_prompt("Select task to stop")
         .items(&items)
         .default(0)
-        .interact()
+        .interact_opt()
         .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
 
-    Ok(tasks[selection].id.clone())
+    let Some(idx) = selection else {
+        return Err(crate::Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    Ok(tasks[idx].id.clone())
 }
