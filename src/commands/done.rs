@@ -19,16 +19,25 @@
 
 use chrono::Utc;
 use colored::Colorize;
+use dialoguer::Select;
 
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
-use crate::models::{LogEntry, LogEntryType, TaskStatus};
+use crate::models::{LogEntry, LogEntryType, Task, TaskStatus};
 use crate::utils;
 
 /// Mark one or more tasks as done (local-first with optional sync).
-pub async fn run(config: &Config, task_ids: Vec<String>, no_sync: bool) -> Result<()> {
+pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> Result<()> {
+    // If no task IDs provided, show picker
+    if task_ids.is_empty() {
+        let client = Client::new(config)?;
+        let ctx = LocalContext::new(config, !no_sync)?;
+        let selected_id = pick_pending_task(&client, &ctx).await?;
+        task_ids.push(selected_id);
+    }
+
     let mut success_count = 0;
     let mut failures = Vec::new();
 
@@ -124,4 +133,55 @@ async fn mark_task_done(config: &Config, task_id: &str, no_sync: bool) -> Result
     }
 
     Ok(title)
+}
+
+/// Resolve a task when no task_id is provided.
+///
+/// Load all pending tasks from cache/storage and show picker.
+async fn pick_pending_task(client: &Client, ctx: &LocalContext) -> Result<String> {
+    // Get all projects
+    let projects = client.list_projects().await?;
+
+    // Load all pending tasks
+    let mut pending_tasks: Vec<Task> = Vec::new();
+    for project in &projects {
+        let summaries = ctx.cache.list_tasks(&project.id)?;
+        for summary in summaries {
+            if summary.done.is_none()
+                && summary.deleted.is_none()
+                && let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id)
+                && task.is_pending()
+            {
+                pending_tasks.push(task);
+            }
+        }
+    }
+
+    if pending_tasks.is_empty() {
+        return Err(crate::Error::UserFacing(
+            "No pending tasks found".to_string(),
+        ));
+    }
+
+    pick_task(&pending_tasks)
+}
+
+/// Interactive task picker using dialoguer::Select.
+fn pick_task(tasks: &[Task]) -> Result<String> {
+    let items: Vec<String> = tasks
+        .iter()
+        .map(|t| {
+            let progress_str = t.progress.map(|p| format!(" ({}%)", p)).unwrap_or_default();
+            format!("{} {}{}", t.id[..8].cyan(), t.title, progress_str.dimmed())
+        })
+        .collect();
+
+    let selection = Select::new()
+        .with_prompt("Select task to mark as done")
+        .items(&items)
+        .default(0)
+        .interact()
+        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
+
+    Ok(tasks[selection].id.clone())
 }

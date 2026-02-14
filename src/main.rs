@@ -199,8 +199,8 @@ enum Commands {
 
     /// Mark a task as done
     Done {
-        /// Task IDs to mark as done
-        #[arg(num_args = 1.., value_name = "TASK_ID")]
+        /// Task IDs to mark as done (shows picker if omitted)
+        #[arg(num_args = 0.., value_name = "TASK_ID")]
         task_ids: Vec<String>,
 
         /// Skip sync (work offline)
