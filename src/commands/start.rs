@@ -31,14 +31,19 @@ use crate::{Result, utils};
 ///
 /// When no task_id is provided, picks from pending non-doing tasks.
 /// If the task has no progress set, auto-sets it to 0%.
-pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Result<()> {
+pub async fn run(
+    config: &Config,
+    task_id: Option<String>,
+    filter: Option<String>,
+    no_sync: bool,
+) -> Result<()> {
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
 
     let full_id = if let Some(ref id) = task_id {
         utils::resolve_task_id(&client, id).await?
     } else {
-        resolve_startable_task(&client, &ctx).await?
+        resolve_startable_task(&client, &ctx, filter.as_deref()).await?
     };
 
     let mut task = ctx.load_task(&client, &full_id).await?;
@@ -100,7 +105,13 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
 }
 
 /// Pick from pending tasks that are NOT currently "doing".
-async fn resolve_startable_task(client: &Client, ctx: &LocalContext) -> Result<String> {
+///
+/// If filter is provided, matches tasks by title first, then by body.
+async fn resolve_startable_task(
+    client: &Client,
+    ctx: &LocalContext,
+    filter: Option<&str>,
+) -> Result<String> {
     let projects = client.list_projects().await?;
 
     let mut candidates: Vec<Task> = Vec::new();
@@ -113,18 +124,33 @@ async fn resolve_startable_task(client: &Client, ctx: &LocalContext) -> Result<S
                 && task.is_pending()
                 && task.current_work_state.as_deref() != Some("doing")
             {
+                // Apply filter if provided (case-insensitive match on title, then body)
+                if let Some(filter_text) = filter {
+                    let filter_lower = filter_text.to_lowercase();
+                    let title_match = task.title.to_lowercase().contains(&filter_lower);
+                    let body_match = task.body.to_lowercase().contains(&filter_lower);
+
+                    if !title_match && !body_match {
+                        continue;
+                    }
+                }
+
                 candidates.push(task);
             }
         }
     }
 
     if candidates.is_empty() {
-        return Err(crate::Error::UserFacing(
-            "No startable tasks found".to_string(),
-        ));
+        let msg = if filter.is_some() {
+            "No startable tasks matching filter".to_string()
+        } else {
+            "No startable tasks found".to_string()
+        };
+        return Err(crate::Error::UserFacing(msg));
     }
 
-    if candidates.len() == 1 {
+    // Only auto-select if no filter provided and exactly one candidate
+    if candidates.len() == 1 && filter.is_none() {
         return Ok(candidates[0].id.clone());
     }
 

@@ -289,6 +289,10 @@ enum Commands {
         /// Task ID (picks from pending tasks if omitted)
         task_id: Option<String>,
 
+        /// Filter tasks by text (searches title, then body)
+        #[arg(short, long)]
+        filter: Option<String>,
+
         /// Skip sync (work offline)
         #[arg(long)]
         no_sync: bool,
@@ -599,9 +603,11 @@ async fn run() -> Result<()> {
         Commands::Later { task_id, no_sync } => {
             gtr::commands::later::run(&config, &task_id, no_sync).await
         }
-        Commands::Start { task_id, no_sync } => {
-            gtr::commands::start::run(&config, task_id, no_sync).await
-        }
+        Commands::Start {
+            task_id,
+            filter,
+            no_sync,
+        } => gtr::commands::start::run(&config, task_id, filter, no_sync).await,
         Commands::Stop { task_id, no_sync } => {
             gtr::commands::stop::run(&config, task_id, no_sync).await
         }
