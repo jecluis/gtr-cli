@@ -32,6 +32,13 @@ use tabled::{Table, Tabled};
 use crate::markdown::MarkdownRenderer;
 use crate::models::{Project, Task};
 
+/// Detect terminal width, with fallback to 80 if detection fails.
+fn detect_terminal_width() -> usize {
+    terminal_size::terminal_size()
+        .map(|(terminal_size::Width(w), _)| w as usize)
+        .unwrap_or(80)
+}
+
 /// Calculate minimum unique prefix length for task IDs.
 ///
 /// Uses optimized O(N log N) algorithm by sorting IDs and comparing adjacent pairs.
@@ -278,16 +285,32 @@ fn print_task_table(
         project_colors.insert(*project_id, colors[idx % colors.len()]);
     }
 
-    // Render table with explicit column configuration
-    render_task_table(
-        tasks,
-        prefix_len,
-        absolute_dates,
-        columns,
-        &project_colors,
-        fancy,
-        doing_count,
-    );
+    // Detect terminal width and route to appropriate renderer
+    let terminal_width = detect_terminal_width();
+
+    if terminal_width >= 150 {
+        // Wide terminal: use default table
+        render_task_table(
+            tasks,
+            prefix_len,
+            absolute_dates,
+            columns,
+            &project_colors,
+            fancy,
+            doing_count,
+        );
+    } else {
+        // Narrow terminal: use simplified format
+        render_simplified_table(
+            tasks,
+            prefix_len,
+            absolute_dates,
+            columns,
+            &project_colors,
+            fancy,
+            doing_count,
+        );
+    }
 }
 
 /// Build formatted task row data from a Task.
@@ -425,6 +448,90 @@ fn render_task_table(
     table.with(Modify::new(Columns::new(1..2)).with(Width::wrap(60).keep_words(true)));
 
     println!("{}", table);
+}
+
+/// Render simplified table for narrow terminals (<150 cols).
+///
+/// Uses 3-line format per task, capped at 70 columns total.
+#[allow(clippy::too_many_arguments)]
+fn render_simplified_table(
+    tasks: &[Task],
+    prefix_len: usize,
+    absolute_dates: bool,
+    _columns: TableColumns,
+    project_colors: &std::collections::HashMap<&str, colored::Color>,
+    _fancy: bool,
+    doing_count: Option<usize>,
+) {
+    for (idx, task) in tasks.iter().enumerate() {
+        let row = build_task_row(task, prefix_len, absolute_dates);
+
+        // Insert separator between doing and other tasks
+        if let Some(count) = doing_count
+            && idx == count
+        {
+            println!("{}", "═".repeat(70).dimmed());
+        }
+
+        // Line 1: ID - PROJECT - STATUS
+        let project_colored = if let Some(color) = project_colors.get(task.project_id.as_str()) {
+            task.project_id.color(*color).to_string()
+        } else {
+            task.project_id.clone()
+        };
+        println!("{} - {} - {}", row.id, project_colored, row.status);
+
+        // Line 2: TITLE (wrapped at 60 columns)
+        let wrapped_title = wrap_text(&task.title, 60);
+        for line in wrapped_title {
+            println!("{}", line);
+        }
+
+        // Line 3: PRIORITY - DEADLINE - SIZE
+        println!("{} - {} - {}", row.priority, row.deadline, row.size);
+
+        // Task separator (except for last task)
+        if idx < tasks.len() - 1 {
+            println!("{}", "─".repeat(70).dimmed());
+        }
+    }
+}
+
+/// Wrap text at specified width, preserving word boundaries.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+
+    for word in text.split_whitespace() {
+        // Check if adding this word would exceed width
+        let test_line = if current_line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{} {}", current_line, word)
+        };
+
+        if test_line.len() <= width {
+            current_line = test_line;
+        } else {
+            // Current line is full, start new line
+            if !current_line.is_empty() {
+                lines.push(current_line);
+            }
+            current_line = word.to_string();
+        }
+    }
+
+    // Don't forget the last line
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+
+    // If no lines were created (empty text), return single empty line
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
 }
 
 /// Print a single task with full details and markdown rendering.
