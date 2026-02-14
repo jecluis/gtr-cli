@@ -182,9 +182,20 @@ pub async fn tasks(
     // Calculate prefix length based on ALL tasks (not just displayed ones)
     let prefix_len = crate::output::compute_min_prefix_len(&all_task_ids);
 
-    // Combine tasks with doing first, track count for divider
-    let doing_count = doing_tasks.len();
-    let all_tasks = [doing_tasks, other_tasks].concat();
+    // When --all or --with-done is used, separate done tasks and put them at the bottom
+    let (all_tasks, doing_count) = if all || with_done {
+        let (pending_other, done_other): (Vec<_>, Vec<_>) =
+            other_tasks.into_iter().partition(|t| t.done.is_none());
+
+        let doing_count = doing_tasks.len();
+        let combined = [doing_tasks, pending_other, done_other].concat();
+        (combined, doing_count)
+    } else {
+        // Normal behavior: doing first, then others
+        let doing_count = doing_tasks.len();
+        let combined = [doing_tasks, other_tasks].concat();
+        (combined, doing_count)
+    };
 
     output::print_tasks(
         &all_tasks,
