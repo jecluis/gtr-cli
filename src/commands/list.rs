@@ -36,6 +36,7 @@ pub async fn tasks(
     size: Option<String>,
     with_done: bool,
     done: bool,
+    with_deleted: bool,
     deleted: bool,
     all: bool,
     due_soon: bool,
@@ -104,10 +105,13 @@ pub async fn tasks(
         let status_ok = if done {
             // --done flag: show ONLY done tasks
             task.done.is_some()
+        } else if deleted {
+            // --deleted flag: show ONLY deleted tasks
+            task.deleted.is_some()
         } else {
             // Normal filtering logic
             let include_done = all || with_done;
-            let include_deleted = all || deleted;
+            let include_deleted = all || with_deleted;
 
             match (task.done.is_some(), task.deleted.is_some()) {
                 (true, _) => include_done,

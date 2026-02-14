@@ -65,7 +65,11 @@ enum Commands {
         #[arg(long)]
         done: bool,
 
-        /// Include deleted tasks
+        /// Include deleted tasks alongside pending
+        #[arg(long = "with-deleted")]
+        with_deleted: bool,
+
+        /// Show only deleted tasks
         #[arg(long)]
         deleted: bool,
 
@@ -493,6 +497,7 @@ async fn run() -> Result<()> {
             size,
             with_done,
             done,
+            with_deleted,
             deleted,
             all,
             due_soon,
@@ -505,8 +510,23 @@ async fn run() -> Result<()> {
             verbose,
         } => {
             gtr::commands::list::tasks(
-                &config, project, priority, size, with_done, done, deleted, all, due_soon, overdue,
-                limit, reversed, no_sync, absolute, !no_fancy, verbose,
+                &config,
+                project,
+                priority,
+                size,
+                with_done,
+                done,
+                with_deleted,
+                deleted,
+                all,
+                due_soon,
+                overdue,
+                limit,
+                reversed,
+                no_sync,
+                absolute,
+                !no_fancy,
+                verbose,
             )
             .await
         }
