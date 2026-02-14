@@ -25,6 +25,7 @@ use colored::Colorize;
 use tabled::builder::Builder;
 use tabled::settings::style::HorizontalLine;
 use tabled::settings::themes::Theme;
+use tabled::settings::width::Width;
 use tabled::settings::{Alignment, Modify, Style, object::Columns};
 use tabled::{Table, Tabled};
 
@@ -419,6 +420,9 @@ fn render_task_table(
 
     // Center all columns after Title (index 2..end)
     table.with(Modify::new(Columns::new(2..num_cols)).with(Alignment::center()));
+
+    // Wrap Title column (index 1) at 60 characters, preserving word boundaries
+    table.with(Modify::new(Columns::new(1..2)).with(Width::wrap(60).keep_words(true)));
 
     println!("{}", table);
 }
