@@ -24,6 +24,7 @@ use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
+use crate::models::{LogEntry, LogEntryType, LogSource, TaskStatus};
 use crate::utils;
 
 /// Set task progress (local-first with optional sync).
@@ -43,10 +44,36 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
     let mut task = ctx.load_task(&client, &full_id).await?;
 
     let old_progress = task.progress;
+    let now = Utc::now();
 
     task.progress = Some(value);
-    task.modified = Utc::now().to_rfc3339();
+    task.modified = now.to_rfc3339();
     task.version += 1;
+
+    // Add log entry for progress change
+    task.log.push(LogEntry {
+        timestamp: now,
+        entry_type: LogEntryType::ProgressChanged {
+            from: old_progress,
+            to: Some(value),
+        },
+        source: LogSource::User,
+    });
+
+    // Auto-mark as done when progress reaches 100%
+    let auto_done = value == 100 && task.done.is_none();
+    if auto_done {
+        task.done = Some(now.to_rfc3339());
+        task.current_work_state = None;
+
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::StatusChanged {
+                status: TaskStatus::Done,
+            },
+            source: LogSource::User,
+        });
+    }
 
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
@@ -63,6 +90,10 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
         old_str.dimmed().strikethrough(),
         format!("{}%", value).green()
     );
+
+    if auto_done {
+        println!("  {}", "✓ Task auto-marked as done (100% complete)".green());
+    }
 
     if !no_sync {
         if ctx.try_sync().await {
