@@ -308,6 +308,17 @@ enum Commands {
         no_sync: bool,
     },
 
+    /// Suggest next tasks to work on (ordered by urgency)
+    Next {
+        /// Filter to specific project
+        #[arg(short = 'P', long)]
+        project: Option<String>,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
+    },
+
     /// Display task change log
     Log {
         /// Task ID
@@ -610,6 +621,9 @@ async fn run() -> Result<()> {
         } => gtr::commands::start::run(&config, task_id, filter, no_sync).await,
         Commands::Stop { task_id, no_sync } => {
             gtr::commands::stop::run(&config, task_id, no_sync).await
+        }
+        Commands::Next { project, no_sync } => {
+            gtr::commands::next::run(&config, project, no_sync).await
         }
         Commands::Log {
             task_id,
