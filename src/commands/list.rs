@@ -171,13 +171,13 @@ pub async fn tasks(
     let doing_count = doing_tasks.len();
     let all_tasks = [doing_tasks, other_tasks].concat();
 
-    output::print_tasks_unified(
+    output::print_tasks(
         &all_tasks,
-        doing_count,
         prefix_len,
         absolute_dates,
         fancy,
         verbose,
+        Some(doing_count),
     );
     Ok(())
 }

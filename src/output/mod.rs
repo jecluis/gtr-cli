@@ -238,73 +238,29 @@ struct TaskRowWithProject {
     status: String,
 }
 
-/// Print tasks in unified table with divider between doing and other tasks.
-pub fn print_tasks_unified(
+/// Print a list of tasks in table format.
+///
+/// If `doing_count` is Some, inserts a visual divider after that many tasks.
+pub fn print_tasks(
     tasks: &[Task],
-    doing_count: usize,
     prefix_len: usize,
     absolute_dates: bool,
     fancy: bool,
     verbose: bool,
+    doing_count: Option<usize>,
 ) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
         return;
     }
-
-    print_task_table_unified(
+    print_task_table(
         tasks,
-        doing_count,
         prefix_len,
         absolute_dates,
         fancy,
         verbose,
+        doing_count,
     );
-    println!("\n{} {}", "Total:".bold(), tasks.len());
-}
-
-/// Internal function to print unified task table with divider.
-fn print_task_table_unified(
-    tasks: &[Task],
-    doing_count: usize,
-    prefix_len: usize,
-    absolute_dates: bool,
-    fancy: bool,
-    verbose: bool,
-) {
-    // Check if tasks are from multiple projects
-    let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
-    let show_project = unique_projects.len() > 1;
-
-    if show_project {
-        print_task_table_with_project_unified(
-            tasks,
-            unique_projects,
-            doing_count,
-            prefix_len,
-            absolute_dates,
-            fancy,
-            verbose,
-        );
-    } else {
-        print_task_table_simple_unified(
-            tasks,
-            doing_count,
-            prefix_len,
-            absolute_dates,
-            fancy,
-            verbose,
-        );
-    }
-}
-
-/// Print a list of tasks in table format.
-pub fn print_tasks(tasks: &[Task], prefix_len: usize, absolute_dates: bool, fancy: bool) {
-    if tasks.is_empty() {
-        println!("{}", "No tasks found".yellow());
-        return;
-    }
-    print_task_table(tasks, prefix_len, absolute_dates, fancy, false);
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
 
@@ -315,6 +271,7 @@ fn print_task_table(
     absolute_dates: bool,
     fancy: bool,
     verbose: bool,
+    doing_count: Option<usize>,
 ) {
     // Check if tasks are from multiple projects
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
@@ -328,64 +285,17 @@ fn print_task_table(
             absolute_dates,
             fancy,
             verbose,
+            doing_count,
         );
     } else {
-        print_task_table_simple(tasks, prefix_len, absolute_dates, fancy, verbose);
-    }
-}
-
-/// Print unified task table without project column (with optional divider).
-fn print_task_table_simple_unified(
-    tasks: &[Task],
-    doing_count: usize,
-    prefix_len: usize,
-    absolute_dates: bool,
-    fancy: bool,
-    verbose: bool,
-) {
-    let has_progress = tasks.iter().any(|t| t.progress.is_some());
-    let use_builder = has_progress || verbose;
-
-    if use_builder {
-        print_task_table_with_builder_unified(
+        print_task_table_simple(
             tasks,
-            doing_count,
             prefix_len,
             absolute_dates,
-            false,
-            &std::collections::HashMap::new(),
             fancy,
             verbose,
+            doing_count,
         );
-    } else {
-        let rows: Vec<TaskRow> = tasks
-            .iter()
-            .map(|task| build_task_row(task, prefix_len, absolute_dates))
-            .collect();
-
-        let mut table = Table::new(rows);
-
-        // Use Theme to insert horizontal line divider
-        let mut style = Theme::from_style(Style::rounded());
-        if doing_count > 0 && doing_count < tasks.len() {
-            style.insert_horizontal_line(
-                doing_count + 1,
-                HorizontalLine::inherit(
-                    Style::modern()
-                        .intersection_left('╞')
-                        .intersection_right('╡')
-                        .intersection('╪'),
-                )
-                .horizontal('═'),
-            );
-        }
-
-        table
-            .with(style)
-            .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
-            .with(Modify::new(Columns::new(2..6)).with(Alignment::center()));
-
-        println!("{}", table);
     }
 }
 
@@ -396,6 +306,7 @@ fn print_task_table_simple(
     absolute_dates: bool,
     fancy: bool,
     verbose: bool,
+    doing_count: Option<usize>,
 ) {
     let has_progress = tasks.iter().any(|t| t.progress.is_some());
     let use_builder = has_progress || verbose;
@@ -409,6 +320,7 @@ fn print_task_table_simple(
             &std::collections::HashMap::new(),
             fancy,
             verbose,
+            doing_count,
         );
     } else {
         let rows: Vec<TaskRow> = tasks
@@ -416,9 +328,28 @@ fn print_task_table_simple(
             .map(|task| build_task_row(task, prefix_len, absolute_dates))
             .collect();
 
-        let mut binding = Table::new(rows);
-        let table = binding
-            .with(Style::rounded())
+        let mut table = Table::new(rows);
+
+        // Use Theme to insert horizontal line divider if requested
+        let mut style = Theme::from_style(Style::rounded());
+        if let Some(count) = doing_count
+            && count > 0
+            && count < tasks.len()
+        {
+            style.insert_horizontal_line(
+                count + 1,
+                HorizontalLine::inherit(
+                    Style::modern()
+                        .intersection_left('╞')
+                        .intersection_right('╡')
+                        .intersection('╪'),
+                )
+                .horizontal('═'),
+            );
+        }
+
+        table
+            .with(style)
             .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
             .with(Modify::new(Columns::new(2..6)).with(Alignment::center()));
 
@@ -472,17 +403,17 @@ fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskR
     }
 }
 
-/// Print unified task table using Builder with optional divider (supports conditional columns).
+/// Print task table using Builder (supports conditional columns).
 #[allow(clippy::too_many_arguments)]
-fn print_task_table_with_builder_unified(
+fn print_task_table_with_builder(
     tasks: &[Task],
-    doing_count: usize,
     prefix_len: usize,
     absolute_dates: bool,
     show_project: bool,
     project_colors: &std::collections::HashMap<&str, colored::Color>,
     fancy: bool,
     verbose: bool,
+    doing_count: Option<usize>,
 ) {
     let has_progress = tasks.iter().any(|t| t.progress.is_some());
     let mut builder = Builder::default();
@@ -533,11 +464,14 @@ fn print_task_table_with_builder_unified(
 
     let mut table = builder.build();
 
-    // Use Theme to insert horizontal line divider
+    // Use Theme to insert horizontal line divider if requested
     let mut style = Theme::from_style(Style::rounded());
-    if doing_count > 0 && doing_count < tasks.len() {
+    if let Some(count) = doing_count
+        && count > 0
+        && count < tasks.len()
+    {
         style.insert_horizontal_line(
-            doing_count + 1,
+            count + 1,
             HorizontalLine::inherit(
                 Style::modern()
                     .intersection_left('╞')
@@ -550,72 +484,6 @@ fn print_task_table_with_builder_unified(
 
     table
         .with(style)
-        .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
-        .with(Modify::new(Columns::new(2..num_cols)).with(Alignment::center()));
-
-    println!("{}", table);
-}
-
-/// Print task table using Builder (supports conditional columns).
-fn print_task_table_with_builder(
-    tasks: &[Task],
-    prefix_len: usize,
-    absolute_dates: bool,
-    show_project: bool,
-    project_colors: &std::collections::HashMap<&str, colored::Color>,
-    fancy: bool,
-    verbose: bool,
-) {
-    let has_progress = tasks.iter().any(|t| t.progress.is_some());
-    let mut builder = Builder::default();
-
-    // Header
-    let mut header: Vec<String> = vec!["ID".into(), "Title".into()];
-    if show_project {
-        header.push("Project".into());
-    }
-    header.push("Priority".into());
-    header.push("Size".into());
-    if verbose {
-        header.push("Modified".into());
-    }
-    header.push("Deadline".into());
-    if has_progress {
-        header.push("Progress".into());
-    }
-    header.push("Status".into());
-    let num_cols = header.len();
-    builder.push_record(header);
-
-    for task in tasks {
-        let row = build_task_row(task, prefix_len, absolute_dates);
-
-        let mut record: Vec<String> = vec![row.id, row.title];
-        if show_project {
-            let color = project_colors.get(task.project_id.as_str());
-            let project = if let Some(c) = color {
-                task.project_id.color(*c).to_string()
-            } else {
-                task.project_id.clone()
-            };
-            record.push(project);
-        }
-        record.push(row.priority);
-        record.push(row.size);
-        if verbose {
-            record.push(row.modified);
-        }
-        record.push(row.deadline);
-        if has_progress {
-            record.push(format_progress(task.progress, fancy));
-        }
-        record.push(row.status);
-        builder.push_record(record);
-    }
-
-    let mut table = builder.build();
-    table
-        .with(Style::rounded())
         .with(Modify::new(Columns::new(0..1)).with(Alignment::center()));
 
     // Center all columns after Title (index 2..end)
@@ -624,92 +492,8 @@ fn print_task_table_with_builder(
     println!("{}", table);
 }
 
-/// Print unified task table with project column (with optional divider).
-fn print_task_table_with_project_unified(
-    tasks: &[Task],
-    unique_projects: HashSet<&str>,
-    doing_count: usize,
-    prefix_len: usize,
-    absolute_dates: bool,
-    fancy: bool,
-    verbose: bool,
-) {
-    let has_progress = tasks.iter().any(|t| t.progress.is_some());
-    let use_builder = has_progress || verbose;
-
-    let colors = [
-        colored::Color::Cyan,
-        colored::Color::Green,
-        colored::Color::Yellow,
-        colored::Color::Magenta,
-        colored::Color::Blue,
-        colored::Color::BrightCyan,
-        colored::Color::BrightGreen,
-        colored::Color::BrightYellow,
-    ];
-    let mut project_colors = std::collections::HashMap::new();
-    for (idx, project_id) in unique_projects.iter().enumerate() {
-        project_colors.insert(*project_id, colors[idx % colors.len()]);
-    }
-
-    if use_builder {
-        print_task_table_with_builder_unified(
-            tasks,
-            doing_count,
-            prefix_len,
-            absolute_dates,
-            true,
-            &project_colors,
-            fancy,
-            verbose,
-        );
-    } else {
-        let rows: Vec<TaskRowWithProject> = tasks
-            .iter()
-            .map(|task| {
-                let row = build_task_row(task, prefix_len, absolute_dates);
-                let color = project_colors.get(task.project_id.as_str()).unwrap();
-                let project = task.project_id.color(*color).to_string();
-
-                TaskRowWithProject {
-                    id: row.id,
-                    title: row.title,
-                    project,
-                    priority: row.priority,
-                    size: row.size,
-                    deadline: row.deadline,
-                    status: row.status,
-                }
-            })
-            .collect();
-
-        let mut table = Table::new(rows);
-
-        // Use Theme to insert horizontal line divider
-        let mut style = Theme::from_style(Style::rounded());
-        if doing_count > 0 && doing_count < tasks.len() {
-            style.insert_horizontal_line(
-                doing_count + 1,
-                HorizontalLine::inherit(
-                    Style::modern()
-                        .intersection_left('╞')
-                        .intersection_right('╡')
-                        .intersection('╪'),
-                )
-                .horizontal('═'),
-            );
-        }
-
-        table
-            .with(style)
-            .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
-            .with(Modify::new(Columns::new(2..7)).with(Alignment::center()));
-
-        println!("{}", table);
-    }
-}
-
 /// Print task table with project column.
+#[allow(clippy::too_many_arguments)]
 fn print_task_table_with_project(
     tasks: &[Task],
     unique_projects: HashSet<&str>,
@@ -717,6 +501,7 @@ fn print_task_table_with_project(
     absolute_dates: bool,
     fancy: bool,
     verbose: bool,
+    doing_count: Option<usize>,
 ) {
     let has_progress = tasks.iter().any(|t| t.progress.is_some());
     let use_builder = has_progress || verbose;
@@ -745,6 +530,7 @@ fn print_task_table_with_project(
             &project_colors,
             fancy,
             verbose,
+            doing_count,
         );
     } else {
         let rows: Vec<TaskRowWithProject> = tasks
@@ -766,9 +552,28 @@ fn print_task_table_with_project(
             })
             .collect();
 
-        let mut binding = Table::new(rows);
-        let table = binding
-            .with(Style::rounded())
+        let mut table = Table::new(rows);
+
+        // Use Theme to insert horizontal line divider if requested
+        let mut style = Theme::from_style(Style::rounded());
+        if let Some(count) = doing_count
+            && count > 0
+            && count < tasks.len()
+        {
+            style.insert_horizontal_line(
+                count + 1,
+                HorizontalLine::inherit(
+                    Style::modern()
+                        .intersection_left('╞')
+                        .intersection_right('╡')
+                        .intersection('╪'),
+                )
+                .horizontal('═'),
+            );
+        }
+
+        table
+            .with(style)
             .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
             .with(Modify::new(Columns::new(2..7)).with(Alignment::center()));
 
