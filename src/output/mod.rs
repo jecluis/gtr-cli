@@ -196,45 +196,25 @@ pub fn print_projects(projects: &[Project]) {
     println!("\n{} {}", "Total:".bold(), projects.len());
 }
 
-/// Row type for task table display (without project column).
-///
-/// The `modified` field is always populated but hidden from the derive
-/// path via `#[tabled(skip)]`. It is included explicitly by the Builder
-/// path when verbose mode is active.
-#[derive(Tabled)]
-struct TaskRow {
-    #[tabled(rename = "ID")]
-    id: String,
-    #[tabled(rename = "Title")]
-    title: String,
-    #[tabled(rename = "Priority")]
-    priority: String,
-    #[tabled(rename = "Size")]
-    size: String,
-    #[tabled(skip)]
-    modified: String,
-    #[tabled(rename = "Deadline")]
-    deadline: String,
-    #[tabled(rename = "Status")]
-    status: String,
+/// Configuration for which columns to display in task tables.
+#[derive(Debug, Clone)]
+struct TableColumns {
+    /// Whether to show the project column (for multi-project views)
+    show_project: bool,
+    /// Whether to show the modified timestamp column (verbose mode)
+    show_modified: bool,
+    /// Whether to show the progress column (when tasks have progress set)
+    show_progress: bool,
 }
 
-/// Row type for task table display (with project column).
-#[derive(Tabled)]
-struct TaskRowWithProject {
-    #[tabled(rename = "ID")]
+/// Internal struct to hold formatted task row data.
+struct TaskRowData {
     id: String,
-    #[tabled(rename = "Title")]
     title: String,
-    #[tabled(rename = "Project")]
-    project: String,
-    #[tabled(rename = "Priority")]
     priority: String,
-    #[tabled(rename = "Size")]
     size: String,
-    #[tabled(rename = "Deadline")]
+    modified: String,
     deadline: String,
-    #[tabled(rename = "Status")]
     status: String,
 }
 
@@ -273,92 +253,44 @@ fn print_task_table(
     verbose: bool,
     doing_count: Option<usize>,
 ) {
-    // Check if tasks are from multiple projects
+    // Detect which columns to show
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
-    let show_project = unique_projects.len() > 1;
+    let columns = TableColumns {
+        show_project: unique_projects.len() > 1,
+        show_modified: verbose,
+        show_progress: tasks.iter().any(|t| t.progress.is_some()),
+    };
 
-    if show_project {
-        print_task_table_with_project(
-            tasks,
-            unique_projects,
-            prefix_len,
-            absolute_dates,
-            fancy,
-            verbose,
-            doing_count,
-        );
-    } else {
-        print_task_table_simple(
-            tasks,
-            prefix_len,
-            absolute_dates,
-            fancy,
-            verbose,
-            doing_count,
-        );
+    // Build project color mapping
+    let colors = [
+        colored::Color::Cyan,
+        colored::Color::Green,
+        colored::Color::Yellow,
+        colored::Color::Magenta,
+        colored::Color::Blue,
+        colored::Color::BrightCyan,
+        colored::Color::BrightGreen,
+        colored::Color::BrightYellow,
+    ];
+    let mut project_colors = std::collections::HashMap::new();
+    for (idx, project_id) in unique_projects.iter().enumerate() {
+        project_colors.insert(*project_id, colors[idx % colors.len()]);
     }
+
+    // Render table with explicit column configuration
+    render_task_table(
+        tasks,
+        prefix_len,
+        absolute_dates,
+        columns,
+        &project_colors,
+        fancy,
+        doing_count,
+    );
 }
 
-/// Print task table without project column.
-fn print_task_table_simple(
-    tasks: &[Task],
-    prefix_len: usize,
-    absolute_dates: bool,
-    fancy: bool,
-    verbose: bool,
-    doing_count: Option<usize>,
-) {
-    let has_progress = tasks.iter().any(|t| t.progress.is_some());
-    let use_builder = has_progress || verbose;
-
-    if use_builder {
-        print_task_table_with_builder(
-            tasks,
-            prefix_len,
-            absolute_dates,
-            false,
-            &std::collections::HashMap::new(),
-            fancy,
-            verbose,
-            doing_count,
-        );
-    } else {
-        let rows: Vec<TaskRow> = tasks
-            .iter()
-            .map(|task| build_task_row(task, prefix_len, absolute_dates))
-            .collect();
-
-        let mut table = Table::new(rows);
-
-        // Use Theme to insert horizontal line divider if requested
-        let mut style = Theme::from_style(Style::rounded());
-        if let Some(count) = doing_count
-            && count > 0
-            && count < tasks.len()
-        {
-            style.insert_horizontal_line(
-                count + 1,
-                HorizontalLine::inherit(
-                    Style::modern()
-                        .intersection_left('╞')
-                        .intersection_right('╡')
-                        .intersection('╪'),
-                )
-                .horizontal('═'),
-            );
-        }
-
-        table
-            .with(style)
-            .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
-            .with(Modify::new(Columns::new(2..6)).with(Alignment::center()));
-
-        println!("{}", table);
-    }
-}
-
-/// Build a TaskRow from a Task.
-fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskRow {
+/// Build formatted task row data from a Task.
+fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskRowData {
     let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
         .unwrap()
         .with_timezone(&Local);
@@ -392,7 +324,7 @@ fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskR
         "pending".green().to_string()
     };
 
-    TaskRow {
+    TaskRowData {
         id: format_task_id(&task.id, prefix_len),
         title: task.title.clone(),
         priority: priority_colored,
@@ -403,44 +335,43 @@ fn build_task_row(task: &Task, prefix_len: usize, absolute_dates: bool) -> TaskR
     }
 }
 
-/// Print task table using Builder (supports conditional columns).
+/// Render a task table with configurable columns using the Builder pattern.
 #[allow(clippy::too_many_arguments)]
-fn print_task_table_with_builder(
+fn render_task_table(
     tasks: &[Task],
     prefix_len: usize,
     absolute_dates: bool,
-    show_project: bool,
+    columns: TableColumns,
     project_colors: &std::collections::HashMap<&str, colored::Color>,
     fancy: bool,
-    verbose: bool,
     doing_count: Option<usize>,
 ) {
-    let has_progress = tasks.iter().any(|t| t.progress.is_some());
     let mut builder = Builder::default();
 
-    // Header
+    // Build header based on column configuration
     let mut header: Vec<String> = vec!["ID".into(), "Title".into()];
-    if show_project {
+    if columns.show_project {
         header.push("Project".into());
     }
     header.push("Priority".into());
     header.push("Size".into());
-    if verbose {
+    if columns.show_modified {
         header.push("Modified".into());
     }
     header.push("Deadline".into());
-    if has_progress {
+    if columns.show_progress {
         header.push("Progress".into());
     }
     header.push("Status".into());
     let num_cols = header.len();
     builder.push_record(header);
 
+    // Build rows based on column configuration
     for task in tasks {
         let row = build_task_row(task, prefix_len, absolute_dates);
 
         let mut record: Vec<String> = vec![row.id, row.title];
-        if show_project {
+        if columns.show_project {
             let color = project_colors.get(task.project_id.as_str());
             let project = if let Some(c) = color {
                 task.project_id.color(*c).to_string()
@@ -451,11 +382,11 @@ fn print_task_table_with_builder(
         }
         record.push(row.priority);
         record.push(row.size);
-        if verbose {
+        if columns.show_modified {
             record.push(row.modified);
         }
         record.push(row.deadline);
-        if has_progress {
+        if columns.show_progress {
             record.push(format_progress(task.progress, fancy));
         }
         record.push(row.status);
@@ -490,95 +421,6 @@ fn print_task_table_with_builder(
     table.with(Modify::new(Columns::new(2..num_cols)).with(Alignment::center()));
 
     println!("{}", table);
-}
-
-/// Print task table with project column.
-#[allow(clippy::too_many_arguments)]
-fn print_task_table_with_project(
-    tasks: &[Task],
-    unique_projects: HashSet<&str>,
-    prefix_len: usize,
-    absolute_dates: bool,
-    fancy: bool,
-    verbose: bool,
-    doing_count: Option<usize>,
-) {
-    let has_progress = tasks.iter().any(|t| t.progress.is_some());
-    let use_builder = has_progress || verbose;
-
-    let colors = [
-        colored::Color::Cyan,
-        colored::Color::Green,
-        colored::Color::Yellow,
-        colored::Color::Magenta,
-        colored::Color::Blue,
-        colored::Color::BrightCyan,
-        colored::Color::BrightGreen,
-        colored::Color::BrightYellow,
-    ];
-    let mut project_colors = std::collections::HashMap::new();
-    for (idx, project_id) in unique_projects.iter().enumerate() {
-        project_colors.insert(*project_id, colors[idx % colors.len()]);
-    }
-
-    if use_builder {
-        print_task_table_with_builder(
-            tasks,
-            prefix_len,
-            absolute_dates,
-            true,
-            &project_colors,
-            fancy,
-            verbose,
-            doing_count,
-        );
-    } else {
-        let rows: Vec<TaskRowWithProject> = tasks
-            .iter()
-            .map(|task| {
-                let row = build_task_row(task, prefix_len, absolute_dates);
-                let color = project_colors.get(task.project_id.as_str()).unwrap();
-                let project = task.project_id.color(*color).to_string();
-
-                TaskRowWithProject {
-                    id: row.id,
-                    title: row.title,
-                    project,
-                    priority: row.priority,
-                    size: row.size,
-                    deadline: row.deadline,
-                    status: row.status,
-                }
-            })
-            .collect();
-
-        let mut table = Table::new(rows);
-
-        // Use Theme to insert horizontal line divider if requested
-        let mut style = Theme::from_style(Style::rounded());
-        if let Some(count) = doing_count
-            && count > 0
-            && count < tasks.len()
-        {
-            style.insert_horizontal_line(
-                count + 1,
-                HorizontalLine::inherit(
-                    Style::modern()
-                        .intersection_left('╞')
-                        .intersection_right('╡')
-                        .intersection('╪'),
-                )
-                .horizontal('═'),
-            );
-        }
-
-        table
-            .with(style)
-            .with(Modify::new(Columns::new(0..1)).with(Alignment::center()))
-            .with(Modify::new(Columns::new(2..7)).with(Alignment::center()));
-
-        println!("{}", table);
-    }
 }
 
 /// Print a single task with full details and markdown rendering.
