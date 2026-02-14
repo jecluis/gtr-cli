@@ -455,14 +455,21 @@ pub fn print_task_details(
     println!("  Priority: {}", priority_colored);
     println!("  Size:     {}", task.size);
 
-    if let Some(ref work_state) = task.current_work_state {
-        let status_colored = match work_state.as_str() {
+    // Always show status (priority: done > deleted > work_state > pending)
+    let status_colored = if task.done.is_some() {
+        "done".blue()
+    } else if task.deleted.is_some() {
+        "deleted".red()
+    } else if let Some(ref work_state) = task.current_work_state {
+        match work_state.as_str() {
             "doing" => work_state.green().bold(),
             "stopped" => work_state.yellow(),
             _ => work_state.normal(),
-        };
-        println!("  Status:   {}", status_colored);
-    }
+        }
+    } else {
+        "pending".dimmed()
+    };
+    println!("  Status:   {}", status_colored);
 
     if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&task.created) {
         let created_time = created.with_timezone(&Local);
