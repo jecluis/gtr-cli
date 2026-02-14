@@ -104,7 +104,12 @@ fn format_deadline(deadline_str: Option<&str>, absolute_dates: bool) -> String {
     } else {
         // Show relative time
         let ht = HumanTime::from(deadline);
-        ht.to_text_en(Accuracy::Rough, Tense::Future)
+        let tense = if is_overdue {
+            Tense::Past
+        } else {
+            Tense::Future
+        };
+        ht.to_text_en(Accuracy::Rough, tense)
     };
 
     // Color red if overdue
