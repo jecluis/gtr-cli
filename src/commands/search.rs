@@ -30,6 +30,7 @@ pub async fn run(
     query: &str,
     project: Option<String>,
     limit: Option<u32>,
+    all: bool,
     no_sync: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
@@ -62,6 +63,11 @@ pub async fn run(
             .map(|s| s.project_id)
             .unwrap_or_default();
         if let Ok(task) = ctx.storage.load_task(&project_id, task_id) {
+            // Skip done and deleted tasks unless --all is specified
+            if !all && (task.done.is_some() || task.deleted.is_some()) {
+                continue;
+            }
+
             // Search in title and body (case-insensitive)
             if task.title.to_lowercase().contains(&query_lower)
                 || task.body.to_lowercase().contains(&query_lower)

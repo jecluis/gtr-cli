@@ -335,6 +335,10 @@ enum Commands {
         #[arg(short, long)]
         limit: Option<u32>,
 
+        /// Include done and deleted tasks
+        #[arg(long)]
+        all: bool,
+
         /// Skip sync (search cache only)
         #[arg(long)]
         no_sync: bool,
@@ -611,8 +615,9 @@ async fn run() -> Result<()> {
             query,
             project,
             limit,
+            all,
             no_sync,
-        } => gtr::commands::search::run(&config, &query, project, limit, no_sync).await,
+        } => gtr::commands::search::run(&config, &query, project, limit, all, no_sync).await,
         Commands::Project { command } => match command {
             ProjectCommands::Create { name, description } => {
                 gtr::commands::project::create(&config, &name, description).await
