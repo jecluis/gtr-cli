@@ -264,17 +264,13 @@ In `gtr list`, high-impact tasks show emoji indicators in the priority column:
 - Impact 2: ⚡ (lightning)
 - Impact 3-5: no indicator
 
-Tasks are sorted by priority, then impact (highest first), then deadline.
+In `gtr list`, high-impact tasks are sorted by priority, then impact, then
+deadline.
 
 #### Joy
 
 Tasks carry a joy score (0–10, default 5) that captures how much enjoyment or
 energy a task brings — designed for ADHD brains that thrive on dopamine.
-
-Joy provides a gentle nudge in `gtr next`: among tasks with similar urgency,
-more enjoyable tasks bubble up slightly. This never overrides real urgency —
-deadlines and priority always win — but when two tasks are neck-and-neck, the
-joyful one gets a small boost.
 
 ```bash
 # Set joy when creating
@@ -290,10 +286,58 @@ In `gtr list` and `gtr next`, joy is shown with emoji indicators:
 - Joy 0–4: 💤 (low energy / draining)
 - Joy 5–7: no indicator (neutral)
 
-**How the nudge works:** The formula `joy_bonus = (joy - 5) × 2` is subtracted
-from deadline urgency (in seconds). This gives a range of −10 to +10 seconds —
-enough to reorder similarly-urgent tasks but invisible next to real deadline
-differences.
+#### `gtr next` — ADHD-Friendly Urgency Scoring
+
+`gtr next` suggests the best task to work on right now. Instead of a rigid
+"sort by deadline, then impact, then everything else" approach, it uses a
+**composite urgency score** that blends all factors into a single number.
+This is designed around how ADHD brains actually work:
+
+**Priority is the only hard boundary.** "Now" tasks always rank above "later"
+tasks. Within the same priority, everything else is blended:
+
+1. **Overdue decay** — Being overdue doesn't make a task infinitely urgent.
+   If you haven't done a task in 2 days, the deadline was clearly soft.
+   Overdue urgency uses logarithmic diminishing returns: the first hour
+   overdue matters a lot, but 48h overdue is barely more urgent than 24h.
+
+2. **Impact scales time** — High-impact tasks perceive deadlines as closer.
+   A catastrophic (1) task due in 24h is treated as if it's due in 12h. A
+   negligible (5) task due in 24h feels like 48h away. This also applies to
+   overdue tasks: a catastrophic overdue task stays urgent, while a neutral
+   overdue task loses its edge.
+
+3. **Joy × impact bonus** — Joy alone gives only a small nudge (prevents
+   "productive procrastination" toward fun-but-unimportant tasks). But joy
+   combined with high impact gives a substantial boost — up to ±30 hours
+   for extreme values. This surfaces the "golden tasks": important work
+   your brain actually _wants_ to do. **For overdue tasks, the joy effect
+   is heavily attenuated (90% reduction)** — when you've already missed a
+   deadline, "do I feel like it?" matters far less than impact. A boring
+   but catastrophic overdue task will still rank above a neutral one.
+
+4. **Size bonus for quick wins** — Small tasks (XS, S) get a nudge up.
+   Large tasks (L, XL) nudge down. ADHD brains build momentum from quick
+   wins; starting with something achievable lowers activation energy.
+   **For overdue tasks, the size effect is also attenuated (90% reduction)**
+   — a small task's quick-win bonus shouldn't let neutral overdue tasks
+   outrank catastrophic ones just because they're smaller.
+
+5. **Work state** — Stopped tasks (already have context loaded from a
+   previous session) get a small nudge, reducing context-switching cost.
+
+**Example scenario:**
+
+| Task         | Impact      | Joy | Size | Deadline       |
+| ------------ | ----------- | --- | ---- | -------------- |
+| Boring bug A | Neutral (3) | 5   | S    | 2 days overdue |
+| Big feature  | Sig. (2)    | 5   | L    | 15h away       |
+| Fun fix      | Catas. (1)  | 8   | S    | 1 day away     |
+
+A pure deadline sort puts "Boring bug A" first (most overdue). The blended
+score promotes "Fun fix" — it's small, joyful, catastrophic-impact, and
+approaching its deadline. That's the ideal ADHD task: important work with
+low activation energy that your brain is excited to start.
 
 **Configuring impact labels and multipliers:**
 
