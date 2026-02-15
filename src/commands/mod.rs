@@ -21,6 +21,7 @@ pub mod config;
 pub mod create;
 pub mod delete;
 pub mod done;
+pub mod feels;
 pub mod init;
 pub mod later;
 pub mod list;

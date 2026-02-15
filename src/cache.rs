@@ -19,10 +19,43 @@
 
 use std::path::Path;
 
+use chrono::{Local, NaiveDate};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::models::Task;
 use crate::{Error, Result};
+
+/// State of today's feels entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FeelsState {
+    /// Values have been set.
+    Set,
+    /// User chose "skip for today".
+    Skipped,
+    /// User deferred; will re-prompt after the defer_until time.
+    Deferred,
+}
+
+/// What the feels prompt flow should do.
+#[derive(Debug, Clone)]
+pub enum FeelsPrompt {
+    /// No feels set today — show the initial 3-option picker.
+    Initial,
+    /// Previously set, 4h+ ago — offer to keep/update/skip.
+    Reprompt { energy: u8, focus: u8 },
+    /// Nothing to do (already set recently, or skipped/deferred).
+    No,
+}
+
+/// Cached feels row for today.
+#[derive(Debug, Clone)]
+pub struct FeelsRow {
+    pub energy: u8,
+    pub focus: u8,
+    pub state: FeelsState,
+    pub set_at: Option<String>,
+    pub defer_until: Option<String>,
+}
 
 /// Local cache for task metadata and sync tracking.
 pub struct TaskCache {
@@ -83,6 +116,22 @@ impl TaskCache {
             "ALTER TABLE tasks ADD COLUMN joy INTEGER NOT NULL DEFAULT 5",
             [],
         );
+
+        // Feels table: one row per calendar day tracking energy/focus state
+        self.conn
+            .execute_batch(
+                r#"
+            CREATE TABLE IF NOT EXISTS feels (
+                date TEXT PRIMARY KEY,
+                energy INTEGER NOT NULL DEFAULT 0,
+                focus INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'initial',
+                set_at TEXT,
+                defer_until TEXT
+            );
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("feels schema init failed: {e}")))?;
 
         Ok(())
     }
@@ -295,6 +344,130 @@ impl TaskCache {
             Ok(state) => Ok(state),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(Error::Database(format!("load sync state failed: {e}"))),
+        }
+    }
+    // -- Feels operations --
+
+    /// Set today's energy and focus values.
+    pub fn upsert_feels(&self, date: &NaiveDate, energy: u8, focus: u8) -> Result<()> {
+        let now = Local::now().to_rfc3339();
+        self.conn
+            .execute(
+                r#"
+            INSERT INTO feels (date, energy, focus, state, set_at)
+            VALUES (?1, ?2, ?3, 'set', ?4)
+            ON CONFLICT(date) DO UPDATE SET
+                energy = excluded.energy,
+                focus = excluded.focus,
+                state = 'set',
+                set_at = excluded.set_at,
+                defer_until = NULL
+            "#,
+                params![date.to_string(), energy as i64, focus as i64, now],
+            )
+            .map_err(|e| Error::Database(format!("upsert feels failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Get today's feels state.
+    pub fn get_today_feels(&self, today: &NaiveDate) -> Result<Option<FeelsRow>> {
+        self.conn
+            .query_row(
+                "SELECT energy, focus, state, set_at, defer_until FROM feels WHERE date = ?1",
+                params![today.to_string()],
+                |row| {
+                    let state_str: String = row.get(2)?;
+                    let state = match state_str.as_str() {
+                        "set" => FeelsState::Set,
+                        "skipped" => FeelsState::Skipped,
+                        "deferred" => FeelsState::Deferred,
+                        _ => FeelsState::Set,
+                    };
+                    Ok(FeelsRow {
+                        energy: row.get::<_, i64>(0)? as u8,
+                        focus: row.get::<_, i64>(1)? as u8,
+                        state,
+                        set_at: row.get(3)?,
+                        defer_until: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("get feels failed: {e}")))
+    }
+
+    /// Mark today as "skipped" (no re-prompt for the rest of the day).
+    pub fn mark_feels_skipped(&self, today: &NaiveDate) -> Result<()> {
+        self.conn
+            .execute(
+                r#"
+            INSERT INTO feels (date, energy, focus, state)
+            VALUES (?1, 0, 0, 'skipped')
+            ON CONFLICT(date) DO UPDATE SET
+                state = 'skipped',
+                defer_until = NULL
+            "#,
+                params![today.to_string()],
+            )
+            .map_err(|e| Error::Database(format!("mark skipped failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Defer the feels prompt for 1 hour from now.
+    pub fn mark_feels_deferred(&self, today: &NaiveDate) -> Result<()> {
+        let defer_until = (Local::now() + chrono::Duration::hours(1)).to_rfc3339();
+        self.conn
+            .execute(
+                r#"
+            INSERT INTO feels (date, energy, focus, state, defer_until)
+            VALUES (?1, 0, 0, 'deferred', ?2)
+            ON CONFLICT(date) DO UPDATE SET
+                state = 'deferred',
+                defer_until = excluded.defer_until
+            "#,
+                params![today.to_string(), defer_until],
+            )
+            .map_err(|e| Error::Database(format!("mark deferred failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Determine whether to prompt for feels and what kind of prompt.
+    pub fn should_prompt_feels(&self, today: &NaiveDate) -> Result<FeelsPrompt> {
+        let row = self.get_today_feels(today)?;
+
+        let Some(row) = row else {
+            return Ok(FeelsPrompt::Initial);
+        };
+
+        match row.state {
+            FeelsState::Skipped => Ok(FeelsPrompt::No),
+            FeelsState::Deferred => {
+                // Check if defer period has elapsed
+                if let Some(ref until) = row.defer_until
+                    && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(until)
+                    && Local::now() < dt
+                {
+                    return Ok(FeelsPrompt::No);
+                }
+                // Defer expired → show initial prompt
+                Ok(FeelsPrompt::Initial)
+            }
+            FeelsState::Set => {
+                // Check if 4h have passed since set_at
+                if let Some(ref set_at) = row.set_at
+                    && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(set_at)
+                    && Local::now().signed_duration_since(dt) >= chrono::Duration::hours(4)
+                {
+                    return Ok(FeelsPrompt::Reprompt {
+                        energy: row.energy,
+                        focus: row.focus,
+                    });
+                }
+                Ok(FeelsPrompt::No)
+            }
         }
     }
 }

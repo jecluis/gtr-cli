@@ -419,6 +419,45 @@ The CLI fully supports offline work:
 - **CRDT-based conflict resolution** when syncing with server
 - **Automatic merge** of concurrent edits from multiple devices
 
+## Daily Feels
+
+ADHD brains have variable capacity day-to-day. The feels system lets you
+self-report **energy** (1-5) and **focus** (1-5) so `gtr next` adapts its
+suggestions to what you can realistically tackle right now.
+
+### Setting Feels
+
+```bash
+# Set energy=2, focus=4
+gtr feels 2 4
+
+# Show current day's state
+gtr feels-show
+```
+
+### Scale
+
+| Level | Energy                       | Focus                     |
+| ----- | ---------------------------- | ------------------------- |
+| 1     | Very low — need easy wins    | Scattered — small tasks   |
+| 2     | Low — prefer enjoyable tasks | Limited — small/medium    |
+| 3     | Moderate                     | Moderate                  |
+| 4     | Good — can handle tedium     | Good — can tackle large   |
+| 5     | High — bring on anything     | Deep — ready for anything |
+
+### How It Affects Scoring
+
+- **Low energy** → joyful tasks bubble up, boring tasks sink
+- **Low focus** → small tasks bubble up, large tasks sink
+- **High energy/focus** → these factors matter less, other signals dominate
+- **Overdue tasks** → feels don't matter, impact/urgency dominates
+
+### Prompt Behavior
+
+- `gtr next` prompts for feels if not set today (set / defer 1h / skip)
+- After 4 hours, re-prompts if values were previously set (keep / update / skip)
+- No prompts on `list`, `show`, or `search`
+
 ## Markdown Rendering
 
 Task descriptions are rendered with formatted markdown for better readability:

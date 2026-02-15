@@ -398,6 +398,24 @@ enum Commands {
         #[command(subcommand)]
         command: SyncCommands,
     },
+
+    /// Set daily energy and focus levels (1-5 each)
+    Feels {
+        /// Energy level (1=very low, 5=high)
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=5))]
+        energy: u8,
+
+        /// Focus level (1=scattered, 5=deep)
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=5))]
+        focus: u8,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
+    },
+
+    /// Show current day's energy and focus state
+    FeelsShow,
 }
 
 #[derive(Subcommand, Debug)]
@@ -685,6 +703,12 @@ async fn run() -> Result<()> {
             SyncCommands::Now => gtr::commands::sync::now(&config).await,
             SyncCommands::Status => gtr::commands::sync::status(&config).await,
         },
+        Commands::Feels {
+            energy,
+            focus,
+            no_sync,
+        } => gtr::commands::feels::set(&config, energy, focus, no_sync).await,
+        Commands::FeelsShow => gtr::commands::feels::show(&config).await,
         Commands::Init { .. } => unreachable!(),
         Commands::Version => unreachable!(),
     }

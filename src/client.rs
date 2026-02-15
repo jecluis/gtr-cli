@@ -445,6 +445,31 @@ impl Client {
         }
     }
 
+    /// Post a feels (energy/focus) entry to the server.
+    pub async fn post_feels(&self, energy: u8, focus: u8, utc_offset: &str) -> Result<()> {
+        let url = format!("{}/api/feels", self.base_url);
+        let body = serde_json::json!({
+            "energy": energy,
+            "focus": focus,
+            "utc_offset": utc_offset,
+        });
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .json(&body)
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
     /// Convert HTTP error response to Error.
     fn error_from_response(&self, status: StatusCode, body: &str) -> Error {
         match status {
