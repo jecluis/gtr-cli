@@ -17,11 +17,12 @@
 
 //! Next command implementation - suggests tasks to work on based on urgency.
 
-use chrono::Utc;
+use chrono::{Local, Utc};
 use colored::Colorize;
 use dialoguer::Select;
 
 use crate::Result;
+use crate::cache::{FeelsPrompt, TaskCache};
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
@@ -36,6 +37,9 @@ use crate::threshold_cache::{self, CachedThresholds};
 pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Result<()> {
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
+
+    // --- Feels prompt flow ---
+    let (energy, focus) = resolve_feels(config, &client, no_sync).await?;
 
     // Determine which projects to query
     let project_ids = if let Some(proj) = project {
@@ -82,15 +86,15 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
     // Sort by urgency (highest to lowest)
     tasks.sort_by(|a, b| {
         let now = Utc::now();
-        let score_a = calculate_urgency_score(a, &now, &cached);
-        let score_b = calculate_urgency_score(b, &now, &cached);
+        let score_a = calculate_urgency_score(a, &now, &cached, energy, focus);
+        let score_b = calculate_urgency_score(b, &now, &cached, energy, focus);
         score_a
             .partial_cmp(&score_b)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     // Show picker (always, even for 1 task)
-    let selected_id = pick_next_task(&tasks, &cached)?;
+    let selected_id = pick_next_task(&tasks, &cached, energy, focus)?;
 
     // Load the selected task and transition to "doing"
     let mut task = ctx.load_task(&client, &selected_id).await?;
@@ -151,6 +155,134 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
     Ok(())
 }
 
+/// Resolve current feels values via prompt flow.
+///
+/// Returns `(energy, focus)` where 0 means "not set" (no modulation).
+async fn resolve_feels(config: &Config, client: &Client, no_sync: bool) -> Result<(u8, u8)> {
+    let today = Local::now().date_naive();
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    match cache.should_prompt_feels(&today)? {
+        FeelsPrompt::No => {
+            // Already set recently or skipped — use current values
+            if let Some(row) = cache.get_today_feels(&today)? {
+                Ok((row.energy, row.focus))
+            } else {
+                Ok((0, 0))
+            }
+        }
+        FeelsPrompt::Initial => {
+            let items = ["Set energy & focus", "Ask me in 1 hour", "Skip for today"];
+            let selection = Select::new()
+                .with_prompt("How are you feeling?")
+                .items(items)
+                .default(0)
+                .interact_opt()
+                .map_err(|e| {
+                    crate::Error::InvalidInput(format!("Failed to read selection: {e}"))
+                })?;
+
+            match selection {
+                Some(0) => {
+                    let (energy, focus) = prompt_energy_focus()?;
+                    cache.upsert_feels(&today, energy, focus)?;
+                    sync_feels(client, energy, focus, no_sync).await;
+                    Ok((energy, focus))
+                }
+                Some(1) => {
+                    cache.mark_feels_deferred(&today)?;
+                    Ok((0, 0))
+                }
+                _ => {
+                    cache.mark_feels_skipped(&today)?;
+                    Ok((0, 0))
+                }
+            }
+        }
+        FeelsPrompt::Reprompt { energy, focus } => {
+            let prompt = format!("Still feeling energy={}, focus={}?", energy, focus);
+            let items = ["Keep current", "Update", "Skip for today"];
+            let selection = Select::new()
+                .with_prompt(&prompt)
+                .items(items)
+                .default(0)
+                .interact_opt()
+                .map_err(|e| {
+                    crate::Error::InvalidInput(format!("Failed to read selection: {e}"))
+                })?;
+
+            match selection {
+                Some(0) => {
+                    // Re-stamp set_at to reset the 4h timer
+                    cache.upsert_feels(&today, energy, focus)?;
+                    Ok((energy, focus))
+                }
+                Some(1) => {
+                    let (new_energy, new_focus) = prompt_energy_focus()?;
+                    cache.upsert_feels(&today, new_energy, new_focus)?;
+                    sync_feels(client, new_energy, new_focus, no_sync).await;
+                    Ok((new_energy, new_focus))
+                }
+                _ => {
+                    cache.mark_feels_skipped(&today)?;
+                    Ok((0, 0))
+                }
+            }
+        }
+    }
+}
+
+/// Prompt user to pick energy (1-5) then focus (1-5).
+fn prompt_energy_focus() -> Result<(u8, u8)> {
+    let levels = [
+        "1 — very low",
+        "2 — low",
+        "3 — moderate",
+        "4 — good",
+        "5 — high",
+    ];
+    let energy_idx = Select::new()
+        .with_prompt("Energy (emotional availability)")
+        .items(levels)
+        .default(2)
+        .interact_opt()
+        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {e}")))?;
+
+    let Some(energy_idx) = energy_idx else {
+        return Err(crate::Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    let focus_levels = [
+        "1 — scattered",
+        "2 — limited",
+        "3 — moderate",
+        "4 — good",
+        "5 — deep",
+    ];
+    let focus_idx = Select::new()
+        .with_prompt("Focus (capacity for complex work)")
+        .items(focus_levels)
+        .default(2)
+        .interact_opt()
+        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {e}")))?;
+
+    let Some(focus_idx) = focus_idx else {
+        return Err(crate::Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    Ok((energy_idx as u8 + 1, focus_idx as u8 + 1))
+}
+
+/// Best-effort push feels to server.
+async fn sync_feels(client: &Client, energy: u8, focus: u8, no_sync: bool) {
+    if no_sync {
+        return;
+    }
+    let utc_offset = Local::now().offset().to_string();
+    let _ = client.post_feels(energy, focus, &utc_offset).await;
+}
+
 /// Calculate a composite urgency score for sorting.
 ///
 /// Returns a single `f64` where lower = more urgent (sorts first).
@@ -167,10 +299,15 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
 /// 4. **Size bonus** — small tasks get a nudge for ADHD quick-win
 ///    momentum.
 /// 5. **Work state** — stopped tasks (already have context) get a nudge.
+/// 6. **Feels modulation** — energy amplifies/attenuates joy effect,
+///    focus amplifies/attenuates size effect. Both neutralized for
+///    overdue tasks.
 fn calculate_urgency_score(
     task: &Task,
     now: &chrono::DateTime<chrono::Utc>,
     thresholds: &CachedThresholds,
+    energy: u8,
+    focus: u8,
 ) -> f64 {
     const HOUR: f64 = 3600.0;
 
@@ -230,11 +367,32 @@ fn calculate_urgency_score(
     // already missed a deadline.  Both are reduced to 10%.
     let motivation_attenuation = if is_overdue { 0.1 } else { 1.0 };
 
+    // --- Feels factors ---
+    // Energy modulates joy: low energy → joyful tasks bubble up.
+    // Focus modulates size: low focus → small tasks bubble up.
+    // 0 = not set → factor 1.0 (no change).
+    // Overdue → factor 1.0 (urgency dominates feels).
+    let energy_factor = if is_overdue || energy == 0 {
+        1.0
+    } else {
+        (6.0 - energy as f64) / 3.0
+    };
+    let focus_factor = if is_overdue || focus == 0 {
+        1.0
+    } else {
+        (6.0 - focus as f64) / 3.0
+    };
+
     // --- Joy × impact bonus (in hours) ---
     // Joy alone gives a small nudge; combined with high impact the
     // bonus is substantial.  Range: up to ±30h for extreme values.
     let impact_weight = (6.0 - task.impact as f64) / 5.0; // 1.0..0.2
-    let joy_bonus = (task.joy as f64 - 5.0) * 6.0 * HOUR * impact_weight * motivation_attenuation;
+    let joy_bonus = (task.joy as f64 - 5.0)
+        * 6.0
+        * HOUR
+        * impact_weight
+        * motivation_attenuation
+        * energy_factor;
 
     // --- Size bonus (ADHD quick-win momentum) ---
     let size_bonus = match task.size.as_str() {
@@ -244,7 +402,8 @@ fn calculate_urgency_score(
         "L" => 2.0 * HOUR,
         "XL" => 4.0 * HOUR,
         _ => 0.0,
-    } * motivation_attenuation;
+    } * motivation_attenuation
+        * focus_factor;
 
     // --- Work state bonus ---
     // Stopped tasks already have context loaded; lower barrier.
@@ -257,7 +416,14 @@ fn calculate_urgency_score(
 }
 
 /// Interactive task picker showing urgency context.
-fn pick_next_task(tasks: &[Task], thresholds: &CachedThresholds) -> Result<String> {
+fn pick_next_task(
+    tasks: &[Task],
+    thresholds: &CachedThresholds,
+    energy: u8,
+    focus: u8,
+) -> Result<String> {
+    let low_capacity = energy > 0 && energy <= 2 || focus > 0 && focus <= 2;
+
     let items: Vec<String> = tasks
         .iter()
         .map(|t| {
@@ -282,7 +448,8 @@ fn pick_next_task(tasks: &[Task], thresholds: &CachedThresholds) -> Result<Strin
                 context_parts.push(je.to_string());
             }
 
-            // Deadline indicator
+            // Deadline indicator + "push through" nudge
+            let mut is_urgent = false;
             if let Some(ref deadline_str) = t.deadline
                 && let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str)
             {
@@ -291,13 +458,23 @@ fn pick_next_task(tasks: &[Task], thresholds: &CachedThresholds) -> Result<Strin
 
                 if deadline_utc < now {
                     context_parts.push("⚠️  OVERDUE".red().to_string());
+                    is_urgent = true;
                 } else {
                     let duration = deadline_utc - now;
                     let hours = duration.num_hours();
                     if hours < 48 {
                         context_parts.push(format!("⚠️  {}h", hours).yellow().to_string());
                     }
+                    if hours < 24 {
+                        is_urgent = true;
+                    }
                 }
+            }
+
+            // "Push through" nudge for low-capacity users facing urgent
+            // high-impact tasks
+            if low_capacity && is_urgent && t.impact <= 2 {
+                context_parts.push("‼ push through this one".red().bold().to_string());
             }
 
             // Work state indicator
@@ -389,7 +566,11 @@ mod tests {
     }
 
     fn score(t: &Task) -> f64 {
-        calculate_urgency_score(t, &Utc::now(), &thresholds())
+        calculate_urgency_score(t, &Utc::now(), &thresholds(), 0, 0)
+    }
+
+    fn score_with_feels(t: &Task, energy: u8, focus: u8) -> f64 {
+        calculate_urgency_score(t, &Utc::now(), &thresholds(), energy, focus)
     }
 
     // -----------------------------------------------------------------
@@ -664,6 +845,97 @@ mod tests {
         assert!(
             score(&fun_fix) < score(&sig_medium),
             "fun_fix should beat significant medium: {scores:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Feels modulation
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn low_energy_boosts_joyful_tasks() {
+        // Low energy (1) → energy_factor = 1.67
+        // Joy bonus amplified → joyful tasks rank higher
+        let joyful = task("now", "M", deadline_in(24), 1, 9);
+        let boring = task("now", "M", deadline_in(24), 1, 2);
+
+        let no_feels_diff = score(&boring) - score(&joyful);
+        let low_energy_diff = score_with_feels(&boring, 1, 3) - score_with_feels(&joyful, 1, 3);
+
+        assert!(
+            low_energy_diff > no_feels_diff,
+            "low energy should amplify joy difference \
+             (no_feels={no_feels_diff:.0} vs low_energy={low_energy_diff:.0})"
+        );
+    }
+
+    #[test]
+    fn low_focus_boosts_small_tasks() {
+        // Low focus (1) → focus_factor = 1.67
+        // Size bonus amplified → small tasks rank higher
+        let small = task("now", "S", deadline_in(24), 3, 5);
+        let large = task("now", "L", deadline_in(24), 3, 5);
+
+        let no_feels_diff = score(&large) - score(&small);
+        let low_focus_diff = score_with_feels(&large, 3, 1) - score_with_feels(&small, 3, 1);
+
+        assert!(
+            low_focus_diff > no_feels_diff,
+            "low focus should amplify size difference \
+             (no_feels={no_feels_diff:.0} vs low_focus={low_focus_diff:.0})"
+        );
+    }
+
+    #[test]
+    fn high_energy_attenuates_joy() {
+        // High energy (5) → energy_factor = 0.33
+        // Joy bonus attenuated → joyful vs boring gap shrinks
+        let joyful = task("now", "M", deadline_in(24), 1, 9);
+        let boring = task("now", "M", deadline_in(24), 1, 2);
+
+        let no_feels_diff = score(&boring) - score(&joyful);
+        let high_energy_diff = score_with_feels(&boring, 5, 3) - score_with_feels(&joyful, 5, 3);
+
+        assert!(
+            high_energy_diff < no_feels_diff,
+            "high energy should attenuate joy difference \
+             (no_feels={no_feels_diff:.0} vs high_energy={high_energy_diff:.0})"
+        );
+    }
+
+    #[test]
+    fn high_focus_attenuates_size() {
+        // High focus (5) → focus_factor = 0.33
+        // Size bonus attenuated → small vs large gap shrinks
+        let small = task("now", "S", deadline_in(24), 3, 5);
+        let large = task("now", "L", deadline_in(24), 3, 5);
+
+        let no_feels_diff = score(&large) - score(&small);
+        let high_focus_diff = score_with_feels(&large, 3, 5) - score_with_feels(&small, 3, 5);
+
+        assert!(
+            high_focus_diff < no_feels_diff,
+            "high focus should attenuate size difference \
+             (no_feels={no_feels_diff:.0} vs high_focus={high_focus_diff:.0})"
+        );
+    }
+
+    #[test]
+    fn feels_dont_affect_overdue_scoring() {
+        // Overdue tasks should score identically regardless of feels
+        let t = task("now", "M", deadline_ago(24), 1, 8);
+
+        let no_feels = score(&t);
+        let low_energy = score_with_feels(&t, 1, 1);
+        let high_energy = score_with_feels(&t, 5, 5);
+
+        assert!(
+            (no_feels - low_energy).abs() < 1.0,
+            "overdue scoring should ignore feels (no_feels={no_feels:.0} vs low={low_energy:.0})"
+        );
+        assert!(
+            (no_feels - high_energy).abs() < 1.0,
+            "overdue scoring should ignore feels (no_feels={no_feels:.0} vs high={high_energy:.0})"
         );
     }
 }
