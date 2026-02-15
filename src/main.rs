@@ -414,8 +414,8 @@ enum Commands {
         no_sync: bool,
     },
 
-    /// Show current day's energy and focus state
-    FeelsShow,
+    /// Show current status (feels, active tasks, counts)
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -708,7 +708,7 @@ async fn run() -> Result<()> {
             focus,
             no_sync,
         } => gtr::commands::feels::set(&config, energy, focus, no_sync).await,
-        Commands::FeelsShow => gtr::commands::feels::show(&config).await,
+        Commands::Status => gtr::commands::status::run(&config).await,
         Commands::Init { .. } => unreachable!(),
         Commands::Version => unreachable!(),
     }

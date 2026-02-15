@@ -94,7 +94,8 @@ impl TaskCache {
                 last_synced TEXT,
                 sync_state BLOB,
                 impact INTEGER NOT NULL DEFAULT 3,
-                joy INTEGER NOT NULL DEFAULT 5
+                joy INTEGER NOT NULL DEFAULT 5,
+                current_work_state TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_project ON tasks(project_id);
@@ -116,6 +117,11 @@ impl TaskCache {
             "ALTER TABLE tasks ADD COLUMN joy INTEGER NOT NULL DEFAULT 5",
             [],
         );
+
+        // Migrate existing caches: add current_work_state column if missing
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tasks ADD COLUMN current_work_state TEXT", []);
 
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
@@ -143,8 +149,9 @@ impl TaskCache {
                 r#"
             INSERT INTO tasks (
                 id, project_id, title, priority, size, created, modified,
-                done, deleted, deadline, version, needs_push
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                done, deleted, deadline, version, needs_push, impact, joy,
+                current_work_state
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
                 title = excluded.title,
@@ -155,7 +162,10 @@ impl TaskCache {
                 deleted = excluded.deleted,
                 deadline = excluded.deadline,
                 version = excluded.version,
-                needs_push = excluded.needs_push OR needs_push
+                needs_push = excluded.needs_push OR needs_push,
+                impact = excluded.impact,
+                joy = excluded.joy,
+                current_work_state = excluded.current_work_state
             "#,
                 params![
                     task.id,
@@ -170,6 +180,9 @@ impl TaskCache {
                     task.deadline,
                     task.version as i64,
                     needs_push as i64,
+                    task.impact as i64,
+                    task.joy as i64,
+                    task.current_work_state,
                 ],
             )
             .map_err(|e| Error::Database(format!("upsert failed: {e}")))?;
@@ -346,6 +359,105 @@ impl TaskCache {
             Err(e) => Err(Error::Database(format!("load sync state failed: {e}"))),
         }
     }
+    // -- Status queries --
+
+    /// Count tasks completed today (local date).
+    pub fn count_done_today(&self) -> Result<i64> {
+        let today = chrono::Local::now().date_naive().to_string();
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE done IS NOT NULL AND done LIKE ?1",
+                params![format!("{today}%")],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("count done today failed: {e}")))
+    }
+
+    /// Get tasks with an active work state (doing or stopped), excluding done/deleted.
+    pub fn get_active_work_tasks(&self) -> Result<Vec<ActiveTask>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r#"
+            SELECT id, project_id, title, priority, size, current_work_state, modified
+            FROM tasks
+            WHERE current_work_state IS NOT NULL
+              AND done IS NULL AND deleted IS NULL
+            ORDER BY
+                CASE current_work_state WHEN 'doing' THEN 0 ELSE 1 END,
+                modified DESC
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let tasks = stmt
+            .query_map([], |row| {
+                Ok(ActiveTask {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    title: row.get(2)?,
+                    priority: row.get(3)?,
+                    size: row.get(4)?,
+                    work_state: row.get(5)?,
+                    modified: row.get(6)?,
+                })
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(tasks)
+    }
+
+    /// Count overdue tasks (deadline before now, not done/deleted).
+    pub fn count_overdue(&self) -> Result<i64> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .query_row(
+                r#"
+            SELECT COUNT(*) FROM tasks
+            WHERE deadline IS NOT NULL AND deadline < ?1
+              AND done IS NULL AND deleted IS NULL
+            "#,
+                params![now],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("count overdue failed: {e}")))
+    }
+
+    /// Count tasks due today (deadline is today, not yet overdue, not done/deleted).
+    pub fn count_due_today(&self) -> Result<i64> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let end_of_today = {
+            let today = chrono::Local::now().date_naive();
+            let tomorrow = today + chrono::Duration::days(1);
+            format!("{tomorrow}T00:00:00+00:00")
+        };
+        self.conn
+            .query_row(
+                r#"
+            SELECT COUNT(*) FROM tasks
+            WHERE deadline IS NOT NULL
+              AND deadline >= ?1 AND deadline < ?2
+              AND done IS NULL AND deleted IS NULL
+            "#,
+                params![now, end_of_today],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("count due today failed: {e}")))
+    }
+
+    /// Count tasks pending sync.
+    pub fn count_pending_sync(&self) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE needs_push = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("count pending sync failed: {e}")))
+    }
+
     // -- Feels operations --
 
     /// Set today's energy and focus values.
@@ -470,6 +582,18 @@ impl TaskCache {
             }
         }
     }
+}
+
+/// A task with an active work state (doing/stopped).
+#[derive(Debug, Clone)]
+pub struct ActiveTask {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub priority: String,
+    pub size: String,
+    pub work_state: String,
+    pub modified: String,
 }
 
 /// Summary of a task from the cache (for listing).

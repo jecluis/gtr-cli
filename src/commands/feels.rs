@@ -52,45 +52,7 @@ pub async fn set(config: &Config, energy: u8, focus: u8, no_sync: bool) -> Resul
     Ok(())
 }
 
-/// Show current day's feels state.
-pub async fn show(config: &Config) -> Result<()> {
-    let today = Local::now().date_naive();
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
-
-    match cache.get_today_feels(&today)? {
-        Some(row) => {
-            let state_str = match row.state {
-                crate::cache::FeelsState::Set => "set".green().to_string(),
-                crate::cache::FeelsState::Skipped => "skipped".yellow().to_string(),
-                crate::cache::FeelsState::Deferred => "deferred".yellow().to_string(),
-            };
-            println!("Today's feels ({})", today);
-            println!("  State:   {}", state_str);
-            if row.energy > 0 {
-                println!(
-                    "  Energy:  {} ({})",
-                    row.energy,
-                    energy_description(row.energy)
-                );
-            }
-            if row.focus > 0 {
-                println!(
-                    "  Focus:   {} ({})",
-                    row.focus,
-                    focus_description(row.focus)
-                );
-            }
-        }
-        None => {
-            println!("No feels set for today ({})", today);
-        }
-    }
-
-    Ok(())
-}
-
-fn energy_description(level: u8) -> &'static str {
+pub(crate) fn energy_description(level: u8) -> &'static str {
     match level {
         1 => "very low — need easy wins",
         2 => "low — prefer enjoyable tasks",
@@ -101,7 +63,7 @@ fn energy_description(level: u8) -> &'static str {
     }
 }
 
-fn focus_description(level: u8) -> &'static str {
+pub(crate) fn focus_description(level: u8) -> &'static str {
     match level {
         1 => "scattered — small tasks only",
         2 => "limited — prefer small/medium",
