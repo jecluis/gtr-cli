@@ -266,6 +266,35 @@ In `gtr list`, high-impact tasks show emoji indicators in the priority column:
 
 Tasks are sorted by priority, then impact (highest first), then deadline.
 
+#### Joy
+
+Tasks carry a joy score (0–10, default 5) that captures how much enjoyment or
+energy a task brings — designed for ADHD brains that thrive on dopamine.
+
+Joy provides a gentle nudge in `gtr next`: among tasks with similar urgency,
+more enjoyable tasks bubble up slightly. This never overrides real urgency —
+deadlines and priority always win — but when two tasks are neck-and-neck, the
+joyful one gets a small boost.
+
+```bash
+# Set joy when creating
+gtr new "Fun refactor" --joy 9
+
+# Update joy
+gtr update <task-id> --joy 2
+```
+
+In `gtr list` and `gtr next`, joy is shown with emoji indicators:
+
+- Joy 8–10: 🌟 (high energy / fun)
+- Joy 0–4: 💤 (low energy / draining)
+- Joy 5–7: no indicator (neutral)
+
+**How the nudge works:** The formula `joy_bonus = (joy - 5) × 2` is subtracted
+from deadline urgency (in seconds). This gives a range of −10 to +10 seconds —
+enough to reorder similarly-urgent tasks but invisible next to real deadline
+differences.
+
 **Configuring impact labels and multipliers:**
 
 ```bash
@@ -410,6 +439,7 @@ auth_token = "your-auth-token"
 - [x] **Sync commands** - Manual sync (`sync now`, `sync status`)
 - [x] **Offline mode flag** - `--no-sync` for fully offline operation
 - [x] **Impact levels** - Configurable urgency scaling for deadline promotion
+- [x] **Joy scoring** - ADHD-friendly nudge toward enjoyable tasks
 
 ### Planned
 

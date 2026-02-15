@@ -41,6 +41,7 @@ pub async fn run(
     deadline: Option<String>,
     progress: Option<u8>,
     impact: Option<u8>,
+    joy: Option<u8>,
     no_sync: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
@@ -54,9 +55,10 @@ pub async fn run(
         && deadline.is_none()
         && progress.is_none()
         && impact.is_none()
+        && joy.is_none()
     {
         return Err(Error::UserFacing(
-            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, --deadline, --progress, or --impact)".to_string(),
+            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, --deadline, --progress, --impact, or --joy)".to_string(),
         ));
     }
 
@@ -206,6 +208,20 @@ pub async fn run(
         task.impact = new_impact;
     }
 
+    if let Some(new_joy) = joy
+        && task.joy != new_joy
+    {
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::JoyChanged {
+                from: task.joy,
+                to: new_joy,
+            },
+            source: crate::models::LogSource::User,
+        });
+        task.joy = new_joy;
+    }
+
     // Update metadata
     task.modified = now.to_rfc3339();
     task.version += 1;
@@ -317,6 +333,15 @@ pub async fn run(
             "Impact:".bold(),
             old_task.impact.to_string().dimmed().strikethrough(),
             task.impact.to_string().green()
+        );
+    }
+
+    if joy.is_some() && old_task.joy != task.joy {
+        println!(
+            "  {} {} → {}",
+            "Joy:".bold(),
+            old_task.joy.to_string().dimmed().strikethrough(),
+            task.joy.to_string().green()
         );
     }
 

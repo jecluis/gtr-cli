@@ -60,7 +60,8 @@ impl TaskCache {
                 needs_push INTEGER NOT NULL DEFAULT 0,
                 last_synced TEXT,
                 sync_state BLOB,
-                impact INTEGER NOT NULL DEFAULT 3
+                impact INTEGER NOT NULL DEFAULT 3,
+                joy INTEGER NOT NULL DEFAULT 5
             );
 
             CREATE INDEX IF NOT EXISTS idx_project ON tasks(project_id);
@@ -74,6 +75,12 @@ impl TaskCache {
         // Migrate existing caches: add impact column if missing
         let _ = self.conn.execute(
             "ALTER TABLE tasks ADD COLUMN impact INTEGER NOT NULL DEFAULT 3",
+            [],
+        );
+
+        // Migrate existing caches: add joy column if missing
+        let _ = self.conn.execute(
+            "ALTER TABLE tasks ADD COLUMN joy INTEGER NOT NULL DEFAULT 5",
             [],
         );
 

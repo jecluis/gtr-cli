@@ -113,6 +113,7 @@ mod tests {
             current_work_state: None,
             progress: None,
             impact,
+            joy: 5,
         }
     }
 

@@ -86,6 +86,7 @@ impl TaskDocument {
             }
 
             tx.put(&meta, "impact", task.impact as i64)?;
+            tx.put(&meta, "joy", task.joy as i64)?;
 
             // Subtasks list
             let subtasks = tx.put_object(&meta, "subtasks", ObjType::List)?;
@@ -165,6 +166,11 @@ impl TaskDocument {
             _ => 3,
         };
 
+        let joy = match self.doc.get(&meta_id, "joy") {
+            Ok(Some((automerge::Value::Scalar(s), _))) => s.to_i64().unwrap_or(5) as u8,
+            _ => 5,
+        };
+
         // Parse subtasks
         let subtasks = self.read_subtasks(&meta_id)?;
 
@@ -197,6 +203,7 @@ impl TaskDocument {
             current_work_state,
             progress,
             impact,
+            joy,
         })
     }
 
@@ -314,6 +321,10 @@ impl TaskDocument {
 
                 if task.impact != current.impact {
                     tx.put(&meta, "impact", task.impact as i64)?;
+                }
+
+                if task.joy != current.joy {
+                    tx.put(&meta, "joy", task.joy as i64)?;
                 }
 
                 if task.subtasks != current.subtasks {

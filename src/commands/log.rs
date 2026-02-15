@@ -121,6 +121,9 @@ pub async fn run(
             LogEntryType::ImpactChanged { from, to } => {
                 format!("Impact: {} → {}", from, to)
             }
+            LogEntryType::JoyChanged { from, to } => {
+                format!("Joy: {} → {}", from, to)
+            }
         };
 
         println!("\n  {} | {}", time_str.cyan(), source_str);

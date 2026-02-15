@@ -59,10 +59,16 @@ pub struct Task {
     pub progress: Option<u8>,
     #[serde(default = "default_impact")]
     pub impact: u8,
+    #[serde(default = "default_joy")]
+    pub joy: u8,
 }
 
 fn default_impact() -> u8 {
     3
+}
+
+fn default_joy() -> u8 {
+    5
 }
 
 /// A single log entry recording a state change.
@@ -117,6 +123,10 @@ pub enum LogEntryType {
         from: u8,
         to: u8,
     },
+    JoyChanged {
+        from: u8,
+        to: u8,
+    },
 }
 
 /// Task status for logging.
@@ -164,6 +174,8 @@ pub struct CreateTaskRequest {
     pub deadline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub impact: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub joy: Option<u8>,
 }
 
 /// Request to update a task.
@@ -181,6 +193,8 @@ pub struct UpdateTaskRequest {
     pub deadline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub impact: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub joy: Option<u8>,
 }
 
 impl Task {
@@ -197,6 +211,15 @@ impl Task {
     /// Check if task is deleted (tombstone).
     pub fn is_deleted(&self) -> bool {
         self.deleted.is_some()
+    }
+
+    /// Return the joy emoji for this task, or empty string for neutral joy.
+    pub fn joy_emoji(&self) -> &'static str {
+        match self.joy {
+            8..=10 => "🌟",
+            0..=4 => "💤",
+            _ => "",
+        }
     }
 }
 

@@ -40,6 +40,7 @@ pub async fn run(
     deadline: Option<String>,
     progress: Option<u8>,
     impact: Option<u8>,
+    joy: Option<u8>,
     no_sync: bool,
 ) -> Result<()> {
     // Get project ID (may require server)
@@ -89,6 +90,7 @@ pub async fn run(
         current_work_state: None,
         progress,
         impact: impact.unwrap_or(3),
+        joy: joy.unwrap_or(5),
     };
 
     // Save locally
@@ -116,6 +118,12 @@ pub async fn run(
         })
         .unwrap_or_else(|| "Unknown".to_string());
     println!("  Impact:   {} ({})", impact_label, task.impact);
+
+    if task.joy != 5 {
+        let je = task.joy_emoji();
+        let joy_suffix = if je.is_empty() { "" } else { " " };
+        println!("  Joy:      {}{}{}", task.joy, joy_suffix, je);
+    }
 
     // Attempt sync if enabled
     if !no_sync {

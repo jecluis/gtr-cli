@@ -151,6 +151,10 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
 ///
 /// Returns tuple: (priority, deadline_urgency, impact, work_state, size, modified_timestamp)
 /// Lower values = higher urgency (sorts first)
+///
+/// Joy nudge: `joy_bonus = (joy - 5) * 2` is subtracted from deadline_urgency,
+/// giving a gentle push toward enjoyable tasks among similarly-urgent work
+/// without overriding real urgency.
 fn calculate_urgency_score(
     task: &Task,
     now: &chrono::DateTime<chrono::Utc>,
@@ -167,7 +171,10 @@ fn calculate_urgency_score(
     let deadline_urgency = if let Some(ref deadline_str) = task.deadline {
         if let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str) {
             let deadline_utc = deadline.with_timezone(&chrono::Utc);
-            (deadline_utc - *now).num_seconds()
+            let raw = (deadline_utc - *now).num_seconds();
+            // Joy nudge: high joy subtracts, low joy adds (range -10..+10)
+            let joy_bonus = (task.joy as i64 - 5) * 2;
+            raw.saturating_sub(joy_bonus)
         } else {
             i64::MAX
         }
@@ -230,6 +237,12 @@ fn pick_next_task(tasks: &[Task], thresholds: &CachedThresholds) -> Result<Strin
                 1 => context_parts.push("🔥".to_string()),
                 2 => context_parts.push("⚡".to_string()),
                 _ => {}
+            }
+
+            // Joy emoji
+            let je = t.joy_emoji();
+            if !je.is_empty() {
+                context_parts.push(je.to_string());
             }
 
             // Deadline indicator

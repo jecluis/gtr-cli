@@ -339,6 +339,14 @@ fn build_task_row(
         .with_timezone(&Local);
     let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
 
+    // Joy emoji prefix for task title
+    let je = task.joy_emoji();
+    let joy_prefix = if je.is_empty() {
+        String::new()
+    } else {
+        format!("{je} ")
+    };
+
     // Impact emoji prefix: reserve space for alignment
     // Emojis are ~2 char widths + 1 space = 3 total visual width
     let impact_prefix = match task.impact {
@@ -370,7 +378,7 @@ fn build_task_row(
 
     TaskRowData {
         id: format_task_id(&task.id, prefix_len),
-        title: task.title.clone(),
+        title: format!("{}{}", joy_prefix, task.title),
         priority: priority_colored,
         size: task.size.clone(),
         modified: modified_str,
@@ -666,6 +674,10 @@ pub fn print_task_details(
         })
         .unwrap_or_else(|| "Unknown".to_string());
     println!("  Impact:   {} ({})", impact_label, task.impact);
+
+    let je = task.joy_emoji();
+    let joy_suffix = if je.is_empty() { "" } else { " " };
+    println!("  Joy:      {}{}{}", task.joy, joy_suffix, je);
 
     if let Some(progress) = task.progress {
         println!("  Progress: {}%", progress);
