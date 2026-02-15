@@ -237,7 +237,30 @@ gtr update abc123 -d "Q1 2026"                 # No quarters
 gtr update abc123 -d "02/15/2026"              # Use YYYY-MM-DD instead
 ```
 
-#### Impact Levels
+### 6. Delete a Task
+
+```bash
+gtr delete <task-id>
+```
+
+### 7. Search Tasks
+
+```bash
+gtr search "search query" --project my-project --limit 10
+```
+
+### 8. Check Status
+
+```bash
+gtr status
+```
+
+Shows a quick dashboard: current feels (energy/focus), tasks being actively
+worked on, overdue/due-today counts, tasks completed today, and sync health.
+
+## ADHD-Aware Scoring
+
+### Impact Levels
 
 Tasks carry an impact level (1-5) that affects how urgently they get promoted
 from "later" to "now" as their deadline approaches.
@@ -267,7 +290,7 @@ In `gtr list`, high-impact tasks show emoji indicators in the priority column:
 In `gtr list`, high-impact tasks are sorted by priority, then impact, then
 deadline.
 
-#### Joy
+### Joy
 
 Tasks carry a joy score (0–10, default 5) that captures how much enjoyment or
 energy a task brings — designed for ADHD brains that thrive on dopamine.
@@ -286,7 +309,7 @@ In `gtr list` and `gtr next`, joy is shown with emoji indicators:
 - Joy 0–4: 💤 (low energy / draining)
 - Joy 5–7: no indicator (neutral)
 
-#### Daily Feels
+### Daily Feels
 
 ADHD brains have variable capacity day-to-day. The feels system lets you
 self-report **energy** (1-5) and **focus** (1-5) so `gtr next` adapts its
@@ -322,7 +345,7 @@ gtr feels 2 4
   skip)
 - No prompts on `list`, `show`, or `search`
 
-#### `gtr next` — ADHD-Friendly Urgency Scoring
+### `gtr next` — Urgency Scoring
 
 `gtr next` suggests the best task to work on right now. Instead of a rigid
 "sort by deadline, then impact, then everything else" approach, it uses a
@@ -387,27 +410,6 @@ gtr config promotion set
 # Reset all overrides to defaults
 gtr config promotion reset
 ```
-
-### 6. Delete a Task
-
-```bash
-gtr delete <task-id>
-```
-
-### 7. Search Tasks
-
-```bash
-gtr search "search query" --project my-project --limit 10
-```
-
-### 8. Check Status
-
-```bash
-gtr status
-```
-
-Shows a quick dashboard: current feels (energy/focus), tasks being actively
-worked on, overdue/due-today counts, tasks completed today, and sync health.
 
 ## Offline Mode
 
