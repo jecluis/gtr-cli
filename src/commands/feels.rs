@@ -19,11 +19,27 @@
 
 use chrono::Local;
 use colored::Colorize;
+use dialoguer::Select;
 
 use crate::Result;
 use crate::cache::TaskCache;
 use crate::client::Client;
 use crate::config::Config;
+
+/// Entry point: interactive picker when no args, direct set otherwise.
+pub async fn run(
+    config: &Config,
+    energy: Option<u8>,
+    focus: Option<u8>,
+    no_sync: bool,
+) -> Result<()> {
+    let (energy, focus) = match (energy, focus) {
+        (Some(e), Some(f)) => (e, f),
+        _ => prompt_energy_focus()?,
+    };
+
+    set(config, energy, focus, no_sync).await
+}
 
 /// Set today's energy and focus, with best-effort server push.
 pub async fn set(config: &Config, energy: u8, focus: u8, no_sync: bool) -> Result<()> {
@@ -50,6 +66,47 @@ pub async fn set(config: &Config, energy: u8, focus: u8, no_sync: bool) -> Resul
     }
 
     Ok(())
+}
+
+/// Interactive picker for energy and focus levels.
+pub(crate) fn prompt_energy_focus() -> Result<(u8, u8)> {
+    let energy_levels = [
+        "1 — very low",
+        "2 — low",
+        "3 — moderate",
+        "4 — good",
+        "5 — high",
+    ];
+    let energy_idx = Select::new()
+        .with_prompt("Energy (emotional availability)")
+        .items(energy_levels)
+        .default(2)
+        .interact_opt()
+        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {e}")))?;
+
+    let Some(energy_idx) = energy_idx else {
+        return Err(crate::Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    let focus_levels = [
+        "1 — scattered",
+        "2 — limited",
+        "3 — moderate",
+        "4 — good",
+        "5 — deep",
+    ];
+    let focus_idx = Select::new()
+        .with_prompt("Focus (capacity for complex work)")
+        .items(focus_levels)
+        .default(2)
+        .interact_opt()
+        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {e}")))?;
+
+    let Some(focus_idx) = focus_idx else {
+        return Err(crate::Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    Ok((energy_idx as u8 + 1, focus_idx as u8 + 1))
 }
 
 pub(crate) fn energy_description(level: u8) -> &'static str {

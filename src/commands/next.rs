@@ -185,7 +185,7 @@ async fn resolve_feels(config: &Config, client: &Client, no_sync: bool) -> Resul
 
             match selection {
                 Some(0) => {
-                    let (energy, focus) = prompt_energy_focus()?;
+                    let (energy, focus) = super::feels::prompt_energy_focus()?;
                     cache.upsert_feels(&today, energy, focus)?;
                     sync_feels(client, energy, focus, no_sync).await;
                     Ok((energy, focus))
@@ -219,7 +219,7 @@ async fn resolve_feels(config: &Config, client: &Client, no_sync: bool) -> Resul
                     Ok((energy, focus))
                 }
                 Some(1) => {
-                    let (new_energy, new_focus) = prompt_energy_focus()?;
+                    let (new_energy, new_focus) = super::feels::prompt_energy_focus()?;
                     cache.upsert_feels(&today, new_energy, new_focus)?;
                     sync_feels(client, new_energy, new_focus, no_sync).await;
                     Ok((new_energy, new_focus))
@@ -231,47 +231,6 @@ async fn resolve_feels(config: &Config, client: &Client, no_sync: bool) -> Resul
             }
         }
     }
-}
-
-/// Prompt user to pick energy (1-5) then focus (1-5).
-fn prompt_energy_focus() -> Result<(u8, u8)> {
-    let levels = [
-        "1 — very low",
-        "2 — low",
-        "3 — moderate",
-        "4 — good",
-        "5 — high",
-    ];
-    let energy_idx = Select::new()
-        .with_prompt("Energy (emotional availability)")
-        .items(levels)
-        .default(2)
-        .interact_opt()
-        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {e}")))?;
-
-    let Some(energy_idx) = energy_idx else {
-        return Err(crate::Error::UserFacing("Selection cancelled".to_string()));
-    };
-
-    let focus_levels = [
-        "1 — scattered",
-        "2 — limited",
-        "3 — moderate",
-        "4 — good",
-        "5 — deep",
-    ];
-    let focus_idx = Select::new()
-        .with_prompt("Focus (capacity for complex work)")
-        .items(focus_levels)
-        .default(2)
-        .interact_opt()
-        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {e}")))?;
-
-    let Some(focus_idx) = focus_idx else {
-        return Err(crate::Error::UserFacing("Selection cancelled".to_string()));
-    };
-
-    Ok((energy_idx as u8 + 1, focus_idx as u8 + 1))
 }
 
 /// Best-effort push feels to server.
