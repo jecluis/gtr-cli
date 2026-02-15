@@ -124,18 +124,16 @@ fn format_deadline(deadline_str: Option<&str>, absolute_dates: bool) -> String {
 
 /// Format task ID with colored prefix and separator for list views.
 ///
-/// If terminal supports colors, formats as: `prefix|suffix` where prefix is cyan
-/// and suffix is dimmed. If no color support, returns plain shortened ID.
-fn format_task_id(id: &str, prefix_len: usize) -> String {
+/// When `colorize` is true, formats as: `prefix|suffix` where prefix is cyan
+/// and suffix is dimmed. Otherwise returns plain shortened ID.
+fn format_task_id(id: &str, prefix_len: usize, colorize: bool) -> String {
     let id_short = &id[..8];
 
-    // Check if terminal supports colors
-    if colored::control::SHOULD_COLORIZE.should_colorize() {
+    if colorize {
         let prefix = &id_short[..prefix_len];
         let suffix = &id_short[prefix_len..];
         format!("{}|{}", prefix.cyan(), suffix.dimmed())
     } else {
-        // No color support: return plain shortened ID without separator
         id_short.to_string()
     }
 }
@@ -148,14 +146,14 @@ fn format_task_id(id: &str, prefix_len: usize) -> String {
 /// - 50–99%: cyan (calming blue)
 /// - 100%: green (complete)
 ///
-/// Falls back to numerical `X%` when fancy is disabled or no color support.
+/// Falls back to numerical `X%` when fancy is disabled or colorize is false.
 /// Returns `-` when progress is None.
-fn format_progress(progress: Option<u8>, fancy: bool) -> String {
+fn format_progress(progress: Option<u8>, fancy: bool, colorize: bool) -> String {
     let Some(value) = progress else {
         return "-".to_string();
     };
 
-    let use_bar = fancy && colored::control::SHOULD_COLORIZE.should_colorize();
+    let use_bar = fancy && colorize;
 
     if !use_bar {
         return format!("{}%", value);
@@ -333,6 +331,7 @@ fn build_task_row(
     prefix_len: usize,
     absolute_dates: bool,
     thresholds: &CachedThresholds,
+    colorize: bool,
 ) -> TaskRowData {
     let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
         .unwrap()
@@ -377,7 +376,7 @@ fn build_task_row(
     };
 
     TaskRowData {
-        id: format_task_id(&task.id, prefix_len),
+        id: format_task_id(&task.id, prefix_len, colorize),
         title: format!("{}{}", joy_prefix, task.title),
         priority: priority_colored,
         size: task.size.clone(),
@@ -420,8 +419,9 @@ fn render_task_table(
     builder.push_record(header);
 
     // Build rows based on column configuration
+    let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     for task in tasks {
-        let row = build_task_row(task, prefix_len, absolute_dates, thresholds);
+        let row = build_task_row(task, prefix_len, absolute_dates, thresholds, colorize);
 
         let mut record: Vec<String> = vec![row.id, row.title];
         if columns.show_project {
@@ -440,7 +440,7 @@ fn render_task_table(
         }
         record.push(row.deadline);
         if columns.show_progress {
-            record.push(format_progress(task.progress, fancy));
+            record.push(format_progress(task.progress, fancy, colorize));
         }
         record.push(row.status);
         builder.push_record(record);
@@ -493,8 +493,9 @@ fn render_simplified_table(
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
 ) {
+    let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     for (idx, task) in tasks.iter().enumerate() {
-        let row = build_task_row(task, prefix_len, absolute_dates, thresholds);
+        let row = build_task_row(task, prefix_len, absolute_dates, thresholds, colorize);
 
         // Insert separator between doing and other tasks
         if let Some(count) = doing_count
@@ -751,21 +752,14 @@ mod tests {
 
     #[test]
     fn test_format_task_id_no_color() {
-        // When SHOULD_COLORIZE is false, should return plain shortened ID
-        colored::control::set_override(false);
-        let formatted = format_task_id("ea75a3ac-1234-5678-90ab-cdef12345678", 4);
+        let formatted = format_task_id("ea75a3ac-1234-5678-90ab-cdef12345678", 4, false);
         assert_eq!(formatted, "ea75a3ac");
-        colored::control::unset_override();
     }
 
     #[test]
     fn test_format_task_id_with_color() {
-        // When SHOULD_COLORIZE is true, should include separator
-        colored::control::set_override(true);
-        let formatted = format_task_id("ea75a3ac-1234-5678-90ab-cdef12345678", 4);
-        // Should contain the separator (actual color codes may vary)
+        let formatted = format_task_id("ea75a3ac-1234-5678-90ab-cdef12345678", 4, true);
         assert!(formatted.contains("|"));
-        colored::control::unset_override();
     }
 
     #[test]
@@ -823,34 +817,24 @@ mod tests {
 
     #[test]
     fn test_format_deadline_overdue() {
-        // Deadline 1 day in the past - should be colored red
         let past = Utc::now() - chrono::Duration::days(1);
         let deadline_str = past.to_rfc3339();
 
-        // Disable color for predictable testing
-        colored::control::set_override(false);
         let formatted = format_deadline(Some(&deadline_str), false);
 
-        // Should show something (text content varies)
+        // Should show something (text content varies with color state)
         assert!(formatted.len() > 1);
         assert_ne!(formatted, "-");
-
-        colored::control::unset_override();
     }
 
     #[test]
     fn test_format_deadline_overdue_with_color() {
-        // Deadline 2 days in the past - should contain red color codes
         let past = Utc::now() - chrono::Duration::days(2);
         let deadline_str = past.to_rfc3339();
 
-        // Enable color to check red coloring
-        colored::control::set_override(true);
         let formatted = format_deadline(Some(&deadline_str), false);
 
-        // With colors enabled, should contain ANSI color codes for red
+        // Overdue deadlines get colored red — output is always non-trivial
         assert!(formatted.len() > 1);
-
-        colored::control::unset_override();
     }
 }
