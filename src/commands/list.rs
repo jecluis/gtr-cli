@@ -47,6 +47,8 @@ pub async fn tasks(
     absolute_dates: bool,
     fancy: bool,
     verbose: bool,
+    for_task: Option<String>,
+    recursive: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
@@ -97,6 +99,38 @@ pub async fn tasks(
                 all_tasks.push(task);
             }
         }
+    }
+
+    // Filter to subtasks of a specific parent if --for is set
+    if let Some(ref for_id) = for_task {
+        let full_parent_id = utils::resolve_task_id(&client, for_id).await?;
+        let allowed_ids: std::collections::HashSet<String> = if recursive {
+            ctx.cache
+                .get_all_descendants(&full_parent_id)?
+                .into_iter()
+                .collect()
+        } else {
+            ctx.cache
+                .get_children(&full_parent_id)?
+                .into_iter()
+                .map(|c| c.id)
+                .collect()
+        };
+        all_tasks.retain(|t| allowed_ids.contains(&t.id));
+
+        // Show parent info header
+        let parent_title = ctx
+            .cache
+            .get_task_title(&full_parent_id)?
+            .unwrap_or_else(|| "?".to_string());
+        let label = if recursive { "descendants" } else { "children" };
+        println!(
+            "{} {} {} ({})\n",
+            "Subtasks of".bold(),
+            full_parent_id[..8].cyan(),
+            parent_title.dimmed(),
+            label
+        );
     }
 
     // Fetch promotion thresholds early — needed for filtering and sorting

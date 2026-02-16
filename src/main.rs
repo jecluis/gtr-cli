@@ -108,6 +108,14 @@ enum Commands {
         /// Show extra columns (e.g. Modified)
         #[arg(short, long)]
         verbose: bool,
+
+        /// Show only subtasks of this parent task
+        #[arg(long = "for", value_name = "PARENT_ID")]
+        for_task: Option<String>,
+
+        /// With --for: include all descendants, not just direct children
+        #[arg(long)]
+        recursive: bool,
     },
 
     /// Show a specific task
@@ -565,6 +573,8 @@ async fn run() -> Result<()> {
             absolute,
             no_fancy,
             verbose,
+            for_task,
+            recursive,
         } => {
             gtr::commands::list::tasks(
                 &config,
@@ -584,6 +594,8 @@ async fn run() -> Result<()> {
                 absolute,
                 !no_fancy,
                 verbose,
+                for_task,
+                recursive,
             )
             .await
         }
