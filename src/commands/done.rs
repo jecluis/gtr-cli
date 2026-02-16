@@ -25,6 +25,7 @@ use tracing::warn;
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
+use crate::hierarchy;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, TaskStatus};
 use crate::utils;
@@ -172,6 +173,9 @@ async fn mark_task_done(config: &Config, task_id: &str, no_sync: bool) -> Result
                 .bold()
         );
     }
+
+    // Update ancestor progress (this task is now done, parent's progress changes)
+    hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.project_id, &full_id)?;
 
     // Sync
     if !no_sync {

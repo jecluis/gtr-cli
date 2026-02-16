@@ -24,6 +24,7 @@ use uuid::Uuid;
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
+use crate::hierarchy;
 use crate::local::LocalContext;
 use crate::models::Task;
 use crate::{threshold_cache, utils};
@@ -148,6 +149,11 @@ pub async fn run(
         let je = task.joy_emoji();
         let joy_suffix = if je.is_empty() { "" } else { " " };
         println!("  Joy:      {}{}{}", task.joy, joy_suffix, je);
+    }
+
+    // Update parent's auto-progress if this is a subtask
+    if task.parent_id.is_some() {
+        hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.project_id, &task.id)?;
     }
 
     // Attempt sync if enabled

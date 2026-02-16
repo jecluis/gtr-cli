@@ -24,6 +24,7 @@ use tracing::{debug, info};
 
 use crate::client::Client;
 use crate::config::Config;
+use crate::hierarchy;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType};
 use crate::utils;
@@ -279,6 +280,11 @@ pub async fn run(
     );
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
+
+    // Update ancestor progress if this task has a parent
+    if task.parent_id.is_some() {
+        hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.project_id, &task.id)?;
+    }
 
     println!("{}", "✓ Task updated locally!".green().bold());
     println!("  ID:    {}", task.id.cyan());

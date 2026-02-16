@@ -24,6 +24,7 @@ pub mod config;
 pub mod crdt;
 pub mod editor;
 pub mod error;
+pub mod hierarchy;
 pub mod local;
 pub mod logging;
 pub mod markdown;
