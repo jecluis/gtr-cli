@@ -18,10 +18,11 @@
 //! General configuration command implementation.
 
 use colored::Colorize;
+use dialoguer::Select;
 
 use crate::Result;
 use crate::config::Config;
-use crate::icons::Icons;
+use crate::icons::{IconTheme, Icons};
 
 /// Show current editor configuration.
 pub fn show_editor(config: &Config) -> Result<()> {
@@ -96,5 +97,109 @@ fn get_editor_source(config: &Config) -> String {
         "$VISUAL".to_string()
     } else {
         "default".to_string()
+    }
+}
+
+// -- Icon theme commands --
+
+/// Show current icon theme configuration.
+pub fn show_icons(config: &Config) -> Result<()> {
+    let effective = config.effective_icon_theme();
+    let source = get_icon_source(config);
+
+    println!("{}", "Icon Theme Configuration".bold().green());
+    println!("{}", "─".repeat(50));
+    println!("  Current: {}", effective.to_string().cyan());
+    println!("  Source:  {}", source.dimmed());
+    println!();
+
+    Ok(())
+}
+
+/// Set icon theme in configuration file.
+///
+/// If `value` is empty, show an interactive picker.
+pub fn set_icons(config: &mut Config, value: String) -> Result<()> {
+    let theme = if value.is_empty() {
+        pick_icon_theme()?
+    } else {
+        value
+            .parse::<IconTheme>()
+            .map_err(crate::Error::InvalidInput)?
+    };
+
+    let icons = Icons::new(config.effective_icon_theme());
+    config.icon_theme = theme;
+    config.save()?;
+
+    println!(
+        "{}",
+        format!("{} Icon theme updated!", icons.success)
+            .green()
+            .bold()
+    );
+    println!("  Theme set to: {}", theme.to_string().cyan());
+    println!();
+
+    Ok(())
+}
+
+/// Unset icon theme (revert to default).
+pub fn unset_icons(config: &mut Config) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+    config.icon_theme = IconTheme::default();
+    config.save()?;
+
+    let effective = config.effective_icon_theme();
+    let source = get_icon_source(config);
+
+    println!(
+        "{}",
+        format!("{} Icon theme reset to default!", icons.success)
+            .green()
+            .bold()
+    );
+    println!(
+        "  Now using: {} ({})",
+        effective.to_string().cyan(),
+        source.dimmed()
+    );
+    println!();
+
+    Ok(())
+}
+
+/// Get the source of the current icon theme setting.
+fn get_icon_source(config: &Config) -> String {
+    if std::env::var("GTR_ICONS").is_ok() {
+        "$GTR_ICONS (env override)".to_string()
+    } else if config.icon_theme != IconTheme::default() {
+        "config file".to_string()
+    } else {
+        "default".to_string()
+    }
+}
+
+/// Interactive picker for icon theme.
+fn pick_icon_theme() -> Result<IconTheme> {
+    let themes = [IconTheme::Unicode, IconTheme::Nerd];
+    let items: Vec<String> = themes
+        .iter()
+        .map(|t| match t {
+            IconTheme::Unicode => "unicode  — standard emoji (works everywhere)".to_string(),
+            IconTheme::Nerd => "nerd     — Nerd Font glyphs (requires patched font)".to_string(),
+        })
+        .collect();
+
+    let selection = Select::new()
+        .with_prompt("Select icon theme")
+        .items(&items)
+        .default(0)
+        .interact_opt()
+        .map_err(|e| crate::Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
+
+    match selection {
+        Some(idx) => Ok(themes[idx]),
+        None => Err(crate::Error::UserFacing("Selection cancelled".to_string())),
     }
 }

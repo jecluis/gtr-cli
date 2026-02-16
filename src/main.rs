@@ -490,6 +490,17 @@ enum ConfigCommands {
         unset: bool,
     },
 
+    /// Show or manage icon theme
+    Icons {
+        /// Set icon theme (unicode or nerd); opens picker if no value given
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        set: Option<String>,
+
+        /// Unset icon theme (revert to default)
+        #[arg(long)]
+        unset: bool,
+    },
+
     /// Manage promotion thresholds
     Promotion {
         #[command(subcommand)]
@@ -718,6 +729,15 @@ async fn run() -> Result<()> {
                     gtr::commands::config::set_editor(&mut config, editor.clone())
                 } else {
                     gtr::commands::config::show_editor(&config)
+                }
+            }
+            ConfigCommands::Icons { set, unset } => {
+                if unset {
+                    gtr::commands::config::unset_icons(&mut config)
+                } else if let Some(value) = set {
+                    gtr::commands::config::set_icons(&mut config, value)
+                } else {
+                    gtr::commands::config::show_icons(&config)
                 }
             }
             ConfigCommands::Promotion { command } => match command {

@@ -281,11 +281,13 @@ gtr new "Critical bug" -d "3 days" --impact 1
 gtr update <task-id> -i 5
 ```
 
-In `gtr list`, high-impact tasks show emoji indicators in the priority column:
+In `gtr list`, high-impact tasks show indicators in the priority column:
 
-- Impact 1: 🔥 (fire)
-- Impact 2: ⚡ (lightning)
+- Impact 1: 🔥 / (fire)
+- Impact 2: ⚡ / (bolt)
 - Impact 3-5: no indicator
+
+The actual glyphs depend on the configured [icon theme](#icon-themes).
 
 In `gtr list`, high-impact tasks are sorted by priority, then impact, then
 deadline.
@@ -303,11 +305,13 @@ gtr new "Fun refactor" --joy 9
 gtr update <task-id> --joy 2
 ```
 
-In `gtr list` and `gtr next`, joy is shown with emoji indicators:
+In `gtr list` and `gtr next`, joy is shown with indicators:
 
-- Joy 8–10: 🌟 (high energy / fun)
-- Joy 0–4: 💤 (low energy / draining)
+- Joy 8–10: 🌟 / (star) — high energy / fun
+- Joy 0–4: 💤 / (moon) — low energy / draining
 - Joy 5–7: no indicator (neutral)
+
+The actual glyphs depend on the configured [icon theme](#icon-themes).
 
 ### Daily Feels
 
@@ -428,11 +432,11 @@ immediately, with automatic background synchronization to the server.
 
 ### Sync Status Indicators
 
-After each command, you'll see one of:
+After each command, you'll see one of (unicode theme shown):
 
-- `✓ synced` - Successfully synced with server
-- `⊙ queued for sync` - Saved locally, will sync when server is available
-- `✗ sync failed` - Local operation succeeded, but sync failed (check
+- `✓ synced` — successfully synced with server
+- `⊙ queued for sync` — saved locally, will sync when server is available
+- `✗ sync failed` — local operation succeeded, but sync failed (check
   connectivity)
 
 ### Disabling Sync
@@ -495,6 +499,42 @@ Markdown rendering respects terminal capabilities:
 - Automatic TTY detection (plain text when piped to other commands)
 - `--no-format` flag for explicit plain text output
 
+## Icon Themes
+
+The CLI supports two icon themes to accommodate different terminal setups:
+
+| Theme     | Description                                   | Requirement         |
+| --------- | --------------------------------------------- | ------------------- |
+| `unicode` | Standard Unicode emoji (default)              | Any modern terminal |
+| `nerd`    | [Nerd Font](https://www.nerdfonts.com) glyphs | Nerd Font installed |
+
+The **nerd** theme uses glyphs from the Private Use Area that render as exactly
+1 cell wide, eliminating the emoji-width alignment issues that can occur with
+the unicode theme in some terminals and fonts.
+
+### Managing Icon Theme
+
+```bash
+# Show current icon theme
+gtr config icons
+
+# Set theme directly
+gtr config icons --set nerd
+
+# Interactive picker
+gtr config icons --set
+
+# Revert to default (unicode)
+gtr config icons --unset
+```
+
+The theme can also be overridden per-session via the `GTR_ICONS` environment
+variable:
+
+```bash
+GTR_ICONS=nerd gtr list --project my-project
+```
+
 ## Configuration
 
 Config file location: `~/.config/gtr/config.toml`
@@ -502,6 +542,7 @@ Config file location: `~/.config/gtr/config.toml`
 ```toml
 server_url = "http://localhost:3000"
 auth_token = "your-auth-token"
+icon_theme = "unicode"  # or "nerd"
 ```
 
 ### Environment Variables
@@ -509,6 +550,7 @@ auth_token = "your-auth-token"
 - `GTR_CONFIG`: Override config file path
 - `GTR_SERVER_URL`: Override server URL
 - `GTR_AUTH_TOKEN`: Override auth token
+- `GTR_ICONS`: Override icon theme (`unicode` or `nerd`)
 
 ## Features
 
@@ -533,12 +575,13 @@ auth_token = "your-auth-token"
 - [x] **Joy scoring** - ADHD-friendly nudge toward enjoyable tasks
 - [x] **Daily feels** - Energy/focus self-report adapts `gtr next` scoring
 - [x] **Status dashboard** - `gtr status` for a quick overview
+- [x] **Icon themes** - Unicode (default) or Nerd Font glyphs for consistent
+      alignment
 
 ### Planned
 
 - [ ] Interactive prompts for missing fields
 - [ ] Shell completions (bash, zsh, fish)
-- [ ] Config subcommands (view, edit, validate)
 - [ ] Advanced filtering (by date range, custom fields)
 
 ## Development
