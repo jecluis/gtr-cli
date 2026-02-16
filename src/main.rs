@@ -251,6 +251,10 @@ enum Commands {
         /// Task ID
         task_id: String,
 
+        /// Also delete all subtasks recursively
+        #[arg(long)]
+        recursive: bool,
+
         /// Skip sync (work offline)
         #[arg(long)]
         no_sync: bool,
@@ -636,9 +640,11 @@ async fn run() -> Result<()> {
             progress,
             no_sync,
         } => gtr::commands::undone::run(&config, &task_id, progress, no_sync).await,
-        Commands::Delete { task_id, no_sync } => {
-            gtr::commands::delete::run(&config, &task_id, no_sync).await
-        }
+        Commands::Delete {
+            task_id,
+            recursive,
+            no_sync,
+        } => gtr::commands::delete::run(&config, &task_id, recursive, no_sync).await,
         Commands::Restore { task_id, no_sync } => {
             gtr::commands::restore::run(&config, &task_id, no_sync).await
         }

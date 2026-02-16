@@ -20,6 +20,8 @@
 use chrono::Utc;
 use colored::Colorize;
 
+use tracing::warn;
+
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
@@ -122,6 +124,54 @@ async fn mark_task_done(config: &Config, task_id: &str, no_sync: bool) -> Result
     // Save locally
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
+
+    // Cascade completion to all descendants
+    let descendants = ctx.cache.get_all_descendants(&full_id)?;
+    let descendant_count = descendants.len();
+    for desc_id in descendants {
+        match ctx.storage.load_task(&task.project_id, &desc_id) {
+            Ok(mut desc_task) => {
+                if desc_task.done.is_some() {
+                    continue; // already done
+                }
+                desc_task.done = Some(now.to_rfc3339());
+                desc_task.modified = now.to_rfc3339();
+                desc_task.version += 1;
+                desc_task.current_work_state = None;
+                let old_prog = desc_task.progress;
+                desc_task.progress = Some(100);
+                desc_task.log.push(LogEntry {
+                    timestamp: now,
+                    entry_type: LogEntryType::StatusChanged {
+                        status: TaskStatus::Done,
+                    },
+                    source: crate::models::LogSource::User,
+                });
+                desc_task.log.push(LogEntry {
+                    timestamp: now,
+                    entry_type: LogEntryType::ProgressChanged {
+                        from: old_prog,
+                        to: Some(100),
+                    },
+                    source: crate::models::LogSource::User,
+                });
+                ctx.storage.update_task(&desc_task.project_id, &desc_task)?;
+                ctx.cache.upsert_task(&desc_task, true)?;
+            }
+            Err(e) => {
+                warn!(task_id = %desc_id, error = %e, "failed to cascade done to descendant");
+            }
+        }
+    }
+
+    if descendant_count > 0 {
+        println!(
+            "  {}",
+            format!("+ {} subtask(s) also marked done", descendant_count)
+                .green()
+                .bold()
+        );
+    }
 
     // Sync
     if !no_sync {

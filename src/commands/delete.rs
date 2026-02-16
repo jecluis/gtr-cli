@@ -19,6 +19,7 @@
 
 use chrono::Utc;
 use colored::Colorize;
+use tracing::warn;
 
 use crate::Result;
 use crate::client::Client;
@@ -27,16 +28,24 @@ use crate::local::LocalContext;
 use crate::utils;
 
 /// Delete a task (tombstone, local-first with optional sync).
-pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
+///
+/// When `recursive` is false (default), direct children are promoted
+/// to the deleted task's parent (or become root tasks). When `recursive`
+/// is true, all descendants are also marked as deleted.
+pub async fn run(config: &Config, task_id: &str, recursive: bool, no_sync: bool) -> Result<()> {
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
     let ctx = LocalContext::new(config, !no_sync)?;
 
     let mut task = ctx.load_task(&client, &full_id).await?;
+    let now = Utc::now();
 
-    task.deleted = Some(Utc::now().to_rfc3339());
-    task.modified = Utc::now().to_rfc3339();
+    // Capture parent before deleting (children will be promoted here)
+    let deleted_parent_id = task.parent_id.clone();
+
+    task.deleted = Some(now.to_rfc3339());
+    task.modified = now.to_rfc3339();
     task.version += 1;
 
     ctx.storage.update_task(&task.project_id, &task)?;
@@ -45,6 +54,66 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     println!("{}", "✓ Task deleted locally!".green().bold());
     println!("  ID:    {}", task.id.cyan());
     println!("  Title: {}", task.title);
+
+    if recursive {
+        // Cascade delete to all descendants
+        let descendants = ctx.cache.get_all_descendants(&full_id)?;
+        let count = descendants.len();
+        for desc_id in descendants {
+            match ctx.storage.load_task(&task.project_id, &desc_id) {
+                Ok(mut desc_task) => {
+                    if desc_task.deleted.is_some() {
+                        continue;
+                    }
+                    desc_task.deleted = Some(now.to_rfc3339());
+                    desc_task.modified = now.to_rfc3339();
+                    desc_task.version += 1;
+                    ctx.storage.update_task(&desc_task.project_id, &desc_task)?;
+                    ctx.cache.upsert_task(&desc_task, true)?;
+                }
+                Err(e) => {
+                    warn!(task_id = %desc_id, error = %e, "failed to cascade delete");
+                }
+            }
+        }
+        if count > 0 {
+            println!(
+                "  {}",
+                format!("+ {} subtask(s) also deleted", count)
+                    .green()
+                    .bold()
+            );
+        }
+    } else {
+        // Promote direct children to the deleted task's parent
+        let children = ctx.cache.get_children(&full_id)?;
+        let count = children.len();
+        for child_summary in &children {
+            match ctx.storage.load_task(&task.project_id, &child_summary.id) {
+                Ok(mut child_task) => {
+                    child_task.parent_id = deleted_parent_id.clone();
+                    child_task.modified = now.to_rfc3339();
+                    child_task.version += 1;
+                    ctx.storage
+                        .update_task(&child_task.project_id, &child_task)?;
+                    ctx.cache.upsert_task(&child_task, true)?;
+                }
+                Err(e) => {
+                    warn!(task_id = %child_summary.id, error = %e, "failed to promote child");
+                }
+            }
+        }
+        if count > 0 {
+            let target = deleted_parent_id
+                .as_deref()
+                .map(|id| &id[..8])
+                .unwrap_or("root");
+            println!(
+                "  {}",
+                format!("{} child(ren) promoted to {}", count, target).dimmed()
+            );
+        }
+    }
 
     if !no_sync {
         if ctx.try_sync().await {
