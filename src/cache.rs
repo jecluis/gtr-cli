@@ -590,6 +590,34 @@ impl TaskCache {
             .map_err(|e| Error::Database(format!("get title failed: {e}")))
     }
 
+    /// Get a task's work state by ID (None if no work state or not found).
+    pub fn get_work_state(&self, task_id: &str) -> Result<Option<String>> {
+        let row: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT current_work_state FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("get work_state failed: {e}")))?;
+        Ok(row.flatten())
+    }
+
+    /// Get a task's done timestamp by ID (None if not done or not found).
+    pub fn get_task_done(&self, task_id: &str) -> Result<Option<String>> {
+        let row: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT done FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("get done failed: {e}")))?;
+        Ok(row.flatten())
+    }
+
     /// Check if setting child's parent to proposed_parent would create a cycle.
     pub fn would_create_cycle(&self, child_id: &str, proposed_parent_id: &str) -> Result<bool> {
         if child_id == proposed_parent_id {

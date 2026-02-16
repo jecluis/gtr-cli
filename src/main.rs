@@ -134,6 +134,10 @@ enum Commands {
         /// Disable line wrapping (preserves long URLs)
         #[arg(long)]
         no_wrap: bool,
+
+        /// Show subtask tree with interactive picker
+        #[arg(long)]
+        tree: bool,
     },
 
     /// Create a new task
@@ -604,7 +608,8 @@ async fn run() -> Result<()> {
             no_sync,
             no_format,
             no_wrap,
-        } => gtr::commands::show::run(&config, &task_id, no_sync, no_format, no_wrap).await,
+            tree,
+        } => gtr::commands::show::run(&config, &task_id, no_sync, no_format, no_wrap, tree).await,
         Commands::New {
             project,
             title,
