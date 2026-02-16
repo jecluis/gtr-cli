@@ -17,6 +17,8 @@
 
 //! Show command implementation.
 
+use colored::Colorize;
+
 use crate::client::Client;
 use crate::config::Config;
 use crate::local::LocalContext;
@@ -40,6 +42,40 @@ pub async fn run(
 
     let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
     output::print_task_details(config, &task, no_format, no_wrap, &cached);
+
+    // Show parent info
+    if let Some(ref parent_id) = task.parent_id {
+        let parent_title = ctx
+            .cache
+            .get_task_title(parent_id)?
+            .unwrap_or_else(|| "?".to_string());
+        println!(
+            "{} {} {}",
+            "Parent:".bold(),
+            parent_id[..8].cyan(),
+            parent_title.dimmed()
+        );
+    }
+
+    // Show children
+    let children = ctx.cache.get_children(&full_id)?;
+    if !children.is_empty() {
+        println!("\n{}", "Subtasks:".bold());
+        for child in &children {
+            let is_done = child.done.is_some();
+            let status_colored = if is_done {
+                "done".blue().to_string()
+            } else {
+                "pending".green().to_string()
+            };
+            println!(
+                "  {} {} [{}]",
+                child.id[..8].cyan(),
+                child.title,
+                status_colored
+            );
+        }
+    }
 
     // Try to refresh from server in background if sync enabled
     if !no_sync {

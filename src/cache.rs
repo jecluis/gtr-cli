@@ -578,6 +578,18 @@ impl TaskCache {
         Ok((total, done))
     }
 
+    /// Get a task's title by ID.
+    pub fn get_task_title(&self, task_id: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT title FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("get title failed: {e}")))
+    }
+
     /// Check if setting child's parent to proposed_parent would create a cycle.
     pub fn would_create_cycle(&self, child_id: &str, proposed_parent_id: &str) -> Result<bool> {
         if child_id == proposed_parent_id {

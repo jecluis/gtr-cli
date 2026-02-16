@@ -375,9 +375,21 @@ fn build_task_row(
         "pending".green().to_string()
     };
 
+    // Hierarchy indicator: show parent short-id if this is a subtask
+    let hierarchy_suffix = if let Some(ref parent_id) = task.parent_id {
+        let short = &parent_id[..parent_id.len().min(8)];
+        if colorize {
+            format!(" {}", format!("↳ {short}").dimmed())
+        } else {
+            format!(" ↳ {short}")
+        }
+    } else {
+        String::new()
+    };
+
     TaskRowData {
         id: format_task_id(&task.id, prefix_len, colorize),
-        title: format!("{}{}", joy_prefix, task.title),
+        title: format!("{}{}{}", joy_prefix, task.title, hierarchy_suffix),
         priority: priority_colored,
         size: task.size.clone(),
         modified: modified_str,
