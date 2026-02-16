@@ -45,11 +45,34 @@ pub async fn run(
     impact: Option<u8>,
     joy: Option<u8>,
     parent_id: Option<String>,
+    unset: bool,
     no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
+
+    // Validate --unset usage: empty-value flags require --unset
+    let unset_deadline = deadline.as_deref() == Some("");
+    let unset_parent = parent_id.as_deref() == Some("");
+
+    if (unset_deadline || unset_parent) && !unset {
+        return Err(Error::UserFacing(
+            "Use --unset with -d/--for to clear fields (e.g. --unset -d)".to_string(),
+        ));
+    }
+
+    // Normalize: convert empty sentinel to "none" for existing clear logic
+    let deadline = if unset_deadline {
+        Some("none".to_string())
+    } else {
+        deadline
+    };
+    let parent_id = if unset_parent {
+        Some("none".to_string())
+    } else {
+        parent_id
+    };
 
     // Check if at least one field is provided
     if title.is_none()

@@ -208,8 +208,8 @@ enum Commands {
         #[arg(short, long)]
         size: Option<String>,
 
-        /// New deadline (use "none" to clear)
-        #[arg(short, long)]
+        /// New deadline (value required unless --unset is set)
+        #[arg(short, long, num_args = 0..=1, default_missing_value = "")]
         deadline: Option<String>,
 
         /// New progress percentage (0-100)
@@ -224,9 +224,13 @@ enum Commands {
         #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=10))]
         joy: Option<u8>,
 
-        /// Parent task ID (re-parent; use "none" to clear)
-        #[arg(long = "for", value_name = "PARENT_ID")]
+        /// Parent task ID (value required unless --unset is set)
+        #[arg(long = "for", value_name = "PARENT_ID", num_args = 0..=1, default_missing_value = "")]
         parent: Option<String>,
+
+        /// Unset fields given without values (e.g. --unset -d --for)
+        #[arg(long)]
+        unset: bool,
 
         /// Skip sync (work offline)
         #[arg(long)]
@@ -294,12 +298,16 @@ enum Commands {
 
     /// Set task progress percentage
     Progress {
-        /// Progress value (0-100)
-        #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
-        value: u8,
+        /// Progress value (0-100; omit when using --unset)
+        #[arg(value_parser = clap::value_parser!(u8).range(0..=100), required_unless_present = "unset")]
+        value: Option<u8>,
 
         /// Task ID (auto-selects from "doing" tasks if omitted)
         task_id: Option<String>,
+
+        /// Clear progress tracking for the task
+        #[arg(long, requires = "task_id")]
+        unset: bool,
 
         /// Skip sync (work offline)
         #[arg(long)]
@@ -652,11 +660,12 @@ async fn run() -> Result<()> {
             impact,
             joy,
             parent,
+            unset,
             no_sync,
         } => {
             gtr::commands::update::run(
                 &config, &task_id, title, body, priority, size, deadline, progress, impact, joy,
-                parent, no_sync,
+                parent, unset, no_sync,
             )
             .await
         }
@@ -679,8 +688,15 @@ async fn run() -> Result<()> {
         Commands::Progress {
             value,
             task_id,
+            unset,
             no_sync,
-        } => gtr::commands::progress::run(&config, value, task_id, no_sync).await,
+        } => {
+            if unset {
+                gtr::commands::progress::unset(&config, task_id, no_sync).await
+            } else {
+                gtr::commands::progress::run(&config, value.unwrap(), task_id, no_sync).await
+            }
+        }
         Commands::Now { task_id, no_sync } => {
             gtr::commands::now::run(&config, &task_id, no_sync).await
         }

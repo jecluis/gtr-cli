@@ -28,6 +28,83 @@ use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, LogSource, TaskStatus};
 use crate::utils;
 
+/// Clear task progress (local-first with optional sync).
+pub async fn unset(config: &Config, task_id: Option<String>, no_sync: bool) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+    let client = Client::new(config)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
+
+    let full_id = match task_id {
+        Some(ref id) => utils::resolve_task_id(&client, id).await?,
+        None => {
+            return Err(crate::Error::UserFacing(
+                "Task ID is required for --unset".to_string(),
+            ));
+        }
+    };
+
+    let mut task = ctx.load_task(&client, &full_id).await?;
+
+    if task.progress.is_none() {
+        println!(
+            "{} {} has no progress set",
+            icons.info.blue(),
+            task.id[..8].cyan()
+        );
+        return Ok(());
+    }
+
+    let old_progress = task.progress;
+    let now = Utc::now();
+
+    task.progress = None;
+    task.modified = now.to_rfc3339();
+    task.version += 1;
+
+    task.log.push(LogEntry {
+        timestamp: now,
+        entry_type: LogEntryType::ProgressChanged {
+            from: old_progress,
+            to: None,
+        },
+        source: LogSource::User,
+    });
+
+    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.cache.upsert_task(&task, true)?;
+
+    println!(
+        "{}",
+        format!("{} Progress cleared!", icons.success)
+            .green()
+            .bold()
+    );
+    println!("  ID:       {}", task.id.cyan());
+    println!("  Title:    {}", task.title);
+
+    let old_str = old_progress
+        .map(|p| format!("{}%", p))
+        .unwrap_or_else(|| "none".to_string());
+    println!(
+        "  Progress: {} → {}",
+        old_str.dimmed().strikethrough(),
+        "none".green()
+    );
+
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
+        } else {
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
+        }
+    }
+
+    Ok(())
+}
+
 /// Set task progress (local-first with optional sync).
 ///
 /// When no task_id is provided, smart resolution picks from "doing" tasks
