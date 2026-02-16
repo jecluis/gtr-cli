@@ -26,12 +26,15 @@ use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::hierarchy;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, TaskStatus};
 use crate::utils;
 
 /// Mark one or more tasks as done (local-first with optional sync).
 pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+
     // If no task IDs provided, show picker
     if task_ids.is_empty() {
         let client = Client::new(config)?;
@@ -48,7 +51,12 @@ pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> R
         match mark_task_done(config, &task_id, no_sync).await {
             Ok(title) => {
                 success_count += 1;
-                println!("{}", "✓ Task marked as done locally!".green().bold());
+                println!(
+                    "{}",
+                    format!("{} Task marked as done locally!", icons.success)
+                        .green()
+                        .bold()
+                );
                 println!("  ID:    {}", task_id.cyan());
                 println!("  Title: {}", title);
             }
@@ -69,7 +77,7 @@ pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> R
     }
 
     if !failures.is_empty() {
-        eprintln!("\n{}", "✗ Failures:".red().bold());
+        eprintln!("\n{}", format!("{} Failures:", icons.failure).red().bold());
         for (id, err) in failures {
             eprintln!("  {} - {}", id.red(), err);
         }
@@ -83,6 +91,7 @@ pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> R
 
 /// Mark a single task as done.
 async fn mark_task_done(config: &Config, task_id: &str, no_sync: bool) -> Result<String> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
@@ -180,9 +189,12 @@ async fn mark_task_done(config: &Config, task_id: &str, no_sync: bool) -> Result
     // Sync
     if !no_sync {
         if ctx.try_sync().await {
-            println!("{}", "  ✓ Synced with server".green());
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
         } else {
-            println!("{}", "  ⊙ Queued for sync".yellow());
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
         }
     }
 

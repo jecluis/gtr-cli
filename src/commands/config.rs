@@ -21,6 +21,7 @@ use colored::Colorize;
 
 use crate::Result;
 use crate::config::Config;
+use crate::icons::Icons;
 
 /// Show current editor configuration.
 pub fn show_editor(config: &Config) -> Result<()> {
@@ -38,10 +39,16 @@ pub fn show_editor(config: &Config) -> Result<()> {
 
 /// Set editor in configuration file.
 pub fn set_editor(config: &mut Config, editor: String) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     config.editor = Some(editor.clone());
     config.save()?;
 
-    println!("{}", "✓ Editor configuration updated!".green().bold());
+    println!(
+        "{}",
+        format!("{} Editor configuration updated!", icons.success)
+            .green()
+            .bold()
+    );
     println!("  Editor set to: {}", editor.cyan());
     println!();
 
@@ -50,13 +57,19 @@ pub fn set_editor(config: &mut Config, editor: String) -> Result<()> {
 
 /// Unset (remove) editor from configuration file.
 pub fn unset_editor(config: &mut Config) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     config.editor = None;
     config.save()?;
 
     let fallback = resolve_editor(config);
     let source = get_editor_source(config);
 
-    println!("{}", "✓ Editor configuration removed!".green().bold());
+    println!(
+        "{}",
+        format!("{} Editor configuration removed!", icons.success)
+            .green()
+            .bold()
+    );
     println!("  Now using: {} ({})", fallback.cyan(), source.dimmed());
     println!();
 

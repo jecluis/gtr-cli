@@ -219,15 +219,6 @@ impl Task {
     pub fn is_deleted(&self) -> bool {
         self.deleted.is_some()
     }
-
-    /// Return the joy emoji for this task, or empty string for neutral joy.
-    pub fn joy_emoji(&self) -> &'static str {
-        match self.joy {
-            8..=10 => "🌟",
-            0..=4 => "💤",
-            _ => "",
-        }
-    }
 }
 
 // -- Version models --

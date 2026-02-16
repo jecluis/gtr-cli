@@ -24,6 +24,7 @@ use colored::Colorize;
 
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::models::{
     ConfigResponse, ConfigUpdateRequest, ImpactConfigUpdate, PromotionThresholdsUpdate,
 };
@@ -170,6 +171,7 @@ pub async fn show(config: &Config, project: Option<String>) -> Result<()> {
 
 /// Edit promotion thresholds via editor or file.
 pub async fn set(config: &Config, project: Option<String>, file: Option<String>) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let cfg = fetch_config(&client, project.as_deref()).await?;
 
@@ -262,7 +264,12 @@ pub async fn set(config: &Config, project: Option<String>, file: Option<String>)
 
     update_cache_from_response(config, &updated);
 
-    println!("{}", "✓ Configuration updated!".green().bold());
+    println!(
+        "{}",
+        format!("{} Configuration updated!", icons.success)
+            .green()
+            .bold()
+    );
     Ok(())
 }
 

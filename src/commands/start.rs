@@ -23,6 +23,7 @@ use dialoguer::Select;
 
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, Task, WorkState};
 use crate::{Result, utils};
@@ -37,6 +38,7 @@ pub async fn run(
     filter: Option<String>,
     no_sync: bool,
 ) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
 
@@ -51,7 +53,7 @@ pub async fn run(
     if task.current_work_state.as_deref() == Some("doing") {
         println!(
             "{} {} is already in progress",
-            "ℹ".blue(),
+            icons.info.blue(),
             task.id[..8].cyan()
         );
         return Ok(());
@@ -88,16 +90,22 @@ pub async fn run(
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
 
-    println!("{}", "✓ Task started!".green().bold());
+    println!(
+        "{}",
+        format!("{} Task started!", icons.success).green().bold()
+    );
     println!("  ID:       {}", task.id.cyan());
     println!("  Title:    {}", task.title);
     println!("  Status:   {}", "doing".green());
 
     if !no_sync {
         if ctx.try_sync().await {
-            println!("{}", "  ✓ Synced with server".green());
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
         } else {
-            println!("{}", "  ⊙ Queued for sync".yellow());
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
         }
     }
 

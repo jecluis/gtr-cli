@@ -25,6 +25,7 @@ use crate::Result;
 use crate::cache::{FeelsPrompt, TaskCache};
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, Task, WorkState};
 use crate::promotion;
@@ -93,8 +94,10 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
+    let icons = Icons::new(config.effective_icon_theme());
+
     // Show picker (always, even for 1 task)
-    let selected_id = pick_next_task(&tasks, &cached, energy, focus)?;
+    let selected_id = pick_next_task(&tasks, &cached, energy, focus, &icons)?;
 
     // Load the selected task and transition to "doing"
     let mut task = ctx.load_task(&client, &selected_id).await?;
@@ -102,7 +105,7 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
     if task.current_work_state.as_deref() == Some("doing") {
         println!(
             "{} {} is already in progress",
-            "ℹ".blue(),
+            icons.info.blue(),
             task.id[..8].cyan()
         );
         return Ok(());
@@ -139,16 +142,24 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
 
-    println!("{}", "✓ Task started!".green().bold());
+    println!(
+        "{}",
+        format!("{} Task started!", icons.success).green().bold()
+    );
     println!("  ID:       {}", task.id.cyan());
     println!("  Title:    {}", task.title);
     println!("  Status:   {}", "doing".green());
 
     if !no_sync {
         if ctx.try_sync().await {
-            println!("{}", "  ✓ Synced with server".green());
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success)
+                    .as_str()
+                    .green()
+            );
         } else {
-            println!("{}", "  ⊙ Queued for sync".yellow());
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
         }
     }
 
@@ -380,6 +391,7 @@ fn pick_next_task(
     thresholds: &CachedThresholds,
     energy: u8,
     focus: u8,
+    icons: &Icons,
 ) -> Result<String> {
     let low_capacity = energy > 0 && energy <= 2 || focus > 0 && focus <= 2;
 
@@ -391,18 +403,18 @@ fn pick_next_task(
 
             // Priority indicator (uses effective priority)
             if promotion::effective_priority(t, thresholds) == "now" {
-                context_parts.push("🔴".to_string());
+                context_parts.push(icons.priority_now.to_string());
             }
 
-            // Impact emoji
+            // Impact icon
             match t.impact {
-                1 => context_parts.push("🔥".to_string()),
-                2 => context_parts.push("⚡".to_string()),
+                1 => context_parts.push(icons.impact_critical.trim().to_string()),
+                2 => context_parts.push(icons.impact_significant.trim().to_string()),
                 _ => {}
             }
 
-            // Joy emoji
-            let je = t.joy_emoji();
+            // Joy icon
+            let je = icons.joy_icon(t.joy);
             if !je.is_empty() {
                 context_parts.push(je.to_string());
             }
@@ -416,7 +428,11 @@ fn pick_next_task(
                 let deadline_utc = deadline.with_timezone(&chrono::Utc);
 
                 if deadline_utc < now {
-                    context_parts.push("⚠️  OVERDUE".red().to_string());
+                    context_parts.push(
+                        format!("{} OVERDUE", icons.overdue.trim())
+                            .red()
+                            .to_string(),
+                    );
                     is_urgent = true;
                 } else {
                     let duration = deadline_utc - now;

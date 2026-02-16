@@ -22,6 +22,7 @@ use colored::Colorize;
 use crate::Result;
 use crate::cache::TaskCache;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::storage::{StorageConfig, TaskStorage};
 use crate::sync::SyncManager;
 
@@ -38,17 +39,21 @@ fn init_sync(config: &Config) -> Result<SyncManager> {
 
 /// gtr sync now - Manual bidirectional sync.
 pub async fn now(config: &Config) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let sync = init_sync(config)?;
 
     println!("{}", "Syncing with server...".dimmed());
 
     match sync.sync_full().await {
         Ok(()) => {
-            println!("{}", "✓ Sync completed successfully".green());
+            println!(
+                "{}",
+                format!("{} Sync completed successfully", icons.success).green()
+            );
             Ok(())
         }
         Err(e) => {
-            println!("{} {}", "✗ Sync failed:".red(), e);
+            println!("{} {}", format!("{} Sync failed:", icons.failure).red(), e);
             Err(e)
         }
     }
@@ -56,6 +61,7 @@ pub async fn now(config: &Config) -> Result<()> {
 
 /// gtr sync status - Show sync state.
 pub async fn status(config: &Config) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let sync = init_sync(config)?;
     let status = sync.sync_status().await?;
 
@@ -63,9 +69,9 @@ pub async fn status(config: &Config) -> Result<()> {
 
     // Server reachability
     let server_status = if status.server_reachable {
-        "✓ reachable".green()
+        format!("{} reachable", icons.success).green()
     } else {
-        "✗ unreachable".red()
+        format!("{} unreachable", icons.failure).red()
     };
     println!("  Server:     {}", server_status);
 
@@ -73,7 +79,7 @@ pub async fn status(config: &Config) -> Result<()> {
     if status.pending_push > 0 {
         println!("  {} {} tasks to push", "↑".yellow(), status.pending_push);
     } else {
-        println!("  {} No pending changes", "✓".green());
+        println!("  {} No pending changes", icons.success.green());
     }
 
     Ok(())

@@ -29,6 +29,7 @@ use tabled::settings::width::Width;
 use tabled::settings::{Alignment, Modify, Style, object::Columns};
 use tabled::{Table, Tabled};
 
+use crate::icons::Icons;
 use crate::markdown::MarkdownRenderer;
 use crate::models::{Project, Task};
 use crate::promotion;
@@ -243,6 +244,7 @@ pub fn print_tasks(
     verbose: bool,
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
+    icons: &Icons,
 ) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
@@ -256,6 +258,7 @@ pub fn print_tasks(
         verbose,
         doing_count,
         thresholds,
+        icons,
     );
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
@@ -270,6 +273,7 @@ fn print_task_table(
     verbose: bool,
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
+    icons: &Icons,
 ) {
     // Detect which columns to show
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
@@ -309,6 +313,7 @@ fn print_task_table(
             fancy,
             doing_count,
             thresholds,
+            icons,
         );
     } else {
         // Narrow terminal: use simplified format
@@ -321,6 +326,7 @@ fn print_task_table(
             fancy,
             doing_count,
             thresholds,
+            icons,
         );
     }
 }
@@ -332,26 +338,26 @@ fn build_task_row(
     absolute_dates: bool,
     thresholds: &CachedThresholds,
     colorize: bool,
+    icons: &Icons,
 ) -> TaskRowData {
     let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
         .unwrap()
         .with_timezone(&Local);
     let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
 
-    // Joy emoji prefix for task title
-    let je = task.joy_emoji();
+    // Joy icon prefix for task title
+    let je = icons.joy_icon(task.joy);
     let joy_prefix = if je.is_empty() {
         String::new()
     } else {
         format!("{je} ")
     };
 
-    // Impact emoji prefix: reserve space for alignment
-    // Emojis are ~2 char widths + 1 space = 3 total visual width
+    // Impact icon prefix: spacing depends on theme
     let impact_prefix = match task.impact {
-        1 => "\u{1f525} ", // 🔥 + space
-        2 => "\u{26a1} ",  // ⚡ + space
-        _ => "   ",        // 3 spaces to match emoji visual width
+        1 => &icons.impact_critical,
+        2 => &icons.impact_significant,
+        _ => &icons.impact_none,
     };
     let eff_priority = promotion::effective_priority(task, thresholds);
     let priority_colored = match eff_priority {
@@ -409,6 +415,7 @@ fn render_task_table(
     fancy: bool,
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
+    icons: &Icons,
 ) {
     let mut builder = Builder::default();
 
@@ -433,7 +440,14 @@ fn render_task_table(
     // Build rows based on column configuration
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     for task in tasks {
-        let row = build_task_row(task, prefix_len, absolute_dates, thresholds, colorize);
+        let row = build_task_row(
+            task,
+            prefix_len,
+            absolute_dates,
+            thresholds,
+            colorize,
+            icons,
+        );
 
         let mut record: Vec<String> = vec![row.id, row.title];
         if columns.show_project {
@@ -504,10 +518,18 @@ fn render_simplified_table(
     _fancy: bool,
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
+    icons: &Icons,
 ) {
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     for (idx, task) in tasks.iter().enumerate() {
-        let row = build_task_row(task, prefix_len, absolute_dates, thresholds, colorize);
+        let row = build_task_row(
+            task,
+            prefix_len,
+            absolute_dates,
+            thresholds,
+            colorize,
+            icons,
+        );
 
         // Insert separator between doing and other tasks
         if let Some(count) = doing_count
@@ -587,6 +609,7 @@ pub fn print_task_details(
     no_format: bool,
     no_wrap: bool,
     thresholds: &CachedThresholds,
+    icons: &Icons,
 ) {
     let renderer = if no_format {
         MarkdownRenderer::with_override(Some(false)) // Force disable
@@ -688,7 +711,7 @@ pub fn print_task_details(
         .unwrap_or_else(|| "Unknown".to_string());
     println!("  Impact:   {} ({})", impact_label, task.impact);
 
-    let je = task.joy_emoji();
+    let je = icons.joy_icon(task.joy);
     let joy_suffix = if je.is_empty() { "" } else { " " };
     println!("  Joy:      {}{}{}", task.joy, joy_suffix, je);
 

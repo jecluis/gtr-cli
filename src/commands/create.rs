@@ -25,6 +25,7 @@ use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::hierarchy;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::Task;
 use crate::{threshold_cache, utils};
@@ -45,6 +46,8 @@ pub async fn run(
     parent_id: Option<String>,
     no_sync: bool,
 ) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+
     // Get project ID (may require server)
     let client = Client::new(config)?;
     let project_id = utils::resolve_project(&client, project).await?;
@@ -60,7 +63,10 @@ pub async fn run(
         match crate::editor::edit_text(config, "") {
             Ok(content) => content,
             Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
-                println!("{}", "✗ Operation cancelled".yellow());
+                println!(
+                    "{}",
+                    format!("{} Operation cancelled", icons.cancelled).yellow()
+                );
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -89,7 +95,11 @@ pub async fn run(
         if depth >= 3 {
             eprintln!(
                 "{}",
-                "⚠ Warning: nesting depth > 3 can be hard to manage".yellow()
+                format!(
+                    "{} Warning: nesting depth > 3 can be hard to manage",
+                    icons.overdue.trim()
+                )
+                .yellow()
             );
         }
         Some(full_pid)
@@ -124,7 +134,12 @@ pub async fn run(
     ctx.storage.create_task(&project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
 
-    println!("{}", "✓ Task created locally!".green().bold());
+    println!(
+        "{}",
+        format!("{} Task created locally!", icons.success)
+            .green()
+            .bold()
+    );
     println!("  ID:       {}", task.id.cyan());
     println!("  Title:    {}", task.title);
     println!("  Priority: {}", task.priority);
@@ -146,7 +161,7 @@ pub async fn run(
     println!("  Impact:   {} ({})", impact_label, task.impact);
 
     if task.joy != 5 {
-        let je = task.joy_emoji();
+        let je = icons.joy_icon(task.joy);
         let joy_suffix = if je.is_empty() { "" } else { " " };
         println!("  Joy:      {}{}{}", task.joy, joy_suffix, je);
     }
@@ -159,9 +174,15 @@ pub async fn run(
     // Attempt sync if enabled
     if !no_sync {
         if ctx.try_sync().await {
-            println!("{}", "  ✓ Synced with server".green());
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
         } else {
-            println!("{}", "  ⊙ Queued for sync (server unreachable)".yellow());
+            println!(
+                "{}",
+                format!("  {} Queued for sync (server unreachable)", icons.queued).yellow()
+            );
         }
     }
 

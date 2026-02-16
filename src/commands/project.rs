@@ -22,11 +22,13 @@ use colored::Colorize;
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::models::{CreateProjectRequest, UpdateProjectRequest};
 use crate::output;
 
 /// Create a new project.
 pub async fn create(config: &Config, name: &str, description: Option<String>) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
 
     // Generate slug-like ID from name
@@ -48,7 +50,12 @@ pub async fn create(config: &Config, name: &str, description: Option<String>) ->
 
     let project = client.create_project(&req).await?;
 
-    println!("{}", "✓ Project created successfully!".green().bold());
+    println!(
+        "{}",
+        format!("{} Project created successfully!", icons.success)
+            .green()
+            .bold()
+    );
     println!("  ID:          {}", project.id.cyan());
     println!("  Name:        {}", project.name);
     if let Some(desc) = &project.description {
@@ -64,6 +71,7 @@ pub async fn create(config: &Config, name: &str, description: Option<String>) ->
 
 /// Update a project.
 pub async fn update(config: &Config, project_id: &str, description: Option<String>) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
 
     let req = UpdateProjectRequest {
@@ -73,7 +81,12 @@ pub async fn update(config: &Config, project_id: &str, description: Option<Strin
 
     let project = client.update_project(project_id, &req).await?;
 
-    println!("{}", "✓ Project updated successfully!".green().bold());
+    println!(
+        "{}",
+        format!("{} Project updated successfully!", icons.success)
+            .green()
+            .bold()
+    );
     println!("  ID:          {}", project.id.cyan());
     println!("  Name:        {}", project.name);
     if let Some(desc) = &project.description {

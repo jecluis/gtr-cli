@@ -122,6 +122,7 @@ mod tests {
             log_level: "info".to_string(),
             cache_dir: dir.to_path_buf(),
             config_path: dir.join("config.toml"),
+            icon_theme: crate::icons::IconTheme::default(),
         }
     }
 

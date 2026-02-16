@@ -23,6 +23,7 @@ use colored::Colorize;
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, LogSource, TaskStatus};
 use crate::utils;
@@ -32,6 +33,7 @@ use crate::utils;
 /// When no task_id is provided, smart resolution picks from "doing" tasks
 /// or falls back to all pending tasks.
 pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: bool) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
 
@@ -78,7 +80,12 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
     ctx.storage.update_task(&task.project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
 
-    println!("{}", "✓ Progress updated locally!".green().bold());
+    println!(
+        "{}",
+        format!("{} Progress updated locally!", icons.success)
+            .green()
+            .bold()
+    );
     println!("  ID:       {}", task.id.cyan());
     println!("  Title:    {}", task.title);
 
@@ -92,14 +99,20 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
     );
 
     if auto_done {
-        println!("  {}", "✓ Task auto-marked as done (100% complete)".green());
+        println!(
+            "  {}",
+            format!("{} Task auto-marked as done (100% complete)", icons.success).green()
+        );
     }
 
     if !no_sync {
         if ctx.try_sync().await {
-            println!("{}", "  ✓ Synced with server".green());
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
         } else {
-            println!("{}", "  ⊙ Queued for sync".yellow());
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
         }
     }
 

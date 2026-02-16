@@ -25,6 +25,7 @@ use crate::Result;
 use crate::cache::TaskCache;
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 
 /// Entry point: interactive picker when no args, direct set otherwise.
 pub async fn run(
@@ -43,6 +44,7 @@ pub async fn run(
 
 /// Set today's energy and focus, with best-effort server push.
 pub async fn set(config: &Config, energy: u8, focus: u8, no_sync: bool) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let today = Local::now().date_naive();
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
@@ -52,7 +54,10 @@ pub async fn set(config: &Config, energy: u8, focus: u8, no_sync: bool) -> Resul
     let energy_label = energy_description(energy);
     let focus_label = focus_description(focus);
 
-    println!("{}", "✓ Feels updated".green().bold());
+    println!(
+        "{}",
+        format!("{} Feels updated", icons.success).green().bold()
+    );
     println!("  Energy:  {} ({})", energy, energy_label);
     println!("  Focus:   {} ({})", focus, focus_label);
 
@@ -60,8 +65,11 @@ pub async fn set(config: &Config, energy: u8, focus: u8, no_sync: bool) -> Resul
         let utc_offset = Local::now().offset().to_string();
         let client = Client::new(config)?;
         match client.post_feels(energy, focus, &utc_offset).await {
-            Ok(()) => println!("{}", "  ✓ Synced with server".green()),
-            Err(_) => println!("{}", "  ⊙ Queued for sync".yellow()),
+            Ok(()) => println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            ),
+            Err(_) => println!("{}", format!("  {} Queued for sync", icons.queued).yellow()),
         }
     }
 

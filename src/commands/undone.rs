@@ -24,6 +24,7 @@ use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
 use crate::hierarchy;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, TaskStatus};
 use crate::utils;
@@ -35,6 +36,7 @@ pub async fn run(
     progress: Option<u8>,
     no_sync: bool,
 ) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
@@ -76,15 +78,23 @@ pub async fn run(
         hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.project_id, &task.id)?;
     }
 
-    println!("{}", "✓ Task restored to pending locally!".green().bold());
+    println!(
+        "{}",
+        format!("{} Task restored to pending locally!", icons.success)
+            .green()
+            .bold()
+    );
     println!("  ID:    {}", task.id.cyan());
     println!("  Title: {}", task.title);
 
     if !no_sync {
         if ctx.try_sync().await {
-            println!("{}", "  ✓ Synced with server".green());
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
         } else {
-            println!("{}", "  ⊙ Queued for sync".yellow());
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
         }
     }
 

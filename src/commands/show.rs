@@ -23,6 +23,7 @@ use dialoguer::Select;
 use crate::cache::TaskCache;
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::{Error, Result, output, threshold_cache, utils};
 
@@ -47,8 +48,9 @@ pub async fn run(
     // Load from local storage (or fetch from server if not cached)
     let task = ctx.load_task(&client, &full_id).await?;
 
+    let icons = Icons::new(config.effective_icon_theme());
     let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
-    output::print_task_details(config, &task, no_format, no_wrap, &cached);
+    output::print_task_details(config, &task, no_format, no_wrap, &cached, &icons);
 
     // Show parent info
     if let Some(ref parent_id) = task.parent_id {
@@ -251,8 +253,10 @@ async fn run_tree(
         .interact_opt()
         .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
 
+    let icons = Icons::new(config.effective_icon_theme());
+
     let Some(idx) = selection else {
-        eprintln!("{}", "✗ Operation cancelled".yellow());
+        eprintln!("{} Operation cancelled", icons.cancelled.yellow());
         return Ok(());
     };
 
@@ -261,7 +265,7 @@ async fn run_tree(
     // Show full details for the selected task (reuse normal show path)
     let task = ctx.load_task(client, selected_id).await?;
     let cached = threshold_cache::fetch_thresholds(config, client, no_sync).await;
-    output::print_task_details(config, &task, no_format, no_wrap, &cached);
+    output::print_task_details(config, &task, no_format, no_wrap, &cached, &icons);
 
     // Show parent info
     if let Some(ref parent_id) = task.parent_id {

@@ -21,6 +21,7 @@ use colored::Colorize;
 
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::{Result, output, threshold_cache};
 
@@ -98,6 +99,7 @@ pub async fn run(
 
     // Search results default to relative dates for better UX
     let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
+    let icons = Icons::new(config.effective_icon_theme());
     output::print_tasks(
         &matching_tasks,
         prefix_len,
@@ -106,6 +108,7 @@ pub async fn run(
         false,
         None,
         &cached,
+        &icons,
     );
 
     Ok(())

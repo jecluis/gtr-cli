@@ -22,10 +22,15 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::icons::IconTheme;
 use crate::{Error, Result};
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+fn default_icon_theme() -> IconTheme {
+    IconTheme::default()
 }
 
 /// CLI configuration.
@@ -47,6 +52,10 @@ pub struct Config {
     /// Log level (default: "info"). Overridden by GTR_LOG env var.
     #[serde(default = "default_log_level")]
     pub log_level: String,
+
+    /// Icon theme: "unicode" (default) or "nerd" (requires Nerd Font).
+    #[serde(default = "default_icon_theme")]
+    pub icon_theme: IconTheme,
 
     /// Cache directory (for Phase 1.5)
     #[serde(skip)]
@@ -115,6 +124,7 @@ impl Config {
             client_id,
             editor: None,
             log_level: default_log_level(),
+            icon_theme: default_icon_theme(),
             cache_dir,
             config_path: Self::default_config_path()?,
         })
@@ -134,6 +144,16 @@ impl Config {
             self.auth_token = t;
         }
         self
+    }
+
+    /// Resolve effective icon theme (env var > config file).
+    pub fn effective_icon_theme(&self) -> IconTheme {
+        if let Ok(val) = std::env::var("GTR_ICONS")
+            && let Ok(theme) = val.parse()
+        {
+            return theme;
+        }
+        self.icon_theme
     }
 
     /// Get default config file path.

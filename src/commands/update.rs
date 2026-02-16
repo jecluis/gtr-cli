@@ -25,6 +25,7 @@ use tracing::{debug, info};
 use crate::client::Client;
 use crate::config::Config;
 use crate::hierarchy;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType};
 use crate::utils;
@@ -46,6 +47,7 @@ pub async fn run(
     parent_id: Option<String>,
     no_sync: bool,
 ) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
 
@@ -102,7 +104,10 @@ pub async fn run(
                 }
             }
             Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
-                println!("{}", "✗ Operation cancelled".yellow());
+                println!(
+                    "{}",
+                    format!("{} Operation cancelled", icons.cancelled).yellow()
+                );
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -250,7 +255,11 @@ pub async fn run(
             if depth >= 3 {
                 eprintln!(
                     "{}",
-                    "⚠ Warning: nesting depth > 3 can be hard to manage".yellow()
+                    format!(
+                        "{} Warning: nesting depth > 3 can be hard to manage",
+                        icons.overdue.trim()
+                    )
+                    .yellow()
                 );
             }
             task.parent_id = Some(full_pid);
@@ -286,7 +295,12 @@ pub async fn run(
         hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.project_id, &task.id)?;
     }
 
-    println!("{}", "✓ Task updated locally!".green().bold());
+    println!(
+        "{}",
+        format!("{} Task updated locally!", icons.success)
+            .green()
+            .bold()
+    );
     println!("  ID:    {}", task.id.cyan());
     println!("  Title: {}", task.title);
 
@@ -392,9 +406,15 @@ pub async fn run(
     // Attempt sync if enabled
     if !no_sync {
         if ctx.try_sync().await {
-            println!("{}", "  ✓ Synced with server".green());
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
         } else {
-            println!("{}", "  ⊙ Queued for sync (server unreachable)".yellow());
+            println!(
+                "{}",
+                format!("  {} Queued for sync (server unreachable)", icons.queued).yellow()
+            );
         }
     }
 
