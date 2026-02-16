@@ -95,7 +95,8 @@ impl TaskCache {
                 sync_state BLOB,
                 impact INTEGER NOT NULL DEFAULT 3,
                 joy INTEGER NOT NULL DEFAULT 5,
-                current_work_state TEXT
+                current_work_state TEXT,
+                parent_id TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_project ON tasks(project_id);
@@ -122,6 +123,15 @@ impl TaskCache {
         let _ = self
             .conn
             .execute("ALTER TABLE tasks ADD COLUMN current_work_state TEXT", []);
+
+        // Migrate existing caches: add parent_id column if missing
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tasks ADD COLUMN parent_id TEXT", []);
+        let _ = self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_parent ON tasks(parent_id)",
+            [],
+        );
 
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
@@ -150,8 +160,8 @@ impl TaskCache {
             INSERT INTO tasks (
                 id, project_id, title, priority, size, created, modified,
                 done, deleted, deadline, version, needs_push, impact, joy,
-                current_work_state
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                current_work_state, parent_id
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
                 title = excluded.title,
@@ -165,7 +175,8 @@ impl TaskCache {
                 needs_push = excluded.needs_push OR needs_push,
                 impact = excluded.impact,
                 joy = excluded.joy,
-                current_work_state = excluded.current_work_state
+                current_work_state = excluded.current_work_state,
+                parent_id = excluded.parent_id
             "#,
                 params![
                     task.id,
@@ -183,6 +194,7 @@ impl TaskCache {
                     task.impact as i64,
                     task.joy as i64,
                     task.current_work_state,
+                    task.parent_id,
                 ],
             )
             .map_err(|e| Error::Database(format!("upsert failed: {e}")))?;
@@ -456,6 +468,151 @@ impl TaskCache {
                 |row| row.get(0),
             )
             .map_err(|e| Error::Database(format!("count pending sync failed: {e}")))
+    }
+
+    /// List all task IDs in the cache (for prefix resolution).
+    pub fn all_task_ids(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM tasks")
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(ids)
+    }
+
+    // -- Hierarchy operations --
+
+    /// Get direct children of a task.
+    pub fn get_children(&self, parent_id: &str) -> Result<Vec<TaskSummary>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r#"
+            SELECT id, project_id, title, priority, size, created, modified,
+                   done, deleted, deadline, needs_push
+            FROM tasks
+            WHERE parent_id = ?1 AND deleted IS NULL
+            ORDER BY modified DESC
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let tasks = stmt
+            .query_map(params![parent_id], |row| {
+                Ok(TaskSummary {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    title: row.get(2)?,
+                    priority: row.get(3)?,
+                    size: row.get(4)?,
+                    created: row.get(5)?,
+                    modified: row.get(6)?,
+                    done: row.get(7)?,
+                    deleted: row.get(8)?,
+                    deadline: row.get(9)?,
+                    needs_push: row.get::<_, i64>(10)? != 0,
+                })
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(tasks)
+    }
+
+    /// Get the parent_id for a task.
+    pub fn get_parent_id(&self, task_id: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT parent_id FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("query failed: {e}")))
+            .map(|opt| opt.flatten())
+    }
+
+    /// Get all descendant task IDs (BFS).
+    pub fn get_all_descendants(&self, task_id: &str) -> Result<Vec<String>> {
+        let mut result = Vec::new();
+        let mut queue = vec![task_id.to_string()];
+
+        while let Some(parent) = queue.pop() {
+            let children = self.get_children(&parent)?;
+            for child in &children {
+                queue.push(child.id.clone());
+                result.push(child.id.clone());
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Count direct children: returns (total, done_count).
+    pub fn count_children(&self, parent_id: &str) -> Result<(i64, i64)> {
+        let total: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE parent_id = ?1 AND deleted IS NULL",
+                params![parent_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("count total failed: {e}")))?;
+
+        let done: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE parent_id = ?1 AND deleted IS NULL AND done IS NOT NULL",
+                params![parent_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("count done failed: {e}")))?;
+
+        Ok((total, done))
+    }
+
+    /// Check if setting child's parent to proposed_parent would create a cycle.
+    pub fn would_create_cycle(&self, child_id: &str, proposed_parent_id: &str) -> Result<bool> {
+        if child_id == proposed_parent_id {
+            return Ok(true);
+        }
+        // Walk ancestors of proposed_parent to see if child_id appears
+        let mut current = proposed_parent_id.to_string();
+        for _ in 0..100 {
+            match self.get_parent_id(&current)? {
+                Some(pid) => {
+                    if pid == child_id {
+                        return Ok(true);
+                    }
+                    current = pid;
+                }
+                None => return Ok(false),
+            }
+        }
+        Ok(false)
+    }
+
+    /// Get the depth of a task in the hierarchy (0 = root).
+    pub fn get_depth(&self, task_id: &str) -> Result<u32> {
+        let mut depth = 0u32;
+        let mut current = task_id.to_string();
+        for _ in 0..100 {
+            match self.get_parent_id(&current)? {
+                Some(pid) => {
+                    depth += 1;
+                    current = pid;
+                }
+                None => break,
+            }
+        }
+        Ok(depth)
     }
 
     // -- Feels operations --

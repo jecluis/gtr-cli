@@ -492,6 +492,7 @@ mod tests {
             progress: None,
             impact,
             joy,
+            parent_id: None,
         }
     }
 

@@ -123,6 +123,37 @@ pub async fn resolve_task_id(client: &Client, short_id: &str) -> Result<String> 
     }
 }
 
+/// Resolve a potentially shortened task ID from the local cache.
+///
+/// Unlike `resolve_task_id`, this works offline using the SQLite cache.
+pub fn resolve_task_id_from_cache(
+    cache: &crate::cache::TaskCache,
+    short_id: &str,
+) -> Result<String> {
+    // Full UUID: return as-is
+    if short_id.len() == 36 && short_id.chars().filter(|&c| c == '-').count() == 4 {
+        return Ok(short_id.to_string());
+    }
+
+    // Search cache for prefix match
+    let all_ids = cache.all_task_ids()?;
+    let matches: Vec<&String> = all_ids
+        .iter()
+        .filter(|id| id.starts_with(short_id))
+        .collect();
+
+    match matches.len() {
+        0 => Err(Error::TaskNotFound(format!(
+            "No task found with ID prefix '{short_id}'"
+        ))),
+        1 => Ok(matches[0].clone()),
+        _ => Err(Error::UserFacing(format!(
+            "Ambiguous ID prefix '{short_id}' matches {} tasks. Please provide more characters.",
+            matches.len()
+        ))),
+    }
+}
+
 /// Normalize time-of-day expressions that chrono-english can't handle.
 ///
 /// chrono-english parses `8am`, `6pm` etc. but fails on `12pm`, `12am`,

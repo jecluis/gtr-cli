@@ -61,6 +61,9 @@ pub struct Task {
     pub impact: u8,
     #[serde(default = "default_joy")]
     pub joy: u8,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 fn default_impact() -> u8 {
@@ -176,10 +179,12 @@ pub struct CreateTaskRequest {
     pub impact: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub joy: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 /// Request to update a task.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct UpdateTaskRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -195,6 +200,8 @@ pub struct UpdateTaskRequest {
     pub impact: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub joy: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 impl Task {

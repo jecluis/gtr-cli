@@ -41,6 +41,7 @@ pub async fn run(
     progress: Option<u8>,
     impact: Option<u8>,
     joy: Option<u8>,
+    parent_id: Option<String>,
     no_sync: bool,
 ) -> Result<()> {
     // Get project ID (may require server)
@@ -71,6 +72,30 @@ pub async fn run(
     let task_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
+    // Save locally first so we can resolve parent_id against cache
+    let ctx = LocalContext::new(config, !no_sync)?;
+
+    // Resolve parent_id if provided
+    let resolved_parent = if let Some(ref pid) = parent_id {
+        let full_pid = utils::resolve_task_id_from_cache(&ctx.cache, pid)?;
+        // Validate parent exists
+        if !ctx.cache.task_exists(&full_pid)? {
+            return Err(crate::Error::UserFacing(format!(
+                "Parent task not found: {pid}"
+            )));
+        }
+        let depth = ctx.cache.get_depth(&full_pid)?;
+        if depth >= 3 {
+            eprintln!(
+                "{}",
+                "⚠ Warning: nesting depth > 3 can be hard to manage".yellow()
+            );
+        }
+        Some(full_pid)
+    } else {
+        None
+    };
+
     let task = Task {
         id: task_id.clone(),
         project_id: project_id.clone(),
@@ -91,10 +116,10 @@ pub async fn run(
         progress,
         impact: impact.unwrap_or(3),
         joy: joy.unwrap_or(5),
+        parent_id: resolved_parent.clone(),
     };
 
     // Save locally
-    let ctx = LocalContext::new(config, !no_sync)?;
     ctx.storage.create_task(&project_id, &task)?;
     ctx.cache.upsert_task(&task, true)?;
 

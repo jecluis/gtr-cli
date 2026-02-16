@@ -88,6 +88,11 @@ impl TaskDocument {
             tx.put(&meta, "impact", task.impact as i64)?;
             tx.put(&meta, "joy", task.joy as i64)?;
 
+            // Parent ID
+            if let Some(ref pid) = task.parent_id {
+                tx.put(&meta, "parent_id", pid.as_str())?;
+            }
+
             // Subtasks list
             let subtasks = tx.put_object(&meta, "subtasks", ObjType::List)?;
             for (i, subtask_id) in task.subtasks.iter().enumerate() {
@@ -171,6 +176,8 @@ impl TaskDocument {
             _ => 5,
         };
 
+        let parent_id = self.try_get_str(&meta_id, "parent_id")?;
+
         // Parse subtasks
         let subtasks = self.read_subtasks(&meta_id)?;
 
@@ -204,6 +211,7 @@ impl TaskDocument {
             progress,
             impact,
             joy,
+            parent_id,
         })
     }
 
@@ -325,6 +333,14 @@ impl TaskDocument {
 
                 if task.joy != current.joy {
                     tx.put(&meta, "joy", task.joy as i64)?;
+                }
+
+                if task.parent_id != current.parent_id {
+                    if let Some(ref pid) = task.parent_id {
+                        tx.put(&meta, "parent_id", pid.as_str())?;
+                    } else {
+                        let _ = tx.delete(&meta, "parent_id");
+                    }
                 }
 
                 if task.subtasks != current.subtasks {

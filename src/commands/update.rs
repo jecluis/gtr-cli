@@ -42,6 +42,7 @@ pub async fn run(
     progress: Option<u8>,
     impact: Option<u8>,
     joy: Option<u8>,
+    parent_id: Option<String>,
     no_sync: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
@@ -56,9 +57,10 @@ pub async fn run(
         && progress.is_none()
         && impact.is_none()
         && joy.is_none()
+        && parent_id.is_none()
     {
         return Err(Error::UserFacing(
-            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, --deadline, --progress, --impact, or --joy)".to_string(),
+            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, --deadline, --progress, --impact, --joy, or --for)".to_string(),
         ));
     }
 
@@ -220,6 +222,38 @@ pub async fn run(
             source: crate::models::LogSource::User,
         });
         task.joy = new_joy;
+    }
+
+    // Handle parent_id change
+    if let Some(ref new_parent) = parent_id {
+        if new_parent == "none" {
+            task.parent_id = None;
+        } else {
+            let full_pid = utils::resolve_task_id_from_cache(&ctx.cache, new_parent)?;
+            if full_pid == full_id {
+                return Err(Error::UserFacing(
+                    "A task cannot be its own parent".to_string(),
+                ));
+            }
+            if !ctx.cache.task_exists(&full_pid)? {
+                return Err(Error::UserFacing(format!(
+                    "Parent task not found: {new_parent}"
+                )));
+            }
+            if ctx.cache.would_create_cycle(&full_id, &full_pid)? {
+                return Err(Error::UserFacing(
+                    "Setting this parent would create a cycle".to_string(),
+                ));
+            }
+            let depth = ctx.cache.get_depth(&full_pid)?;
+            if depth >= 3 {
+                eprintln!(
+                    "{}",
+                    "⚠ Warning: nesting depth > 3 can be hard to manage".yellow()
+                );
+            }
+            task.parent_id = Some(full_pid);
+        }
     }
 
     // Update metadata

@@ -166,6 +166,10 @@ enum Commands {
         #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=10))]
         joy: Option<u8>,
 
+        /// Parent task ID (creates subtask)
+        #[arg(long = "for", value_name = "PARENT_ID")]
+        parent: Option<String>,
+
         /// Skip sync (work offline)
         #[arg(long)]
         no_sync: bool,
@@ -207,6 +211,10 @@ enum Commands {
         /// New joy level (0=dreading, 5=neutral, 10=love it)
         #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=10))]
         joy: Option<u8>,
+
+        /// Parent task ID (re-parent; use "none" to clear)
+        #[arg(long = "for", value_name = "PARENT_ID")]
+        parent: Option<String>,
 
         /// Skip sync (work offline)
         #[arg(long)]
@@ -591,12 +599,13 @@ async fn run() -> Result<()> {
             progress,
             impact,
             joy,
+            parent,
             no_sync,
         } => {
             let title_str = title.join(" ");
             gtr::commands::create::run(
                 &config, project, &title_str, body, &priority, &size, deadline, progress, impact,
-                joy, no_sync,
+                joy, parent, no_sync,
             )
             .await
         }
@@ -610,11 +619,12 @@ async fn run() -> Result<()> {
             progress,
             impact,
             joy,
+            parent,
             no_sync,
         } => {
             gtr::commands::update::run(
                 &config, &task_id, title, body, priority, size, deadline, progress, impact, joy,
-                no_sync,
+                parent, no_sync,
             )
             .await
         }

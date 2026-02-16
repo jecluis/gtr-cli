@@ -114,6 +114,7 @@ mod tests {
             progress: None,
             impact,
             joy: 5,
+            parent_id: None,
         }
     }
 
