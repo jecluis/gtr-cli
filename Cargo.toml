@@ -58,6 +58,10 @@ tracing-appender = "0.2"
 tempfile = "3.8"
 which = "8.0"
 
+# HTML parsing (for --from/--bookmark URL fetching)
+scraper = "0.22"
+url = "2.5"
+
 # Local storage and CRDT
 automerge = "0.7.3"
 rusqlite = { version = "0.32", features = ["bundled"] }

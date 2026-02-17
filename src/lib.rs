@@ -35,6 +35,7 @@ pub mod promotion;
 pub mod storage;
 pub mod sync;
 pub mod threshold_cache;
+pub mod url_fetch;
 pub mod utils;
 
 pub use client::Client;
