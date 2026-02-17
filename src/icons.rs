@@ -100,6 +100,14 @@ pub struct Icons {
     /// Queued for later sync
     pub queued: String,
 
+    // -- Hierarchy (subtitle line in list tables) --
+    /// Parent indicator ("belongs to")
+    pub hierarchy_parent: String,
+    /// Subtask count indicator ("has children")
+    pub hierarchy_subtasks: String,
+    /// Separator between parent ID and subtask count
+    pub hierarchy_separator: String,
+
     // -- Informational --
     /// Non-blocking informational message
     pub info: String,
@@ -148,6 +156,11 @@ impl Icons {
             failure: "\u{2717}".into(), // ✗
             queued: "\u{2299}".into(),  // ⊙
 
+            // Hierarchy
+            hierarchy_parent: "\u{21b3}".into(),    // ↳
+            hierarchy_subtasks: "\u{25b6}".into(),  // ▶
+            hierarchy_separator: "\u{00b7}".into(), // ·
+
             // Informational
             info: "\u{2139}".into(),      // ℹ
             cancelled: "\u{2717}".into(), // ✗
@@ -177,6 +190,11 @@ impl Icons {
             success: "\u{f00c}".into(), // nf-fa-check
             failure: "\u{f00d}".into(), // nf-fa-close
             queued: "\u{f110}".into(),  // nf-fa-spinner
+
+            // Hierarchy
+            hierarchy_parent: "\u{f0da3}".into(), // 󰶣 nf-md (up-arrow)
+            hierarchy_subtasks: "\u{ef81}".into(), // nf (folder tree)
+            hierarchy_separator: "\u{f444}".into(), // nf-oct-dot_fill
 
             // Informational
             info: "\u{f05a}".into(),      // nf-fa-info_circle

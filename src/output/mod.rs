@@ -17,7 +17,7 @@
 
 //! Pretty output formatting for tasks and projects.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Local, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
@@ -331,6 +331,20 @@ fn print_task_table(
     }
 }
 
+/// Compute subtask counts from a task list.
+///
+/// Returns a map from task ID to the number of direct children present
+/// in the given slice.
+fn compute_subtask_counts(tasks: &[Task]) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for task in tasks {
+        if let Some(ref parent_id) = task.parent_id {
+            *counts.entry(parent_id.clone()).or_default() += 1;
+        }
+    }
+    counts
+}
+
 /// Build formatted task row data from a Task.
 fn build_task_row(
     task: &Task,
@@ -339,6 +353,7 @@ fn build_task_row(
     thresholds: &CachedThresholds,
     colorize: bool,
     icons: &Icons,
+    subtask_counts: &HashMap<String, usize>,
 ) -> TaskRowData {
     let modified = chrono::DateTime::parse_from_rfc3339(&task.modified)
         .unwrap()
@@ -381,26 +396,88 @@ fn build_task_row(
         "pending".green().to_string()
     };
 
-    // Hierarchy indicator: show parent short-id if this is a subtask
-    let hierarchy_suffix = if let Some(ref parent_id) = task.parent_id {
-        let short = &parent_id[..parent_id.len().min(8)];
-        if colorize {
-            format!(" {}", format!("↳ {short}").dimmed())
-        } else {
-            format!(" ↳ {short}")
-        }
+    // Build hierarchy subtitle line (below the title)
+    let subtitle = build_hierarchy_subtitle(task, prefix_len, colorize, icons, subtask_counts);
+    let title = if subtitle.is_empty() {
+        format!("{}{}", joy_prefix, task.title)
     } else {
-        String::new()
+        format!("{}{}\n{}", joy_prefix, task.title, subtitle)
     };
 
     TaskRowData {
         id: format_task_id(&task.id, prefix_len, colorize),
-        title: format!("{}{}{}", joy_prefix, task.title, hierarchy_suffix),
+        title,
         priority: priority_colored,
         size: task.size.clone(),
         modified: modified_str,
         deadline: deadline_str,
         status,
+    }
+}
+
+/// Build the hierarchy subtitle line for a task's title cell.
+///
+/// Shows parent ID and/or subtask count on a dimmed line below the title.
+/// Returns empty string if the task has neither parent nor children.
+fn build_hierarchy_subtitle(
+    task: &Task,
+    prefix_len: usize,
+    colorize: bool,
+    icons: &Icons,
+    subtask_counts: &HashMap<String, usize>,
+) -> String {
+    let has_parent = task.parent_id.is_some();
+    let child_count = subtask_counts.get(&task.id).copied().unwrap_or(0);
+
+    if !has_parent && child_count == 0 {
+        return String::new();
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+
+    // Parent reference
+    if let Some(ref parent_id) = task.parent_id {
+        let parent_id_formatted = format_task_id(parent_id, prefix_len, colorize);
+        if colorize {
+            parts.push(format!(
+                "{} {}",
+                icons.hierarchy_parent.blue(),
+                parent_id_formatted
+            ));
+        } else {
+            parts.push(format!(
+                "{} {}",
+                icons.hierarchy_parent, parent_id_formatted
+            ));
+        }
+    }
+
+    // Subtask count
+    if child_count > 0 {
+        let label = if child_count == 1 {
+            "1 subtask".to_string()
+        } else {
+            format!("{child_count} subtasks")
+        };
+        if colorize {
+            parts.push(format!(
+                "{} {}",
+                icons.hierarchy_subtasks.green(),
+                label.green()
+            ));
+        } else {
+            parts.push(format!("{} {label}", icons.hierarchy_subtasks));
+        }
+    }
+
+    if colorize {
+        let sep = format!(" {} ", icons.hierarchy_separator).bright_black();
+        format!("  {}", parts.join(&sep.to_string()))
+    } else {
+        format!(
+            "  {}",
+            parts.join(&format!(" {} ", icons.hierarchy_separator))
+        )
     }
 }
 
@@ -439,6 +516,7 @@ fn render_task_table(
 
     // Build rows based on column configuration
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
+    let subtask_counts = compute_subtask_counts(tasks);
     for task in tasks {
         let row = build_task_row(
             task,
@@ -447,6 +525,7 @@ fn render_task_table(
             thresholds,
             colorize,
             icons,
+            &subtask_counts,
         );
 
         let mut record: Vec<String> = vec![row.id, row.title];
@@ -521,6 +600,7 @@ fn render_simplified_table(
     icons: &Icons,
 ) {
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
+    let subtask_counts = compute_subtask_counts(tasks);
     for (idx, task) in tasks.iter().enumerate() {
         let row = build_task_row(
             task,
@@ -529,6 +609,7 @@ fn render_simplified_table(
             thresholds,
             colorize,
             icons,
+            &subtask_counts,
         );
 
         // Insert separator between doing and other tasks
