@@ -50,6 +50,7 @@ pub async fn tasks(
     verbose: bool,
     for_task: Option<String>,
     recursive: bool,
+    compact: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
@@ -244,6 +245,7 @@ pub async fn tasks(
         Some(doing_count),
         &cached,
         &icons,
+        compact,
     );
     Ok(())
 }

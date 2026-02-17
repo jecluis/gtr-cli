@@ -109,6 +109,7 @@ pub async fn run(
         None,
         &cached,
         &icons,
+        false,
     );
 
     Ok(())

@@ -245,6 +245,7 @@ pub fn print_tasks(
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
     icons: &Icons,
+    compact: bool,
 ) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
@@ -259,6 +260,7 @@ pub fn print_tasks(
         doing_count,
         thresholds,
         icons,
+        compact,
     );
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
@@ -274,6 +276,7 @@ fn print_task_table(
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
     icons: &Icons,
+    compact: bool,
 ) {
     // Detect which columns to show
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
@@ -314,6 +317,7 @@ fn print_task_table(
             doing_count,
             thresholds,
             icons,
+            compact,
         );
     } else {
         // Narrow terminal: use simplified format
@@ -327,6 +331,7 @@ fn print_task_table(
             doing_count,
             thresholds,
             icons,
+            compact,
         );
     }
 }
@@ -483,6 +488,10 @@ fn build_hierarchy_subtitle(
 
 /// Render a task table with configurable columns using the Builder pattern.
 #[allow(clippy::too_many_arguments)]
+/// Minimum number of rows before row separators are inserted.
+const ROW_SEPARATOR_THRESHOLD: usize = 10;
+
+#[allow(clippy::too_many_arguments)]
 fn render_task_table(
     tasks: &[Task],
     prefix_len: usize,
@@ -493,6 +502,7 @@ fn render_task_table(
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
     icons: &Icons,
+    compact: bool,
 ) {
     let mut builder = Builder::default();
 
@@ -571,6 +581,30 @@ fn render_task_table(
         );
     }
 
+    // Insert thin row separators when the table is long or has multi-line
+    // rows (hierarchy subtitles or wrapped titles), unless --compact.
+    let has_multiline_rows = tasks
+        .iter()
+        .any(|t| t.parent_id.is_some() || subtask_counts.contains_key(&t.id) || t.title.len() > 60);
+    if !compact && (tasks.len() > ROW_SEPARATOR_THRESHOLD || has_multiline_rows) {
+        let doing_sep_pos = doing_count
+            .filter(|&c| c > 0 && c < tasks.len())
+            .map(|c| c + 1);
+
+        for row in 2..=tasks.len() {
+            // Skip the doing/other separator position (already has ═══)
+            if Some(row) == doing_sep_pos {
+                continue;
+            }
+            style.insert_horizontal_line(
+                row,
+                HorizontalLine::inherit(Style::modern())
+                    .horizontal('┈')
+                    .intersection('┊'),
+            );
+        }
+    }
+
     table
         .with(style)
         .with(Modify::new(Columns::new(0..1)).with(Alignment::center()));
@@ -598,6 +632,7 @@ fn render_simplified_table(
     doing_count: Option<usize>,
     thresholds: &CachedThresholds,
     icons: &Icons,
+    _compact: bool,
 ) {
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     let subtask_counts = compute_subtask_counts(tasks);

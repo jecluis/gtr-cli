@@ -116,6 +116,10 @@ enum Commands {
         /// With --for: include all descendants, not just direct children
         #[arg(long)]
         recursive: bool,
+
+        /// Compact output (no row separators)
+        #[arg(long)]
+        compact: bool,
     },
 
     /// Show a specific task
@@ -598,6 +602,7 @@ async fn run() -> Result<()> {
             verbose,
             for_task,
             recursive,
+            compact,
         } => {
             gtr::commands::list::tasks(
                 &config,
@@ -619,6 +624,7 @@ async fn run() -> Result<()> {
                 verbose,
                 for_task,
                 recursive,
+                compact,
             )
             .await
         }
