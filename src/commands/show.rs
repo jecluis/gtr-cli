@@ -50,7 +50,11 @@ pub async fn run(
 
     let icons = Icons::new(config.effective_icon_theme());
     let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
-    output::print_task_details(config, &task, no_format, no_wrap, &cached, &icons);
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    output::print_task_details(
+        config, &task, no_format, no_wrap, &cached, &icons, prefix_len,
+    );
 
     // Show parent info
     if let Some(ref parent_id) = task.parent_id {
@@ -58,12 +62,17 @@ pub async fn run(
             .cache
             .get_task_title(parent_id)?
             .unwrap_or_else(|| "?".to_string());
-        println!(
-            "{} {} {}",
+        // "Parent: " + icon + " " + "XXXX|XXXX" + " "
+        let indent =
+            8 + unicode_width::UnicodeWidthStr::width(icons.hierarchy_parent.as_str()) + 1 + 9 + 1;
+        let prefix_colored = format!(
+            "{} {} {} ",
             "Parent:".bold(),
-            parent_id[..8].cyan(),
-            parent_title.dimmed()
+            icons.hierarchy_parent.blue(),
+            output::format_task_id(parent_id, prefix_len, true),
         );
+        let wrapped = output::wrap_with_indent(&parent_title, 80, indent);
+        print!("{}{}", prefix_colored, wrapped);
     }
 
     // Show children
@@ -71,18 +80,7 @@ pub async fn run(
     if !children.is_empty() {
         println!("\n{}", "Subtasks:".bold());
         for child in &children {
-            let is_done = child.done.is_some();
-            let status_colored = if is_done {
-                "done".blue().to_string()
-            } else {
-                "pending".green().to_string()
-            };
-            println!(
-                "  {} {} [{}]",
-                child.id[..8].cyan(),
-                child.title,
-                status_colored
-            );
+            print_child_entry(child, prefix_len, &icons, &ctx.cache);
         }
     }
 
@@ -230,6 +228,36 @@ fn color_status(status: &str) -> String {
     }
 }
 
+/// Print a single child task entry with icon, ID, status, and wrapped title.
+fn print_child_entry(
+    child: &crate::cache::TaskSummary,
+    prefix_len: usize,
+    icons: &Icons,
+    cache: &TaskCache,
+) {
+    use unicode_width::UnicodeWidthStr;
+
+    let status_label = task_status(cache, &child.id, &child.done);
+    let status_colored = color_status(&status_label);
+
+    // "  " + icon + " " + "XXXX|XXXX" + " [" + status + "] "
+    let indent = 2
+        + UnicodeWidthStr::width(icons.hierarchy_subtasks.as_str())
+        + 1
+        + 9
+        + 2
+        + status_label.len()
+        + 2;
+    let prefix_colored = format!(
+        "  {} {} [{}] ",
+        icons.hierarchy_subtasks.green(),
+        output::format_task_id(&child.id, prefix_len, true),
+        status_colored,
+    );
+    let wrapped = output::wrap_with_indent(&child.title, 80, indent);
+    print!("{}{}", prefix_colored, wrapped);
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_tree(
     config: &Config,
@@ -265,7 +293,11 @@ async fn run_tree(
     // Show full details for the selected task (reuse normal show path)
     let task = ctx.load_task(client, selected_id).await?;
     let cached = threshold_cache::fetch_thresholds(config, client, no_sync).await;
-    output::print_task_details(config, &task, no_format, no_wrap, &cached, &icons);
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    output::print_task_details(
+        config, &task, no_format, no_wrap, &cached, &icons, prefix_len,
+    );
 
     // Show parent info
     if let Some(ref parent_id) = task.parent_id {
@@ -273,12 +305,17 @@ async fn run_tree(
             .cache
             .get_task_title(parent_id)?
             .unwrap_or_else(|| "?".to_string());
-        println!(
-            "{} {} {}",
+        // "Parent: " + icon + " " + "XXXX|XXXX" + " "
+        let indent =
+            8 + unicode_width::UnicodeWidthStr::width(icons.hierarchy_parent.as_str()) + 1 + 9 + 1;
+        let prefix_colored = format!(
+            "{} {} {} ",
             "Parent:".bold(),
-            parent_id[..8].cyan(),
-            parent_title.dimmed()
+            icons.hierarchy_parent.blue(),
+            output::format_task_id(parent_id, prefix_len, true),
         );
+        let wrapped = output::wrap_with_indent(&parent_title, 80, indent);
+        print!("{}{}", prefix_colored, wrapped);
     }
 
     // Show children
@@ -286,18 +323,7 @@ async fn run_tree(
     if !children.is_empty() {
         println!("\n{}", "Subtasks:".bold());
         for child in &children {
-            let is_done = child.done.is_some();
-            let status_colored = if is_done {
-                "done".blue().to_string()
-            } else {
-                "pending".green().to_string()
-            };
-            println!(
-                "  {} {} [{}]",
-                child.id[..8].cyan(),
-                child.title,
-                status_colored
-            );
+            print_child_entry(child, prefix_len, &icons, &ctx.cache);
         }
     }
 

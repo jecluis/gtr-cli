@@ -28,7 +28,7 @@ use crate::hierarchy;
 use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::Task;
-use crate::{threshold_cache, utils};
+use crate::{output, threshold_cache, utils};
 
 /// Create a new task (local-first with optional sync).
 #[allow(clippy::too_many_arguments)]
@@ -140,7 +140,12 @@ pub async fn run(
             .green()
             .bold()
     );
-    println!("  ID:       {}", task.id.cyan());
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    println!(
+        "  ID:       {}",
+        output::format_full_id(&task.id, prefix_len)
+    );
     println!("  Title:    {}", task.title);
     println!("  Priority: {}", task.priority);
     println!("  Size:     {}", task.size);

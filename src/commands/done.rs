@@ -29,7 +29,7 @@ use crate::hierarchy;
 use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, TaskStatus};
-use crate::utils;
+use crate::{output, utils};
 
 /// Mark one or more tasks as done (local-first with optional sync).
 pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> Result<()> {
@@ -49,7 +49,7 @@ pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> R
 
     for task_id in task_ids {
         match mark_task_done(config, &task_id, no_sync).await {
-            Ok(title) => {
+            Ok((full_id, title, prefix_len)) => {
                 success_count += 1;
                 println!(
                     "{}",
@@ -57,7 +57,7 @@ pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> R
                         .green()
                         .bold()
                 );
-                println!("  ID:    {}", task_id.cyan());
+                println!("  ID:    {}", output::format_full_id(&full_id, prefix_len));
                 println!("  Title: {}", title);
             }
             Err(e) => {
@@ -89,8 +89,12 @@ pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> R
     Ok(())
 }
 
-/// Mark a single task as done.
-async fn mark_task_done(config: &Config, task_id: &str, no_sync: bool) -> Result<String> {
+/// Mark a single task as done. Returns (full_id, title, prefix_len).
+async fn mark_task_done(
+    config: &Config,
+    task_id: &str,
+    no_sync: bool,
+) -> Result<(String, String, usize)> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let full_id = utils::resolve_task_id(&client, task_id).await?;
@@ -198,5 +202,7 @@ async fn mark_task_done(config: &Config, task_id: &str, no_sync: bool) -> Result
         }
     }
 
-    Ok(title)
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    Ok((full_id, title, prefix_len))
 }

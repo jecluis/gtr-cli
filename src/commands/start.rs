@@ -26,7 +26,7 @@ use crate::config::Config;
 use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, Task, WorkState};
-use crate::{Result, utils};
+use crate::{Result, output, utils};
 
 /// Start working on a task (set work state to "doing").
 ///
@@ -51,10 +51,12 @@ pub async fn run(
     let mut task = ctx.load_task(&client, &full_id).await?;
 
     if task.current_work_state.as_deref() == Some("doing") {
+        let all_ids = ctx.cache.all_task_ids()?;
+        let prefix_len = output::compute_min_prefix_len(&all_ids);
         println!(
             "{} {} is already in progress",
             icons.info.blue(),
-            task.id[..8].cyan()
+            output::format_full_id(&task.id, prefix_len)
         );
         return Ok(());
     }
@@ -94,7 +96,12 @@ pub async fn run(
         "{}",
         format!("{} Task started!", icons.success).green().bold()
     );
-    println!("  ID:       {}", task.id.cyan());
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    println!(
+        "  ID:       {}",
+        output::format_full_id(&task.id, prefix_len)
+    );
     println!("  Title:    {}", task.title);
     println!("  Status:   {}", "doing".green());
 

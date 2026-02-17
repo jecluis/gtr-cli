@@ -324,7 +324,12 @@ pub async fn run(
             .green()
             .bold()
     );
-    println!("  ID:    {}", task.id.cyan());
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = crate::output::compute_min_prefix_len(&all_ids);
+    println!(
+        "  ID:    {}",
+        crate::output::format_full_id(&task.id, prefix_len)
+    );
     println!("  Title: {}", task.title);
 
     // Show what changed with highlighting

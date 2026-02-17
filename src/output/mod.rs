@@ -127,7 +127,7 @@ fn format_deadline(deadline_str: Option<&str>, absolute_dates: bool) -> String {
 ///
 /// When `colorize` is true, formats as: `prefix|suffix` where prefix is cyan
 /// and suffix is dimmed. Otherwise returns plain shortened ID.
-fn format_task_id(id: &str, prefix_len: usize, colorize: bool) -> String {
+pub fn format_task_id(id: &str, prefix_len: usize, colorize: bool) -> String {
     let id_short = &id[..8];
 
     if colorize {
@@ -136,6 +136,20 @@ fn format_task_id(id: &str, prefix_len: usize, colorize: bool) -> String {
         format!("{}|{}", prefix.cyan(), suffix.dimmed())
     } else {
         id_short.to_string()
+    }
+}
+
+/// Format a full UUID with an appended short ID slug.
+///
+/// Produces output like: `ea75a3ac-...-def012345678 (ea75|a3ac)`
+/// where the short slug uses `format_task_id` for highlighting.
+pub fn format_full_id(id: &str, prefix_len: usize) -> String {
+    let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
+    let short = format_task_id(id, prefix_len, colorize);
+    if colorize {
+        format!("{} ({})", id.cyan(), short)
+    } else {
+        format!("{} ({})", id, short)
     }
 }
 
@@ -715,6 +729,29 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+/// Wrap text at `width` columns, indenting continuation lines by `indent` spaces.
+///
+/// The first line is assumed to already have `indent` characters of prefix
+/// printed by the caller, so it gets `width - indent` characters of text.
+/// Subsequent lines are prefixed with `indent` spaces.
+/// Returns the wrapped text with a trailing newline.
+pub fn wrap_with_indent(text: &str, width: usize, indent: usize) -> String {
+    let content_width = width.saturating_sub(indent).max(20);
+    let lines = wrap_text(text, content_width);
+    let indent_str = " ".repeat(indent);
+    let mut result = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i == 0 {
+            result.push_str(line);
+        } else {
+            result.push_str(&indent_str);
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+    result
+}
+
 /// Print a single task with full details and markdown rendering.
 ///
 /// If `no_format` is true or NO_COLOR is set, markdown will not be rendered.
@@ -726,6 +763,7 @@ pub fn print_task_details(
     no_wrap: bool,
     thresholds: &CachedThresholds,
     icons: &Icons,
+    prefix_len: usize,
 ) {
     let renderer = if no_format {
         MarkdownRenderer::with_override(Some(false)) // Force disable
@@ -740,7 +778,7 @@ pub fn print_task_details(
 
     // Print metadata
     println!("\n{}", "Metadata:".bold());
-    println!("  ID:       {}", task.id.cyan());
+    println!("  ID:       {}", format_full_id(&task.id, prefix_len));
 
     let eff_priority = promotion::effective_priority(task, thresholds);
     let promoted = eff_priority != task.priority.as_str();

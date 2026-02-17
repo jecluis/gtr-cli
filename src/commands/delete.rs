@@ -26,7 +26,7 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
 use crate::local::LocalContext;
-use crate::utils;
+use crate::{output, utils};
 
 /// Delete a task (tombstone, local-first with optional sync).
 ///
@@ -60,7 +60,9 @@ pub async fn run(config: &Config, task_id: &str, recursive: bool, no_sync: bool)
             .green()
             .bold()
     );
-    println!("  ID:    {}", task.id.cyan());
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    println!("  ID:    {}", output::format_full_id(&task.id, prefix_len));
     println!("  Title: {}", task.title);
 
     if recursive {

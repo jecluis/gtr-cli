@@ -26,7 +26,7 @@ use crate::config::Config;
 use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntry, LogEntryType, LogSource, TaskStatus};
-use crate::utils;
+use crate::{output, utils};
 
 /// Clear task progress (local-first with optional sync).
 pub async fn unset(config: &Config, task_id: Option<String>, no_sync: bool) -> Result<()> {
@@ -46,10 +46,12 @@ pub async fn unset(config: &Config, task_id: Option<String>, no_sync: bool) -> R
     let mut task = ctx.load_task(&client, &full_id).await?;
 
     if task.progress.is_none() {
+        let all_ids = ctx.cache.all_task_ids()?;
+        let prefix_len = output::compute_min_prefix_len(&all_ids);
         println!(
             "{} {} has no progress set",
             icons.info.blue(),
-            task.id[..8].cyan()
+            output::format_full_id(&task.id, prefix_len)
         );
         return Ok(());
     }
@@ -79,7 +81,12 @@ pub async fn unset(config: &Config, task_id: Option<String>, no_sync: bool) -> R
             .green()
             .bold()
     );
-    println!("  ID:       {}", task.id.cyan());
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    println!(
+        "  ID:       {}",
+        output::format_full_id(&task.id, prefix_len)
+    );
     println!("  Title:    {}", task.title);
 
     let old_str = old_progress
@@ -163,7 +170,12 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
             .green()
             .bold()
     );
-    println!("  ID:       {}", task.id.cyan());
+    let all_ids = ctx.cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    println!(
+        "  ID:       {}",
+        output::format_full_id(&task.id, prefix_len)
+    );
     println!("  Title:    {}", task.title);
 
     let old_str = old_progress
