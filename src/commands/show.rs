@@ -108,6 +108,7 @@ pub async fn run(
 struct TreeEntry {
     task_id: String,
     title: String,
+    is_bookmark: bool,
     status: String,
     depth: usize,
     is_last: Vec<bool>,
@@ -128,15 +129,19 @@ fn task_status(cache: &TaskCache, task_id: &str, done: &Option<String>) -> Strin
 fn build_tree(cache: &TaskCache, root_id: &str) -> Result<Vec<TreeEntry>> {
     let mut entries = Vec::new();
 
-    let root_title = cache
-        .get_task_title(root_id)?
+    let root_summary = cache.get_task_summary(root_id)?;
+    let root_title = root_summary
+        .as_ref()
+        .map(|s| s.title.clone())
         .unwrap_or_else(|| "?".to_string());
+    let root_bookmark = root_summary.as_ref().is_some_and(|s| s.is_bookmark);
     let root_done = cache.get_task_done(root_id)?;
     let root_status = task_status(cache, root_id, &root_done);
 
     entries.push(TreeEntry {
         task_id: root_id.to_string(),
         title: root_title,
+        is_bookmark: root_bookmark,
         status: root_status,
         depth: 0,
         is_last: vec![],
@@ -167,6 +172,7 @@ fn build_children(
         entries.push(TreeEntry {
             task_id: child.id.clone(),
             title: child.title.clone(),
+            is_bookmark: child.is_bookmark,
             status,
             depth,
             is_last: is_last_flags.clone(),
@@ -181,16 +187,17 @@ fn build_children(
     Ok(())
 }
 
-fn format_tree_item(entry: &TreeEntry) -> String {
+fn format_tree_item(entry: &TreeEntry, icons: &Icons) -> String {
+    let title = if entry.is_bookmark {
+        format!("{}{}", icons.bookmark, entry.title)
+    } else {
+        entry.title.clone()
+    };
+
     if entry.depth == 0 {
         // Root: no prefix
         let status = color_status(&entry.status);
-        format!(
-            "{} {} [{}]",
-            &entry.task_id[..8].cyan(),
-            entry.title,
-            status
-        )
+        format!("{} {} [{}]", &entry.task_id[..8].cyan(), title, status)
     } else {
         let mut prefix = String::new();
         // Ancestor connectors (depth 1..depth-1)
@@ -213,7 +220,7 @@ fn format_tree_item(entry: &TreeEntry) -> String {
             "{}{} {} [{}]",
             prefix,
             &entry.task_id[..8].cyan(),
-            entry.title,
+            title,
             status
         )
     }
@@ -254,7 +261,7 @@ fn print_child_entry(
         output::format_task_id(&child.id, prefix_len, true),
         status_colored,
     );
-    let wrapped = output::wrap_with_indent(&child.title, 80, indent);
+    let wrapped = output::wrap_with_indent(&child.display_title(icons), 80, indent);
     print!("{}{}", prefix_colored, wrapped);
 }
 
@@ -272,7 +279,11 @@ async fn run_tree(
     let _task = ctx.load_task(client, full_id).await?;
 
     let entries = build_tree(&ctx.cache, full_id)?;
-    let items: Vec<String> = entries.iter().map(format_tree_item).collect();
+    let icons = Icons::new(config.effective_icon_theme());
+    let items: Vec<String> = entries
+        .iter()
+        .map(|e| format_tree_item(e, &icons))
+        .collect();
 
     let selection = Select::new()
         .with_prompt("Select task to view")
@@ -280,8 +291,6 @@ async fn run_tree(
         .default(0)
         .interact_opt()
         .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
-
-    let icons = Icons::new(config.effective_icon_theme());
 
     let Some(idx) = selection else {
         eprintln!("{} Operation cancelled", icons.cancelled.yellow());

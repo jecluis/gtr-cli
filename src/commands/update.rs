@@ -330,7 +330,7 @@ pub async fn run(
         "  ID:    {}",
         crate::output::format_full_id(&task.id, prefix_len)
     );
-    println!("  Title: {}", task.title);
+    println!("  Title: {}", task.display_title(&icons));
 
     // Show what changed with highlighting
     if let Some(new_title) = title {
@@ -339,7 +339,7 @@ pub async fn run(
             println!(
                 "  {} {} → {}",
                 "Title:".bold(),
-                old_task.title.dimmed().strikethrough(),
+                old_task.display_title(&icons).dimmed().strikethrough(),
                 new_title.green()
             );
         }
@@ -348,8 +348,8 @@ pub async fn run(
         println!(
             "  {} {} → {}",
             "Title:".bold(),
-            old_task.title.dimmed().strikethrough(),
-            task.title.green()
+            old_task.display_title(&icons).dimmed().strikethrough(),
+            task.display_title(&icons).green()
         );
     }
 

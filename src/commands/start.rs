@@ -45,7 +45,7 @@ pub async fn run(
     let full_id = if let Some(ref id) = task_id {
         utils::resolve_task_id(&client, id).await?
     } else {
-        resolve_startable_task(&client, &ctx, filter.as_deref()).await?
+        resolve_startable_task(&client, &ctx, filter.as_deref(), &icons).await?
     };
 
     let mut task = ctx.load_task(&client, &full_id).await?;
@@ -102,7 +102,7 @@ pub async fn run(
         "  ID:       {}",
         output::format_full_id(&task.id, prefix_len)
     );
-    println!("  Title:    {}", task.title);
+    println!("  Title:    {}", task.display_title(&icons));
     println!("  Status:   {}", "doing".green());
 
     if !no_sync {
@@ -126,6 +126,7 @@ async fn resolve_startable_task(
     client: &Client,
     ctx: &LocalContext,
     filter: Option<&str>,
+    icons: &Icons,
 ) -> Result<String> {
     let projects = client.list_projects().await?;
 
@@ -169,16 +170,21 @@ async fn resolve_startable_task(
         return Ok(candidates[0].id.clone());
     }
 
-    pick_task(&candidates)
+    pick_task(&candidates, icons)
 }
 
 /// Interactive task picker using dialoguer::Select.
-fn pick_task(tasks: &[Task]) -> Result<String> {
+fn pick_task(tasks: &[Task], icons: &Icons) -> Result<String> {
     let items: Vec<String> = tasks
         .iter()
         .map(|t| {
             let progress_str = t.progress.map(|p| format!(" ({}%)", p)).unwrap_or_default();
-            format!("{} {}{}", t.id[..8].cyan(), t.title, progress_str.dimmed())
+            format!(
+                "{} {}{}",
+                t.id[..8].cyan(),
+                t.display_title(icons),
+                progress_str.dimmed()
+            )
         })
         .collect();
 

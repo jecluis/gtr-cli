@@ -40,7 +40,7 @@ pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> R
         let client = Client::new(config)?;
         let ctx = LocalContext::new(config, !no_sync)?;
         let selected_id =
-            utils::pick_task(&client, &ctx, "Select task to mark as done", true).await?;
+            utils::pick_task(&client, &ctx, "Select task to mark as done", true, &icons).await?;
         task_ids.push(selected_id);
     }
 
@@ -103,7 +103,7 @@ async fn mark_task_done(
 
     // Load task
     let mut task = ctx.load_task(&client, &full_id).await?;
-    let title = task.title.clone();
+    let title = task.display_title(&icons);
 
     // Mark as done
     let now = Utc::now();

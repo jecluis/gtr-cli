@@ -85,7 +85,7 @@ pub async fn run(
             .bold()
     );
     println!("  ID:    {}", task.id.cyan());
-    println!("  Title: {}", task.title);
+    println!("  Title: {}", task.display_title(&icons));
 
     if !no_sync {
         if ctx.try_sync().await {

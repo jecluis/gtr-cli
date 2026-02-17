@@ -147,7 +147,7 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
         format!("{} Task started!", icons.success).green().bold()
     );
     println!("  ID:       {}", task.id.cyan());
-    println!("  Title:    {}", task.title);
+    println!("  Title:    {}", task.display_title(&icons));
     println!("  Status:   {}", "doing".green());
 
     if !no_sync {
@@ -458,11 +458,12 @@ fn pick_next_task(
             }
 
             // Format with context if available
+            let display = t.display_title(icons);
             if context_parts.is_empty() {
-                format!("{} {}", t.id[..8].cyan(), t.title)
+                format!("{} {}", t.id[..8].cyan(), display)
             } else {
                 let context = context_parts.join(" ");
-                format!("{} {} {}", t.id[..8].cyan(), t.title, context)
+                format!("{} {} {}", t.id[..8].cyan(), display, context)
             }
         })
         .collect();

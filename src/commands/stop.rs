@@ -40,7 +40,7 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
     let full_id = if let Some(ref id) = task_id {
         utils::resolve_task_id(&client, id).await?
     } else {
-        resolve_doing_task(&client, &ctx).await?
+        resolve_doing_task(&client, &ctx, &icons).await?
     };
 
     let mut task = ctx.load_task(&client, &full_id).await?;
@@ -83,7 +83,7 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
         "  ID:       {}",
         output::format_full_id(&task.id, prefix_len)
     );
-    println!("  Title:    {}", task.title);
+    println!("  Title:    {}", task.display_title(&icons));
     println!("  Status:   {}", "stopped".dimmed());
 
     if !no_sync {
@@ -101,7 +101,7 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
 }
 
 /// Pick from tasks currently in "doing" state.
-async fn resolve_doing_task(client: &Client, ctx: &LocalContext) -> Result<String> {
+async fn resolve_doing_task(client: &Client, ctx: &LocalContext, icons: &Icons) -> Result<String> {
     let projects = client.list_projects().await?;
 
     let mut doing_tasks: Vec<Task> = Vec::new();
@@ -128,16 +128,21 @@ async fn resolve_doing_task(client: &Client, ctx: &LocalContext) -> Result<Strin
         return Ok(doing_tasks[0].id.clone());
     }
 
-    pick_task(&doing_tasks)
+    pick_task(&doing_tasks, icons)
 }
 
 /// Interactive task picker using dialoguer::Select.
-fn pick_task(tasks: &[Task]) -> Result<String> {
+fn pick_task(tasks: &[Task], icons: &Icons) -> Result<String> {
     let items: Vec<String> = tasks
         .iter()
         .map(|t| {
             let progress_str = t.progress.map(|p| format!(" ({}%)", p)).unwrap_or_default();
-            format!("{} {}{}", t.id[..8].cyan(), t.title, progress_str.dimmed())
+            format!(
+                "{} {}{}",
+                t.id[..8].cyan(),
+                t.display_title(icons),
+                progress_str.dimmed()
+            )
         })
         .collect();
 

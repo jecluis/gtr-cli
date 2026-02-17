@@ -53,7 +53,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     let all_ids = ctx.cache.all_task_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
     println!("  ID:    {}", output::format_full_id(&task.id, prefix_len));
-    println!("  Title: {}", task.title);
+    println!("  Title: {}", task.display_title(&icons));
 
     if !no_sync {
         if ctx.try_sync().await {

@@ -28,14 +28,14 @@ use crate::hierarchy;
 use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::Task;
-use crate::{output, threshold_cache, utils};
+use crate::{output, threshold_cache, url_fetch, utils};
 
 /// Create a new task (local-first with optional sync).
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     config: &Config,
     project: Option<String>,
-    title: &str,
+    title: Option<String>,
     edit_body: bool,
     priority: &str,
     size: &str,
@@ -45,6 +45,8 @@ pub async fn run(
     joy: Option<u8>,
     parent_id: Option<String>,
     no_sync: bool,
+    from_url: Option<String>,
+    is_bookmark: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
 
@@ -59,8 +61,45 @@ pub async fn run(
         None
     };
 
+    // Fetch URL content if --from or --bookmark was provided
+    let url_content = if let Some(ref url_str) = from_url {
+        match url_fetch::fetch_url_content(url_str).await {
+            Some(content) => {
+                println!(
+                    "{}",
+                    format!("  {} Fetched from URL", icons.success).green()
+                );
+                Some(content)
+            }
+            None => {
+                println!(
+                    "{}",
+                    format!("  {} Could not fetch URL (using fallback)", icons.failure).yellow()
+                );
+                Some(url_fetch::fallback_content(url_str))
+            }
+        }
+    } else {
+        None
+    };
+
+    // Derive title: CLI args > fetched > URL fallback
+    let final_title = match title {
+        Some(t) => t,
+        None => url_content
+            .as_ref()
+            .and_then(|c| c.title.clone())
+            .unwrap_or_else(|| from_url.clone().unwrap_or_default()),
+    };
+
+    // Derive body: URL content body (with optional editor) or editor or empty
+    let fetched_body = url_content
+        .as_ref()
+        .map(|c| c.body_markdown.clone())
+        .unwrap_or_default();
+
     let body = if edit_body {
-        match crate::editor::edit_text(config, "") {
+        match crate::editor::edit_text(config, &fetched_body) {
             Ok(content) => content,
             Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
                 println!(
@@ -72,8 +111,20 @@ pub async fn run(
             Err(e) => return Err(e),
         }
     } else {
-        String::new()
+        fetched_body
     };
+
+    // Build custom field (include source_url if from URL, is_bookmark flag)
+    let mut custom_map = serde_json::Map::new();
+    if let Some(ref url_str) = from_url {
+        custom_map.insert(
+            "source_url".to_string(),
+            serde_json::Value::String(url_str.clone()),
+        );
+    }
+    if is_bookmark {
+        custom_map.insert("is_bookmark".to_string(), serde_json::Value::Bool(true));
+    }
 
     // Create task locally first
     let task_id = Uuid::new_v4().to_string();
@@ -110,7 +161,7 @@ pub async fn run(
     let task = Task {
         id: task_id.clone(),
         project_id: project_id.clone(),
-        title: title.to_string(),
+        title: final_title,
         body,
         priority: priority.to_string(),
         size: size.to_string(),
@@ -121,7 +172,7 @@ pub async fn run(
         deadline: validated_deadline,
         version: 1,
         subtasks: vec![],
-        custom: serde_json::Value::Object(serde_json::Map::new()),
+        custom: serde_json::Value::Object(custom_map),
         log: vec![],
         current_work_state: None,
         progress,
@@ -146,7 +197,7 @@ pub async fn run(
         "  ID:       {}",
         output::format_full_id(&task.id, prefix_len)
     );
-    println!("  Title:    {}", task.title);
+    println!("  Title:    {}", task.display_title(&icons));
     println!("  Priority: {}", task.priority);
     println!("  Size:     {}", task.size);
 

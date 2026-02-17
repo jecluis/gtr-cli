@@ -87,7 +87,7 @@ pub async fn unset(config: &Config, task_id: Option<String>, no_sync: bool) -> R
         "  ID:       {}",
         output::format_full_id(&task.id, prefix_len)
     );
-    println!("  Title:    {}", task.title);
+    println!("  Title:    {}", task.display_title(&icons));
 
     let old_str = old_progress
         .map(|p| format!("{}%", p))
@@ -124,7 +124,14 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
     let full_id = if let Some(ref id) = task_id {
         utils::resolve_task_id(&client, id).await?
     } else {
-        utils::pick_task(&client, &ctx, "Select task to update progress", true).await?
+        utils::pick_task(
+            &client,
+            &ctx,
+            "Select task to update progress",
+            true,
+            &icons,
+        )
+        .await?
     };
 
     let mut task = ctx.load_task(&client, &full_id).await?;
@@ -176,7 +183,7 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
         "  ID:       {}",
         output::format_full_id(&task.id, prefix_len)
     );
-    println!("  Title:    {}", task.title);
+    println!("  Title:    {}", task.display_title(&icons));
 
     let old_str = old_progress
         .map(|p| format!("{}%", p))

@@ -22,6 +22,7 @@ use colored::Colorize;
 
 use crate::client::Client;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::{LogEntryType, LogSource};
 use crate::{Result, utils};
@@ -48,7 +49,13 @@ pub async fn run(
     }
 
     println!("\n{}", "═".repeat(60));
-    println!("{}", format!("Task Log: {}", task.title).bold().green());
+    let icons = Icons::new(config.effective_icon_theme());
+    println!(
+        "{}",
+        format!("Task Log: {}", task.display_title(&icons))
+            .bold()
+            .green()
+    );
     println!("{}", "═".repeat(60));
 
     // Filter entries based on flags

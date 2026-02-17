@@ -150,13 +150,26 @@ enum Commands {
         #[arg(short = 'P', long)]
         project: Option<String>,
 
-        /// Task title (all remaining arguments)
-        #[arg(num_args = 1.., required = true)]
+        /// Task title (all remaining arguments; optional with --from or --bookmark)
+        #[arg(num_args = 1..)]
         title: Vec<String>,
 
         /// Edit task body in external editor
         #[arg(short, long)]
         body: bool,
+
+        /// Create task from URL (fetches title and description)
+        #[arg(long, value_name = "URL", conflicts_with = "bookmark_url")]
+        from: Option<String>,
+
+        /// Create bookmark from URL (like --from but prefixes title with bookmark glyph)
+        #[arg(
+            short = 'B',
+            long = "bookmark",
+            value_name = "URL",
+            conflicts_with = "from"
+        )]
+        bookmark_url: Option<String>,
 
         /// Priority (now or later)
         #[arg(short, long, default_value = "later", value_parser = ["now", "later"])]
@@ -639,6 +652,8 @@ async fn run() -> Result<()> {
             project,
             title,
             body,
+            from,
+            bookmark_url,
             priority,
             size,
             deadline,
@@ -648,10 +663,35 @@ async fn run() -> Result<()> {
             parent,
             no_sync,
         } => {
-            let title_str = title.join(" ");
+            let url = from.or(bookmark_url.clone());
+            let is_bookmark = bookmark_url.is_some();
+
+            // Title is required unless --from or --bookmark is provided
+            if title.is_empty() && url.is_none() {
+                eprintln!("Error: task title is required (or use --from / --bookmark)");
+                std::process::exit(1);
+            }
+
+            let title_str = if title.is_empty() {
+                None
+            } else {
+                Some(title.join(" "))
+            };
             gtr::commands::create::run(
-                &config, project, &title_str, body, &priority, &size, deadline, progress, impact,
-                joy, parent, no_sync,
+                &config,
+                project,
+                title_str,
+                body,
+                &priority,
+                &size,
+                deadline,
+                progress,
+                impact,
+                joy,
+                parent,
+                no_sync,
+                url,
+                is_bookmark,
             )
             .await
         }

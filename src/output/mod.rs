@@ -417,10 +417,11 @@ fn build_task_row(
 
     // Build hierarchy subtitle line (below the title)
     let subtitle = build_hierarchy_subtitle(task, prefix_len, colorize, icons, subtask_counts);
+    let display = task.display_title(icons);
     let title = if subtitle.is_empty() {
-        format!("{}{}", joy_prefix, task.title)
+        format!("{}{}", joy_prefix, display)
     } else {
-        format!("{}{}\n{}", joy_prefix, task.title, subtitle)
+        format!("{}{}\n{}", joy_prefix, display, subtitle)
     };
 
     TaskRowData {
@@ -677,7 +678,7 @@ fn render_simplified_table(
         println!("{} - {} - {}", row.id, project_colored, row.status);
 
         // Line 2: TITLE (wrapped at 60 columns)
-        let wrapped_title = wrap_text(&task.title, 60);
+        let wrapped_title = wrap_text(&task.display_title(icons), 60);
         for line in wrapped_title {
             println!("{}", line);
         }
@@ -773,7 +774,7 @@ pub fn print_task_details(
 
     // Print header
     println!("\n{}", "═".repeat(80));
-    println!("{}", task.title.bold().green());
+    println!("{}", task.display_title(icons).bold().green());
     println!("{}", "═".repeat(80));
 
     // Print metadata

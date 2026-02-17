@@ -108,6 +108,10 @@ pub struct Icons {
     /// Separator between parent ID and subtask count
     pub hierarchy_separator: String,
 
+    // -- Bookmark --
+    /// Bookmark glyph (prepended to title for --bookmark tasks)
+    pub bookmark: String,
+
     // -- Informational --
     /// Non-blocking informational message
     pub info: String,
@@ -161,6 +165,9 @@ impl Icons {
             hierarchy_subtasks: "\u{25b6}".into(),  // ▶
             hierarchy_separator: "\u{00b7}".into(), // ·
 
+            // Bookmark
+            bookmark: "\u{1f516} ".into(), // 🔖 + space
+
             // Informational
             info: "\u{2139}".into(),      // ℹ
             cancelled: "\u{2717}".into(), // ✗
@@ -195,6 +202,9 @@ impl Icons {
             hierarchy_parent: "\u{f0da3}".into(), // 󰶣 nf-md (up-arrow)
             hierarchy_subtasks: "\u{ef81}".into(), // nf (folder tree)
             hierarchy_separator: "\u{f444}".into(), // nf-oct-dot_fill
+
+            // Bookmark
+            bookmark: format!("{} ", "\u{f00c0}".cyan()), // 󰃀 nf-md-bookmark (cyan)
 
             // Informational
             info: "\u{f05a}".into(),      // nf-fa-info_circle

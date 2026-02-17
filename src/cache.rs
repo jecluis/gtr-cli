@@ -133,6 +133,12 @@ impl TaskCache {
             [],
         );
 
+        // Migrate existing caches: add is_bookmark column if missing
+        let _ = self.conn.execute(
+            "ALTER TABLE tasks ADD COLUMN is_bookmark INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
             .execute_batch(
@@ -160,8 +166,8 @@ impl TaskCache {
             INSERT INTO tasks (
                 id, project_id, title, priority, size, created, modified,
                 done, deleted, deadline, version, needs_push, impact, joy,
-                current_work_state, parent_id
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                current_work_state, parent_id, is_bookmark
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
                 title = excluded.title,
@@ -176,7 +182,8 @@ impl TaskCache {
                 impact = excluded.impact,
                 joy = excluded.joy,
                 current_work_state = excluded.current_work_state,
-                parent_id = excluded.parent_id
+                parent_id = excluded.parent_id,
+                is_bookmark = excluded.is_bookmark
             "#,
                 params![
                     task.id,
@@ -195,6 +202,7 @@ impl TaskCache {
                     task.joy as i64,
                     task.current_work_state,
                     task.parent_id,
+                    task.is_bookmark() as i64,
                 ],
             )
             .map_err(|e| Error::Database(format!("upsert failed: {e}")))?;
@@ -250,7 +258,7 @@ impl TaskCache {
             .query_row(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push
+                   done, deleted, deadline, needs_push, is_bookmark
             FROM tasks WHERE id = ?1
             "#,
                 params![task_id],
@@ -267,6 +275,7 @@ impl TaskCache {
                         deleted: row.get(8)?,
                         deadline: row.get(9)?,
                         needs_push: row.get::<_, i64>(10)? != 0,
+                        is_bookmark: row.get::<_, i64>(11).unwrap_or(0) != 0,
                     })
                 },
             )
@@ -281,7 +290,7 @@ impl TaskCache {
             .prepare(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push
+                   done, deleted, deadline, needs_push, is_bookmark
             FROM tasks
             WHERE project_id = ?1
             ORDER BY modified DESC
@@ -303,6 +312,7 @@ impl TaskCache {
                     deleted: row.get(8)?,
                     deadline: row.get(9)?,
                     needs_push: row.get::<_, i64>(10)? != 0,
+                    is_bookmark: row.get::<_, i64>(11).unwrap_or(0) != 0,
                 })
             })
             .map_err(|e| Error::Database(format!("query failed: {e}")))?
@@ -495,7 +505,7 @@ impl TaskCache {
             .prepare(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push
+                   done, deleted, deadline, needs_push, is_bookmark
             FROM tasks
             WHERE parent_id = ?1 AND deleted IS NULL
             ORDER BY modified DESC
@@ -517,6 +527,7 @@ impl TaskCache {
                     deleted: row.get(8)?,
                     deadline: row.get(9)?,
                     needs_push: row.get::<_, i64>(10)? != 0,
+                    is_bookmark: row.get::<_, i64>(11).unwrap_or(0) != 0,
                 })
             })
             .map_err(|e| Error::Database(format!("query failed: {e}")))?
@@ -807,4 +818,16 @@ pub struct TaskSummary {
     pub deleted: Option<String>,
     pub deadline: Option<String>,
     pub needs_push: bool,
+    pub is_bookmark: bool,
+}
+
+impl TaskSummary {
+    /// Return the display title, prepending the bookmark glyph when appropriate.
+    pub fn display_title(&self, icons: &crate::icons::Icons) -> String {
+        if self.is_bookmark {
+            format!("{}{}", icons.bookmark, self.title)
+        } else {
+            self.title.clone()
+        }
+    }
 }

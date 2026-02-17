@@ -20,6 +20,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::icons::Icons;
+
 /// Project representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -218,6 +220,23 @@ impl Task {
     /// Check if task is deleted (tombstone).
     pub fn is_deleted(&self) -> bool {
         self.deleted.is_some()
+    }
+
+    /// Check if this task is a bookmark (via `custom.is_bookmark`).
+    pub fn is_bookmark(&self) -> bool {
+        self.custom
+            .get("is_bookmark")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Return the display title, prepending the bookmark glyph when appropriate.
+    pub fn display_title(&self, icons: &Icons) -> String {
+        if self.is_bookmark() {
+            format!("{}{}", icons.bookmark, self.title)
+        } else {
+            self.title.clone()
+        }
     }
 }
 

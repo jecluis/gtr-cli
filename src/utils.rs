@@ -24,6 +24,7 @@ use dialoguer::Select;
 use jiff::{Span, Zoned};
 
 use crate::client::Client;
+use crate::icons::Icons;
 use crate::local::LocalContext;
 use crate::models::Task;
 use crate::{Error, Result};
@@ -333,6 +334,7 @@ pub async fn pick_task(
     ctx: &LocalContext,
     prompt: &str,
     show_doing_first: bool,
+    icons: &Icons,
 ) -> Result<String> {
     // Get all projects
     let projects = client.list_projects().await?;
@@ -383,7 +385,7 @@ pub async fn pick_task(
                 "{}{} {}{}",
                 doing_prefix,
                 t.id[..8].cyan(),
-                t.title,
+                t.display_title(icons),
                 progress_str.dimmed()
             )
         })

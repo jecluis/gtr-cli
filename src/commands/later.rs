@@ -56,7 +56,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
             .bold()
     );
     println!("  ID:       {}", task.id.cyan());
-    println!("  Title:    {}", task.title);
+    println!("  Title:    {}", task.display_title(&icons));
     println!(
         "  Priority: {} → {}",
         old_priority.dimmed().strikethrough(),
