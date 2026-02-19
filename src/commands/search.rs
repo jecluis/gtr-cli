@@ -93,6 +93,7 @@ pub async fn run(
     // Search results default to relative dates for better UX
     let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
     let icons = Icons::new(config.effective_icon_theme());
+    let project_paths = ctx.cache.build_project_paths(&matching_tasks);
     output::print_tasks(
         &matching_tasks,
         prefix_len,
@@ -103,6 +104,7 @@ pub async fn run(
         &cached,
         &icons,
         false,
+        &project_paths,
     );
 
     Ok(())

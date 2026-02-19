@@ -34,6 +34,11 @@ use crate::models::{Project, Task};
 use crate::promotion;
 use crate::threshold_cache::CachedThresholds;
 
+/// Map from project_id to its ancestor chain (root-first).
+///
+/// Example: `"dev" -> ["home", "dev"]` means "dev" is a child of "home".
+pub type ProjectPaths = HashMap<String, Vec<String>>;
+
 /// Detect terminal width, with fallback to 80 if detection fails.
 fn detect_terminal_width() -> usize {
     terminal_size::terminal_size()
@@ -188,6 +193,53 @@ fn format_progress(progress: Option<u8>, fancy: bool, colorize: bool) -> String 
     format!("{}{} {:>3}%", colored_fill, empty_str.dimmed(), value)
 }
 
+/// Format a project path as a multi-line tree cell for task tables.
+///
+/// For a path `["home", "dev"]`, renders:
+/// ```text
+/// home
+/// └ dev
+/// ```
+///
+/// For a single-element path, just returns the project ID.
+fn format_project_cell(
+    project_id: &str,
+    project_paths: &ProjectPaths,
+    color: Option<colored::Color>,
+) -> String {
+    let path = match project_paths.get(project_id) {
+        Some(p) if p.len() > 1 => p,
+        _ => {
+            // No hierarchy or not in map — just the ID
+            return if let Some(c) = color {
+                project_id.color(c).to_string()
+            } else {
+                project_id.to_string()
+            };
+        }
+    };
+
+    let mut lines = Vec::with_capacity(path.len());
+    for (i, segment) in path.iter().enumerate() {
+        let is_last = i == path.len() - 1;
+        let colored_seg = if let Some(c) = color {
+            segment.color(c).to_string()
+        } else {
+            segment.clone()
+        };
+
+        if i == 0 {
+            lines.push(colored_seg);
+        } else {
+            let connector = if is_last { "└ " } else { "├ " };
+            let indent = "  ".repeat(i.saturating_sub(1));
+            lines.push(format!("{}{}{}", indent, connector.dimmed(), colored_seg));
+        }
+    }
+
+    lines.join("\n")
+}
+
 /// Print a list of projects as a tree showing parent-child relationships.
 pub fn print_projects(projects: &[Project]) {
     if projects.is_empty() {
@@ -312,6 +364,8 @@ struct TaskRowData {
 /// Print a list of tasks in table format.
 ///
 /// If `doing_count` is Some, inserts a visual divider after that many tasks.
+/// `project_paths` provides ancestor chains for rendering hierarchical project
+/// columns; pass an empty map to show flat project IDs.
 #[allow(clippy::too_many_arguments)]
 pub fn print_tasks(
     tasks: &[Task],
@@ -323,6 +377,7 @@ pub fn print_tasks(
     thresholds: &CachedThresholds,
     icons: &Icons,
     compact: bool,
+    project_paths: &ProjectPaths,
 ) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
@@ -338,6 +393,7 @@ pub fn print_tasks(
         thresholds,
         icons,
         compact,
+        project_paths,
     );
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
@@ -354,6 +410,7 @@ fn print_task_table(
     thresholds: &CachedThresholds,
     icons: &Icons,
     compact: bool,
+    project_paths: &ProjectPaths,
 ) {
     // Detect which columns to show
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
@@ -395,6 +452,7 @@ fn print_task_table(
             thresholds,
             icons,
             compact,
+            project_paths,
         );
     } else {
         // Narrow terminal: use simplified format
@@ -409,6 +467,7 @@ fn print_task_table(
             thresholds,
             icons,
             compact,
+            project_paths,
         );
     }
 }
@@ -581,6 +640,7 @@ fn render_task_table(
     thresholds: &CachedThresholds,
     icons: &Icons,
     compact: bool,
+    project_paths: &ProjectPaths,
 ) {
     let mut builder = Builder::default();
 
@@ -618,13 +678,8 @@ fn render_task_table(
 
         let mut record: Vec<String> = vec![row.id, row.title];
         if columns.show_project {
-            let color = project_colors.get(task.project_id.as_str());
-            let project = if let Some(c) = color {
-                task.project_id.color(*c).to_string()
-            } else {
-                task.project_id.clone()
-            };
-            record.push(project);
+            let color = project_colors.get(task.project_id.as_str()).copied();
+            record.push(format_project_cell(&task.project_id, project_paths, color));
         }
         record.push(row.priority);
         record.push(row.size);
@@ -711,6 +766,7 @@ fn render_simplified_table(
     thresholds: &CachedThresholds,
     icons: &Icons,
     _compact: bool,
+    project_paths: &ProjectPaths,
 ) {
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     let subtask_counts = compute_subtask_counts(tasks);
@@ -732,13 +788,22 @@ fn render_simplified_table(
             println!("{}", "═".repeat(70).dimmed());
         }
 
-        // Line 1: ID - PROJECT - STATUS
-        let project_colored = if let Some(color) = project_colors.get(task.project_id.as_str()) {
-            task.project_id.color(*color).to_string()
+        // Line 1: ID - PROJECT (leaf only, colored) - STATUS
+        let color = project_colors.get(task.project_id.as_str()).copied();
+        let project_colored = if let Some(c) = color {
+            task.project_id.color(c).to_string()
         } else {
             task.project_id.clone()
         };
         println!("{} - {} - {}", row.id, project_colored, row.status);
+
+        // Show project ancestry (if any) on a dimmed line
+        if let Some(path) = project_paths.get(&task.project_id)
+            && path.len() > 1
+        {
+            let ancestors: Vec<_> = path[..path.len() - 1].to_vec();
+            println!("  {}", format!("in {}", ancestors.join(" › ")).dimmed());
+        }
 
         // Line 2: TITLE (wrapped at 60 columns)
         let wrapped_title = wrap_text(&task.display_title(icons), 60);
@@ -820,6 +885,7 @@ pub fn wrap_with_indent(text: &str, width: usize, indent: usize) -> String {
 ///
 /// If `no_format` is true or NO_COLOR is set, markdown will not be rendered.
 /// If `no_wrap` is true, the body will not be hard-wrapped at 80 columns.
+#[allow(clippy::too_many_arguments)]
 pub fn print_task_details(
     config: &crate::config::Config,
     task: &Task,
@@ -828,6 +894,7 @@ pub fn print_task_details(
     thresholds: &CachedThresholds,
     icons: &Icons,
     prefix_len: usize,
+    project_paths: &ProjectPaths,
 ) {
     let renderer = if no_format {
         MarkdownRenderer::with_override(Some(false)) // Force disable
@@ -843,6 +910,31 @@ pub fn print_task_details(
     // Print metadata
     println!("\n{}", "Metadata:".bold());
     println!("  ID:       {}", format_full_id(&task.id, prefix_len));
+
+    // Show project with ancestry breadcrumb
+    if let Some(path) = project_paths.get(&task.project_id) {
+        if path.len() > 1 {
+            let breadcrumb: Vec<_> = path
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    if i == path.len() - 1 {
+                        s.cyan().bold().to_string()
+                    } else {
+                        s.dimmed().to_string()
+                    }
+                })
+                .collect();
+            println!(
+                "  Project:  {}",
+                breadcrumb.join(&" › ".dimmed().to_string())
+            );
+        } else {
+            println!("  Project:  {}", task.project_id.cyan());
+        }
+    } else {
+        println!("  Project:  {}", task.project_id.cyan());
+    }
 
     let eff_priority = promotion::effective_priority(task, thresholds);
     let promoted = eff_priority != task.priority.as_str();

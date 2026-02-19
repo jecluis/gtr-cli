@@ -59,12 +59,20 @@ pub async fn tasks(
     let mut project_ids = match project {
         None => {
             // No -P flag: show all projects (new default)
-            client
-                .list_projects()
-                .await?
-                .into_iter()
-                .map(|p| p.id)
-                .collect::<Vec<_>>()
+            let projects = client.list_projects().await?;
+            // Refresh local project cache while we have the data
+            let now = chrono::Utc::now().to_rfc3339();
+            for p in &projects {
+                let cached = crate::cache::CachedProject {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                    parent_id: p.parent_id.clone(),
+                    deleted: p.deleted.clone(),
+                    last_synced: Some(now.clone()),
+                };
+                let _ = ctx.cache.upsert_project(&cached);
+            }
+            projects.into_iter().map(|p| p.id).collect::<Vec<_>>()
         }
         Some(vec) if vec.is_empty() => {
             // -P with no args: show picker
@@ -250,6 +258,7 @@ pub async fn tasks(
     };
 
     let icons = Icons::new(config.effective_icon_theme());
+    let project_paths = ctx.cache.build_project_paths(&all_tasks);
     output::print_tasks(
         &all_tasks,
         prefix_len,
@@ -260,6 +269,7 @@ pub async fn tasks(
         &cached,
         &icons,
         compact,
+        &project_paths,
     );
     Ok(())
 }

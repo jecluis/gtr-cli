@@ -826,6 +826,50 @@ impl TaskCache {
         Ok(count > 0)
     }
 
+    /// Get the ancestor chain for a project, from root to the project itself.
+    ///
+    /// Returns `["grandparent", "parent", "self"]`. If the project has no
+    /// parent, returns `["self"]`. Returns an empty vec if the project is
+    /// not in the cache.
+    pub fn get_project_path(&self, id: &str) -> Result<Vec<String>> {
+        let mut chain = vec![id.to_string()];
+        let mut current = id.to_string();
+
+        // Walk up parent_id links (with cycle guard)
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(current.clone());
+
+        while let Some(p) = self.get_project(&current)? {
+            match p.parent_id {
+                Some(pid) if seen.insert(pid.clone()) => {
+                    chain.push(pid.clone());
+                    current = pid;
+                }
+                _ => break,
+            }
+        }
+
+        chain.reverse();
+        Ok(chain)
+    }
+
+    /// Build a map of project_id -> ancestor path for all projects
+    /// referenced by the given task list.
+    pub fn build_project_paths(
+        &self,
+        tasks: &[crate::models::Task],
+    ) -> std::collections::HashMap<String, Vec<String>> {
+        let mut paths = std::collections::HashMap::new();
+        for task in tasks {
+            if !paths.contains_key(&task.project_id)
+                && let Ok(chain) = self.get_project_path(&task.project_id)
+            {
+                paths.insert(task.project_id.clone(), chain);
+            }
+        }
+        paths
+    }
+
     /// Get all descendant project IDs (recursive BFS).
     pub fn get_project_descendants(&self, id: &str) -> Result<Vec<String>> {
         let mut result = Vec::new();

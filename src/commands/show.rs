@@ -52,8 +52,16 @@ pub async fn run(
     let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
     let all_ids = ctx.cache.all_task_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
+    let project_paths = ctx.cache.build_project_paths(std::slice::from_ref(&task));
     output::print_task_details(
-        config, &task, no_format, no_wrap, &cached, &icons, prefix_len,
+        config,
+        &task,
+        no_format,
+        no_wrap,
+        &cached,
+        &icons,
+        prefix_len,
+        &project_paths,
     );
 
     // Show parent info
@@ -304,8 +312,16 @@ async fn run_tree(
     let cached = threshold_cache::fetch_thresholds(config, client, no_sync).await;
     let all_ids = ctx.cache.all_task_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
+    let project_paths = ctx.cache.build_project_paths(std::slice::from_ref(&task));
     output::print_task_details(
-        config, &task, no_format, no_wrap, &cached, &icons, prefix_len,
+        config,
+        &task,
+        no_format,
+        no_wrap,
+        &cached,
+        &icons,
+        prefix_len,
+        &project_paths,
     );
 
     // Show parent info
