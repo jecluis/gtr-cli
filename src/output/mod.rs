@@ -27,7 +27,6 @@ use tabled::settings::style::HorizontalLine;
 use tabled::settings::themes::Theme;
 use tabled::settings::width::Width;
 use tabled::settings::{Alignment, Modify, Style, object::Columns};
-use tabled::{Table, Tabled};
 
 use crate::icons::Icons;
 use crate::markdown::MarkdownRenderer;
@@ -189,39 +188,103 @@ fn format_progress(progress: Option<u8>, fancy: bool, colorize: bool) -> String 
     format!("{}{} {:>3}%", colored_fill, empty_str.dimmed(), value)
 }
 
-/// Row type for project table display.
-#[derive(Tabled)]
-struct ProjectRow {
-    #[tabled(rename = "ID")]
-    id: String,
-    #[tabled(rename = "Name")]
-    name: String,
-    #[tabled(rename = "Description")]
-    description: String,
-}
-
-/// Print a list of projects in table format.
+/// Print a list of projects as a tree showing parent-child relationships.
 pub fn print_projects(projects: &[Project]) {
     if projects.is_empty() {
         println!("{}", "No projects found".yellow());
         return;
     }
 
-    let rows: Vec<ProjectRow> = projects
-        .iter()
-        .map(|p| ProjectRow {
-            id: p.id.cyan().to_string(),
-            name: p.name.green().to_string(),
-            description: p.description.as_deref().unwrap_or("-").to_string(),
-        })
-        .collect();
+    // Build lookup: parent_id -> children, and track which IDs exist
+    let mut children_map: HashMap<Option<&str>, Vec<&Project>> = HashMap::new();
+    for p in projects {
+        children_map
+            .entry(p.parent_id.as_deref())
+            .or_default()
+            .push(p);
+    }
 
-    let table = Table::new(rows)
-        .with(Style::rounded())
-        .with(Modify::new(Columns::new(0..1)).with(Alignment::center())) // ID
-        .to_string();
-    println!("{}", table);
+    // Sort each group alphabetically by ID
+    for group in children_map.values_mut() {
+        group.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+
+    // Print tree starting from roots (parent_id = None)
+    let roots = children_map.get(&None).cloned().unwrap_or_default();
+
+    // Also collect orphans whose parent_id points to a project not in the list
+    let known_ids: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+    let mut orphans: Vec<&Project> = Vec::new();
+    for p in projects {
+        if let Some(ref pid) = p.parent_id
+            && !known_ids.contains(pid.as_str())
+        {
+            orphans.push(p);
+        }
+    }
+
+    for (i, root) in roots.iter().enumerate() {
+        let is_last = i == roots.len() - 1 && orphans.is_empty();
+        print_project_node(root, "", is_last, true, &children_map);
+    }
+
+    // Print orphans (parent not in list) at root level
+    for (i, orphan) in orphans.iter().enumerate() {
+        let is_last = i == orphans.len() - 1;
+        print_project_node(orphan, "", is_last, true, &children_map);
+    }
+
     println!("\n{} {}", "Total:".bold(), projects.len());
+}
+
+/// Recursively print a project node with tree connectors.
+fn print_project_node(
+    project: &Project,
+    prefix: &str,
+    is_last: bool,
+    is_root: bool,
+    children_map: &HashMap<Option<&str>, Vec<&Project>>,
+) {
+    let connector = if is_root {
+        ""
+    } else if is_last {
+        "└── "
+    } else {
+        "├── "
+    };
+
+    let desc = project
+        .description
+        .as_deref()
+        .map(|d| format!(" - {}", d.dimmed()))
+        .unwrap_or_default();
+
+    println!(
+        "{}{}{}{}",
+        prefix,
+        connector,
+        project.id.cyan().bold(),
+        desc
+    );
+
+    // Recurse into children
+    let children = children_map
+        .get(&Some(project.id.as_str()))
+        .cloned()
+        .unwrap_or_default();
+
+    let child_prefix = if is_root {
+        "  ".to_string()
+    } else if is_last {
+        format!("{}    ", prefix)
+    } else {
+        format!("{}│   ", prefix)
+    };
+
+    for (i, child) in children.iter().enumerate() {
+        let child_is_last = i == children.len() - 1;
+        print_project_node(child, &child_prefix, child_is_last, false, children_map);
+    }
 }
 
 /// Configuration for which columns to display in task tables.
