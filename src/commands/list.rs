@@ -97,7 +97,7 @@ pub async fn tasks(
 
         for summary in summaries {
             // Load full task from storage
-            if let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id) {
+            if let Ok(task) = ctx.storage.load_task(&summary.id) {
                 all_tasks.push(task);
             }
         }

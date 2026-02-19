@@ -182,7 +182,7 @@ pub async fn run(
     };
 
     // Save locally
-    ctx.storage.create_task(&project_id, &task)?;
+    ctx.storage.create_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(
@@ -224,7 +224,7 @@ pub async fn run(
 
     // Update parent's auto-progress if this is a subtask
     if task.parent_id.is_some() {
-        hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.project_id, &task.id)?;
+        hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.id)?;
     }
 
     // Attempt sync if enabled

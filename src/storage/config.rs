@@ -44,22 +44,27 @@ impl StorageConfig {
         }
     }
 
-    /// Get the base path for a project's tasks.
-    pub fn project_dir(&self, project_id: &str) -> PathBuf {
-        self.cache_dir.join(&self.user_id).join(project_id)
+    /// Get the tasks directory (flat layout).
+    pub fn tasks_dir(&self) -> PathBuf {
+        self.cache_dir.join("tasks")
     }
 
-    /// Ensure project directory exists.
-    pub fn ensure_project_dir(&self, project_id: &str) -> Result<PathBuf> {
-        let dir = self.project_dir(project_id);
+    /// Ensure tasks directory exists.
+    pub fn ensure_tasks_dir(&self) -> Result<PathBuf> {
+        let dir = self.tasks_dir();
         fs::create_dir_all(&dir)?;
         Ok(dir)
     }
 
+    /// Get the user directory (for migration detection).
+    pub fn user_dir(&self) -> PathBuf {
+        self.cache_dir.join(&self.user_id)
+    }
+
     /// Get paths for a task's files (.automerge and .md).
-    pub fn task_paths(&self, project_id: &str, task_id: &uuid::Uuid) -> TaskPaths {
-        let project_dir = self.project_dir(project_id);
-        let base = project_dir.join(task_id.to_string());
+    pub fn task_paths(&self, task_id: &uuid::Uuid) -> TaskPaths {
+        let tasks_dir = self.tasks_dir();
+        let base = tasks_dir.join(task_id.to_string());
 
         TaskPaths {
             automerge: base.with_extension("automerge"),

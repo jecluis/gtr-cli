@@ -56,14 +56,7 @@ pub async fn run(
     let mut matching_tasks = Vec::new();
 
     for task_id in &task_ids {
-        let project_id = ctx
-            .cache
-            .get_task_summary(task_id)
-            .ok()
-            .flatten()
-            .map(|s| s.project_id)
-            .unwrap_or_default();
-        if let Ok(task) = ctx.storage.load_task(&project_id, task_id) {
+        if let Ok(task) = ctx.storage.load_task(task_id) {
             // Skip done and deleted tasks unless --all is specified
             if !all && (task.done.is_some() || task.deleted.is_some()) {
                 continue;

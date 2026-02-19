@@ -40,6 +40,10 @@ impl LocalContext {
     /// Initialize local context from config.
     pub fn new(config: &Config, enable_sync: bool) -> Result<Self> {
         let storage_config = StorageConfig::new(config.cache_dir.clone(), "default".to_string());
+
+        // Migrate from per-project dirs to flat layout (idempotent)
+        crate::storage::migration::migrate_to_flat_layout(&storage_config)?;
+
         let storage = TaskStorage::new(storage_config);
 
         let cache_path = config.cache_dir.join("index.db");
@@ -62,7 +66,7 @@ impl LocalContext {
     pub async fn load_task(&self, client: &Client, task_id: &str) -> Result<Task> {
         // Try loading from local storage using cache for project_id
         if let Some(summary) = self.cache.get_task_summary(task_id)? {
-            match self.storage.load_task(&summary.project_id, task_id) {
+            match self.storage.load_task(task_id) {
                 Ok(task) => {
                     debug!(
                         task_id,
@@ -91,8 +95,7 @@ impl LocalContext {
         let doc = crate::crdt::TaskDocument::load(&remote_bytes)?;
         let task = doc.to_task()?;
 
-        self.storage
-            .save_task_bytes(&task.project_id, task_id, &remote_bytes)?;
+        self.storage.save_task_bytes(task_id, &remote_bytes)?;
         self.cache.upsert_task(&task, false)?;
 
         info!(

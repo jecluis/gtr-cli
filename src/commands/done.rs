@@ -136,14 +136,14 @@ async fn mark_task_done(
     });
 
     // Save locally
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     // Cascade completion to all descendants
     let descendants = ctx.cache.get_all_descendants(&full_id)?;
     let descendant_count = descendants.len();
     for desc_id in descendants {
-        match ctx.storage.load_task(&task.project_id, &desc_id) {
+        match ctx.storage.load_task(&desc_id) {
             Ok(mut desc_task) => {
                 if desc_task.done.is_some() {
                     continue; // already done
@@ -169,7 +169,7 @@ async fn mark_task_done(
                     },
                     source: crate::models::LogSource::User,
                 });
-                ctx.storage.update_task(&desc_task.project_id, &desc_task)?;
+                ctx.storage.update_task(&desc_task)?;
                 ctx.cache.upsert_task(&desc_task, true)?;
             }
             Err(e) => {
@@ -188,7 +188,7 @@ async fn mark_task_done(
     }
 
     // Update ancestor progress (this task is now done, parent's progress changes)
-    hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.project_id, &full_id)?;
+    hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &full_id)?;
 
     // Sync
     if !no_sync {

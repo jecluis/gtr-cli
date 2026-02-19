@@ -46,7 +46,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     task.version += 1;
 
     // Save locally
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(

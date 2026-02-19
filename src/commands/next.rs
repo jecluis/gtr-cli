@@ -65,7 +65,7 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
             }
 
             // Load task and check if it's currently being worked on
-            if let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id) {
+            if let Ok(task) = ctx.storage.load_task(&summary.id) {
                 // Exclude tasks in "doing" state
                 if task.current_work_state.as_deref() == Some("doing") {
                     continue;
@@ -139,7 +139,7 @@ pub async fn run(config: &Config, project: Option<String>, no_sync: bool) -> Res
         });
     }
 
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(

@@ -91,7 +91,7 @@ pub async fn run(
         {
             Ok(Ok(fresh)) if fresh.version > task.version => {
                 // Update local with fresh version
-                ctx.storage.update_task(&fresh.project_id, &fresh)?;
+                ctx.storage.update_task(&fresh)?;
                 ctx.cache.upsert_task(&fresh, false)?;
                 eprintln!(
                     "\n(Refreshed from server - version {} → {})",

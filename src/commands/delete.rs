@@ -51,7 +51,7 @@ pub async fn run(config: &Config, task_id: &str, recursive: bool, no_sync: bool)
     task.modified = now.to_rfc3339();
     task.version += 1;
 
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(
@@ -70,7 +70,7 @@ pub async fn run(config: &Config, task_id: &str, recursive: bool, no_sync: bool)
         let descendants = ctx.cache.get_all_descendants(&full_id)?;
         let count = descendants.len();
         for desc_id in descendants {
-            match ctx.storage.load_task(&task.project_id, &desc_id) {
+            match ctx.storage.load_task(&desc_id) {
                 Ok(mut desc_task) => {
                     if desc_task.deleted.is_some() {
                         continue;
@@ -78,7 +78,7 @@ pub async fn run(config: &Config, task_id: &str, recursive: bool, no_sync: bool)
                     desc_task.deleted = Some(now.to_rfc3339());
                     desc_task.modified = now.to_rfc3339();
                     desc_task.version += 1;
-                    ctx.storage.update_task(&desc_task.project_id, &desc_task)?;
+                    ctx.storage.update_task(&desc_task)?;
                     ctx.cache.upsert_task(&desc_task, true)?;
                 }
                 Err(e) => {
@@ -99,13 +99,12 @@ pub async fn run(config: &Config, task_id: &str, recursive: bool, no_sync: bool)
         let children = ctx.cache.get_children(&full_id)?;
         let count = children.len();
         for child_summary in &children {
-            match ctx.storage.load_task(&task.project_id, &child_summary.id) {
+            match ctx.storage.load_task(&child_summary.id) {
                 Ok(mut child_task) => {
                     child_task.parent_id = deleted_parent_id.clone();
                     child_task.modified = now.to_rfc3339();
                     child_task.version += 1;
-                    ctx.storage
-                        .update_task(&child_task.project_id, &child_task)?;
+                    ctx.storage.update_task(&child_task)?;
                     ctx.cache.upsert_task(&child_task, true)?;
                 }
                 Err(e) => {

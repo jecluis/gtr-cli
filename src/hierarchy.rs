@@ -33,7 +33,6 @@ use crate::storage::TaskStorage;
 pub fn update_ancestor_progress(
     cache: &TaskCache,
     storage: &TaskStorage,
-    project_id: &str,
     task_id: &str,
 ) -> Result<()> {
     let mut current_id = match cache.get_parent_id(task_id)? {
@@ -51,7 +50,7 @@ pub fn update_ancestor_progress(
 
         let new_progress = ((done as f64 / total as f64) * 100.0).round() as u8;
 
-        match storage.load_task(project_id, &current_id) {
+        match storage.load_task(&current_id) {
             Ok(mut parent_task) => {
                 let old_progress = parent_task.progress;
                 if old_progress != Some(new_progress) {
@@ -68,7 +67,7 @@ pub fn update_ancestor_progress(
                             reason: "auto-progress from children".to_string(),
                         },
                     });
-                    storage.update_task(&parent_task.project_id, &parent_task)?;
+                    storage.update_task(&parent_task)?;
                     cache.upsert_task(&parent_task, true)?;
                 }
             }

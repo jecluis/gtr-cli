@@ -41,7 +41,7 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
     task.modified = Utc::now().to_rfc3339();
     task.version += 1;
 
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(

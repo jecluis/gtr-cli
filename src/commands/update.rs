@@ -310,12 +310,12 @@ pub async fn run(
         new_priority = %task.priority,
         "field changes"
     );
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     // Update ancestor progress if this task has a parent
     if task.parent_id.is_some() {
-        hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.project_id, &task.id)?;
+        hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.id)?;
     }
 
     println!(

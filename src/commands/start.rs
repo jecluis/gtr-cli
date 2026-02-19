@@ -89,7 +89,7 @@ pub async fn run(
         });
     }
 
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(
@@ -136,7 +136,7 @@ async fn resolve_startable_task(
         for summary in summaries {
             if summary.done.is_none()
                 && summary.deleted.is_none()
-                && let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id)
+                && let Ok(task) = ctx.storage.load_task(&summary.id)
                 && task.is_pending()
                 && task.current_work_state.as_deref() != Some("doing")
             {

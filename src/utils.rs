@@ -346,7 +346,7 @@ pub async fn pick_task(
         for summary in summaries {
             if summary.done.is_none()
                 && summary.deleted.is_none()
-                && let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id)
+                && let Ok(task) = ctx.storage.load_task(&summary.id)
                 && task.is_pending()
             {
                 pending_tasks.push(task);

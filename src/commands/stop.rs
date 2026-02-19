@@ -70,7 +70,7 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
         source: crate::models::LogSource::User,
     });
 
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(
@@ -110,7 +110,7 @@ async fn resolve_doing_task(client: &Client, ctx: &LocalContext, icons: &Icons) 
         for summary in summaries {
             if summary.done.is_none()
                 && summary.deleted.is_none()
-                && let Ok(task) = ctx.storage.load_task(&summary.project_id, &summary.id)
+                && let Ok(task) = ctx.storage.load_task(&summary.id)
                 && task.current_work_state.as_deref() == Some("doing")
             {
                 doing_tasks.push(task);

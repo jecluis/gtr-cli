@@ -72,7 +72,7 @@ pub async fn unset(config: &Config, task_id: Option<String>, no_sync: bool) -> R
         source: LogSource::User,
     });
 
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(
@@ -168,7 +168,7 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
         });
     }
 
-    ctx.storage.update_task(&task.project_id, &task)?;
+    ctx.storage.update_task(&task)?;
     ctx.cache.upsert_task(&task, true)?;
 
     println!(

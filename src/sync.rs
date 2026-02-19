@@ -104,7 +104,7 @@ impl SyncManager {
 
             for task in tasks {
                 // Always pull and merge - CRDT handles conflicts automatically
-                if let Err(e) = self.pull_task(&project.id, &task.id).await {
+                if let Err(e) = self.pull_task(&task.id).await {
                     warn!(task_id = %task.id, "failed to pull task: {e}");
                     // Continue with other tasks
                 }
@@ -115,7 +115,7 @@ impl SyncManager {
     }
 
     /// Pull a single task from server and merge with local version.
-    async fn pull_task(&self, project_id: &str, task_id: &str) -> Result<()> {
+    async fn pull_task(&self, task_id: &str) -> Result<()> {
         // Fetch CRDT bytes from server
         let remote_bytes = self.client.fetch_sync(task_id).await?;
         debug!(
@@ -125,7 +125,7 @@ impl SyncManager {
         );
 
         // Check if we have a local version to merge with
-        let merged_bytes = match self.storage.get_task_bytes(project_id, task_id) {
+        let merged_bytes = match self.storage.get_task_bytes(task_id) {
             Ok(local_bytes) => {
                 // We have local version - merge with remote
                 debug!(
@@ -149,8 +149,7 @@ impl SyncManager {
         };
 
         // Save merged result to local storage
-        self.storage
-            .save_task_bytes(project_id, task_id, &merged_bytes)?;
+        self.storage.save_task_bytes(task_id, &merged_bytes)?;
 
         // Extract task data for cache
         let doc = crate::crdt::TaskDocument::load(&merged_bytes)?;
@@ -189,7 +188,7 @@ impl SyncManager {
             .ok_or_else(|| crate::Error::TaskNotFound(format!("task {task_id} not in cache")))?;
 
         // Load local CRDT document
-        let bytes = self.storage.get_task_bytes(&summary.project_id, task_id)?;
+        let bytes = self.storage.get_task_bytes(task_id)?;
         debug!(task_id, bytes_len = bytes.len(), project_id = %summary.project_id, "pushing task");
         let mut local_doc = crate::crdt::TaskDocument::load(&bytes)?;
 
@@ -263,8 +262,7 @@ impl SyncManager {
             updated_bytes_len = updated_bytes.len(),
             "saving merged document"
         );
-        self.storage
-            .save_task_bytes(&summary.project_id, task_id, &updated_bytes)?;
+        self.storage.save_task_bytes(task_id, &updated_bytes)?;
 
         let state_bytes = sync_state.encode();
         self.cache.save_sync_state(task_id, &state_bytes)?;

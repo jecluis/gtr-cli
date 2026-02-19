@@ -18,6 +18,7 @@
 //! Local file storage for tasks.
 
 pub mod config;
+pub mod migration;
 
 pub use config::{StorageConfig, TaskPaths};
 
@@ -38,14 +39,19 @@ impl TaskStorage {
         Self { config }
     }
 
+    /// Get the storage config (for migration access).
+    pub fn config(&self) -> &StorageConfig {
+        &self.config
+    }
+
     /// Create a new task locally.
-    pub fn create_task(&self, project_id: &str, task: &Task) -> Result<()> {
-        self.config.ensure_project_dir(project_id)?;
+    pub fn create_task(&self, task: &Task) -> Result<()> {
+        self.config.ensure_tasks_dir()?;
 
         let task_id = uuid::Uuid::parse_str(&task.id)
             .map_err(|e| crate::Error::InvalidInput(format!("invalid task ID: {e}")))?;
 
-        let paths = self.config.task_paths(project_id, &task_id);
+        let paths = self.config.task_paths(&task_id);
         let doc = TaskDocument::new(task)?;
         let bytes = doc.save();
 
@@ -55,11 +61,11 @@ impl TaskStorage {
     }
 
     /// Load a task from local storage.
-    pub fn load_task(&self, project_id: &str, task_id: &str) -> Result<Task> {
+    pub fn load_task(&self, task_id: &str) -> Result<Task> {
         let uuid = uuid::Uuid::parse_str(task_id)
             .map_err(|e| crate::Error::InvalidInput(format!("invalid task ID: {e}")))?;
 
-        let paths = self.config.task_paths(project_id, &uuid);
+        let paths = self.config.task_paths(&uuid);
 
         if !paths.exists() {
             return Err(crate::Error::TaskNotFound(format!(
@@ -74,11 +80,11 @@ impl TaskStorage {
     }
 
     /// Update an existing task locally.
-    pub fn update_task(&self, project_id: &str, task: &Task) -> Result<()> {
+    pub fn update_task(&self, task: &Task) -> Result<()> {
         let task_id = uuid::Uuid::parse_str(&task.id)
             .map_err(|e| crate::Error::InvalidInput(format!("invalid task ID: {e}")))?;
 
-        let paths = self.config.task_paths(project_id, &task_id);
+        let paths = self.config.task_paths(&task_id);
 
         // Load existing document to preserve CRDT history
         let bytes = fs::read(&paths.automerge)?;
@@ -96,9 +102,9 @@ impl TaskStorage {
     }
 
     /// Check if a task exists locally.
-    pub fn task_exists(&self, project_id: &str, task_id: &str) -> bool {
+    pub fn task_exists(&self, task_id: &str) -> bool {
         if let Ok(uuid) = uuid::Uuid::parse_str(task_id) {
-            let paths = self.config.task_paths(project_id, &uuid);
+            let paths = self.config.task_paths(&uuid);
             paths.exists()
         } else {
             false
@@ -106,11 +112,11 @@ impl TaskStorage {
     }
 
     /// Merge remote task bytes into local task.
-    pub fn merge_task(&self, project_id: &str, task_id: &str, remote_bytes: &[u8]) -> Result<Task> {
+    pub fn merge_task(&self, task_id: &str, remote_bytes: &[u8]) -> Result<Task> {
         let uuid = uuid::Uuid::parse_str(task_id)
             .map_err(|e| crate::Error::InvalidInput(format!("invalid task ID: {e}")))?;
 
-        let paths = self.config.task_paths(project_id, &uuid);
+        let paths = self.config.task_paths(&uuid);
 
         // Load local document
         let local_bytes = fs::read(&paths.automerge)?;
@@ -131,22 +137,22 @@ impl TaskStorage {
     }
 
     /// Get task bytes for syncing to server.
-    pub fn get_task_bytes(&self, project_id: &str, task_id: &str) -> Result<Vec<u8>> {
+    pub fn get_task_bytes(&self, task_id: &str) -> Result<Vec<u8>> {
         let uuid = uuid::Uuid::parse_str(task_id)
             .map_err(|e| crate::Error::InvalidInput(format!("invalid task ID: {e}")))?;
 
-        let paths = self.config.task_paths(project_id, &uuid);
+        let paths = self.config.task_paths(&uuid);
         Ok(fs::read(&paths.automerge)?)
     }
 
     /// Save CRDT bytes directly (for pull sync).
-    pub fn save_task_bytes(&self, project_id: &str, task_id: &str, bytes: &[u8]) -> Result<()> {
-        self.config.ensure_project_dir(project_id)?;
+    pub fn save_task_bytes(&self, task_id: &str, bytes: &[u8]) -> Result<()> {
+        self.config.ensure_tasks_dir()?;
 
         let uuid = uuid::Uuid::parse_str(task_id)
             .map_err(|e| crate::Error::InvalidInput(format!("invalid task ID: {e}")))?;
 
-        let paths = self.config.task_paths(project_id, &uuid);
+        let paths = self.config.task_paths(&uuid);
         fs::write(&paths.automerge, bytes)?;
 
         Ok(())
