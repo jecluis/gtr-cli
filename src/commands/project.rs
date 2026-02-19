@@ -36,6 +36,7 @@ pub async fn create(config: &Config, name: &str, description: Option<String>) ->
         id: name.to_string(),
         name: name.to_string(),
         description,
+        parent_id: None,
     };
 
     let project = client.create_project(&req).await?;

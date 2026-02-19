@@ -27,7 +27,12 @@ use crate::icons::Icons;
 pub struct Project {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub deleted: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
 }
 
 /// Task representation (matches server's TaskResponse).
@@ -156,7 +161,10 @@ pub enum WorkState {
 pub struct CreateProjectRequest {
     pub id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 /// Request to update a project.

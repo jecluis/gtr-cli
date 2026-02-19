@@ -22,7 +22,7 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use crate::Result;
-use crate::cache::TaskCache;
+use crate::cache::{CachedProject, TaskCache};
 use crate::client::Client;
 use crate::config::Config;
 use crate::storage::TaskStorage;
@@ -90,8 +90,31 @@ impl SyncManager {
         Ok(())
     }
 
+    /// Sync projects from server into local cache.
+    async fn sync_projects(&self) -> Result<()> {
+        let projects = self.client.list_projects().await?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        for project in &projects {
+            let cached = CachedProject {
+                id: project.id.clone(),
+                name: project.name.clone(),
+                parent_id: project.parent_id.clone(),
+                deleted: project.deleted.clone(),
+                last_synced: Some(now.clone()),
+            };
+            self.cache.upsert_project(&cached)?;
+        }
+
+        info!(count = projects.len(), "synced projects from server");
+        Ok(())
+    }
+
     /// Pull updates from server for all projects.
     async fn pull_updates(&self) -> Result<()> {
+        // Sync project list first
+        self.sync_projects().await?;
+
         // Get all projects
         let projects = self.client.list_projects().await?;
 
