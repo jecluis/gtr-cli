@@ -44,6 +44,16 @@ pub async fn run(
 
     let mut task = ctx.load_task(&client, &full_id).await?;
 
+    // Check if the task's project is deleted
+    if let Some(project) = ctx.cache.get_project(&task.project_id)?
+        && project.is_deleted()
+    {
+        return Err(crate::Error::InvalidInput(format!(
+            "project '{}' is deleted; restore it first with `gtr project restore {}`",
+            task.project_id, task.project_id
+        )));
+    }
+
     let now = Utc::now();
     task.done = None;
     task.modified = now.to_rfc3339();

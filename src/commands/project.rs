@@ -184,6 +184,35 @@ pub async fn delete(config: &Config, project_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Restore a soft-deleted project.
+pub async fn restore(config: &Config, project_id: &str) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+    let client = Client::new(config)?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    let project = client.restore_project(project_id).await?;
+
+    // Update local cache
+    let cached = crate::cache::CachedProject {
+        id: project.id.clone(),
+        name: project.name.clone(),
+        parent_id: project.parent_id.clone(),
+        deleted: None,
+        last_synced: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    cache.upsert_project(&cached)?;
+
+    println!(
+        "{}",
+        format!("{} Project '{}' restored.", icons.success, project.id)
+            .green()
+            .bold()
+    );
+
+    Ok(())
+}
+
 /// List all projects.
 pub async fn list(config: &Config) -> Result<()> {
     let client = Client::new(config)?;

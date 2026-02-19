@@ -513,6 +513,12 @@ enum ProjectCommands {
         project_id: String,
     },
 
+    /// Restore a deleted project
+    Restore {
+        /// Project ID
+        project_id: String,
+    },
+
     /// List all projects
     List,
 }
@@ -814,6 +820,9 @@ async fn run() -> Result<()> {
             } => gtr::commands::project::update(&config, &project_id, description).await,
             ProjectCommands::Delete { project_id } => {
                 gtr::commands::project::delete(&config, &project_id).await
+            }
+            ProjectCommands::Restore { project_id } => {
+                gtr::commands::project::restore(&config, &project_id).await
             }
             ProjectCommands::List => gtr::commands::project::list(&config).await,
         },
