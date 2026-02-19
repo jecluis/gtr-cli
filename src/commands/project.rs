@@ -103,7 +103,12 @@ pub async fn create(
 }
 
 /// Update a project.
-pub async fn update(config: &Config, project_id: &str, description: Option<String>) -> Result<()> {
+pub async fn update(
+    config: &Config,
+    project_id: &str,
+    description: Option<String>,
+    parent: Option<String>,
+) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let cache_path = config.cache_dir.join("index.db");
@@ -112,6 +117,7 @@ pub async fn update(config: &Config, project_id: &str, description: Option<Strin
     let req = UpdateProjectRequest {
         name: None,
         description,
+        parent_id: parent,
     };
 
     let project = client.update_project(project_id, &req).await?;
@@ -136,6 +142,9 @@ pub async fn update(config: &Config, project_id: &str, description: Option<Strin
     println!("  Name:        {}", project.name);
     if let Some(desc) = &project.description {
         println!("  Description: {}", desc);
+    }
+    if let Some(pid) = &project.parent_id {
+        println!("  Parent:      {}", pid);
     }
 
     Ok(())

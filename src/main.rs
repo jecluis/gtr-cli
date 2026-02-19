@@ -505,6 +505,10 @@ enum ProjectCommands {
         /// New project description
         #[arg(short, long)]
         description: Option<String>,
+
+        /// Move under a parent project (empty string to unparent)
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        parent: Option<String>,
     },
 
     /// Delete a project (soft-delete; must be empty)
@@ -817,7 +821,8 @@ async fn run() -> Result<()> {
             ProjectCommands::Update {
                 project_id,
                 description,
-            } => gtr::commands::project::update(&config, &project_id, description).await,
+                parent,
+            } => gtr::commands::project::update(&config, &project_id, description, parent).await,
             ProjectCommands::Delete { project_id } => {
                 gtr::commands::project::delete(&config, &project_id).await
             }
