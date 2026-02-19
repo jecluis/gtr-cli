@@ -477,6 +477,10 @@ enum ProjectCommands {
         /// Project description
         #[arg(short, long)]
         description: Option<String>,
+
+        /// Parent project ID (creates a subproject)
+        #[arg(long)]
+        parent: Option<String>,
     },
 
     /// Update a project
@@ -487,6 +491,12 @@ enum ProjectCommands {
         /// New project description
         #[arg(short, long)]
         description: Option<String>,
+    },
+
+    /// Delete a project (soft-delete; must be empty)
+    Delete {
+        /// Project ID
+        project_id: String,
     },
 
     /// List all projects
@@ -774,13 +784,18 @@ async fn run() -> Result<()> {
             no_sync,
         } => gtr::commands::search::run(&config, &query, project, limit, all, no_sync).await,
         Commands::Project { command } => match command {
-            ProjectCommands::Create { name, description } => {
-                gtr::commands::project::create(&config, &name, description).await
-            }
+            ProjectCommands::Create {
+                name,
+                description,
+                parent,
+            } => gtr::commands::project::create(&config, &name, description, parent).await,
             ProjectCommands::Update {
                 project_id,
                 description,
             } => gtr::commands::project::update(&config, &project_id, description).await,
+            ProjectCommands::Delete { project_id } => {
+                gtr::commands::project::delete(&config, &project_id).await
+            }
             ProjectCommands::List => gtr::commands::project::list(&config).await,
         },
         Commands::Config { command } => match command {

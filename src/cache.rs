@@ -798,6 +798,20 @@ impl TaskCache {
         Ok(projects)
     }
 
+    /// Count non-deleted tasks in a project.
+    pub fn count_active_tasks_in_project(&self, project_id: &str) -> Result<i64> {
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE project_id = ?1 AND deleted IS NULL",
+                params![project_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("count tasks failed: {e}")))?;
+
+        Ok(count)
+    }
+
     /// Check if a project exists (including deleted).
     pub fn project_exists(&self, id: &str) -> Result<bool> {
         let count: i64 = self

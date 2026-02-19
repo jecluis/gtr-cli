@@ -175,6 +175,38 @@ impl Client {
         self.put(&url, req).await
     }
 
+    /// Delete (soft-delete) a project.
+    pub async fn delete_project(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/projects/{}", self.base_url, encode_path(id));
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = response.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Restore a soft-deleted project.
+    pub async fn restore_project(&self, id: &str) -> Result<Project> {
+        let url = format!("{}/api/projects/{}/restore", self.base_url, encode_path(id));
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        self.handle_response(resp).await
+    }
+
     /// List tasks in a project.
     #[allow(clippy::too_many_arguments)]
     pub async fn list_tasks(
