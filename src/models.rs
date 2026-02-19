@@ -193,6 +193,12 @@ pub struct CreateTaskRequest {
     pub parent_id: Option<String>,
 }
 
+/// Request to move a task to another project.
+#[derive(Debug, Serialize)]
+pub struct MoveTaskRequest {
+    pub target_project_id: String,
+}
+
 /// Request to update a task.
 #[derive(Debug, Default, Serialize)]
 pub struct UpdateTaskRequest {

@@ -271,8 +271,12 @@ impl TaskDocument {
                     _ => tx.put_object(ROOT, "metadata", ObjType::Map)?,
                 };
 
-                // Identity fields (id, project_id, created) never change.
+                // Identity fields (id, created) never change.
                 // Only write fields that differ from current state.
+
+                if task.project_id != current.project_id {
+                    tx.put(&meta, "project_id", task.project_id.as_str())?;
+                }
 
                 if task.priority != current.priority {
                     tx.put(&meta, "priority", task.priority.as_str())?;

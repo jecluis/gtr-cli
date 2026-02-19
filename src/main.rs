@@ -365,6 +365,20 @@ enum Commands {
         no_sync: bool,
     },
 
+    /// Move a task to a different project
+    Move {
+        /// Task ID
+        task_id: String,
+
+        /// Target project ID
+        #[arg(short = 'P', long = "project")]
+        target_project: String,
+
+        /// Skip sync (work offline)
+        #[arg(long)]
+        no_sync: bool,
+    },
+
     /// Suggest next tasks to work on (ordered by urgency)
     Next {
         /// Filter to specific project
@@ -767,6 +781,11 @@ async fn run() -> Result<()> {
         Commands::Stop { task_id, no_sync } => {
             gtr::commands::stop::run(&config, task_id, no_sync).await
         }
+        Commands::Move {
+            task_id,
+            target_project,
+            no_sync,
+        } => gtr::commands::move_task::run(&config, &task_id, &target_project, no_sync).await,
         Commands::Next { project, no_sync } => {
             gtr::commands::next::run(&config, project, no_sync).await
         }

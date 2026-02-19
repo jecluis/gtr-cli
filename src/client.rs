@@ -257,6 +257,15 @@ impl Client {
         self.get(&url).await
     }
 
+    /// Move a task to a different project.
+    pub async fn move_task(&self, task_id: &str, target_project_id: &str) -> Result<Task> {
+        let url = format!("{}/api/tasks/{}/move", self.base_url, encode_path(task_id));
+        let req = crate::models::MoveTaskRequest {
+            target_project_id: target_project_id.to_string(),
+        };
+        self.post(&url, &req).await
+    }
+
     /// Get a specific task.
     pub async fn get_task(&self, task_id: &str) -> Result<Task> {
         let url = format!("{}/api/tasks/{}", self.base_url, encode_path(task_id));
