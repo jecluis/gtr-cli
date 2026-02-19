@@ -17,11 +17,17 @@
 
 //! HTTP client for communicating with the server.
 
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::{Client as HttpClient, StatusCode};
 
 use crate::config::Config;
 use crate::models::*;
 use crate::{Error, Result};
+
+/// Percent-encode a value for use as a URL path segment.
+fn encode_path(s: &str) -> String {
+    utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
+}
 
 /// API client for the Getting Things Rusty server.
 pub struct Client {
@@ -72,7 +78,7 @@ impl Client {
 
     /// Post CRDT bytes to server for merging (sync).
     pub async fn post_sync(&self, _project_id: &str, task_id: &str, bytes: &[u8]) -> Result<Task> {
-        let url = format!("{}/api/sync/{}", self.base_url, task_id);
+        let url = format!("{}/api/sync/{}", self.base_url, encode_path(task_id));
         let resp = self
             .http
             .post(&url)
@@ -93,7 +99,7 @@ impl Client {
 
     /// Fetch CRDT bytes from server for a task.
     pub async fn fetch_sync(&self, task_id: &str) -> Result<Vec<u8>> {
-        let url = format!("{}/api/sync/{}", self.base_url, task_id);
+        let url = format!("{}/api/sync/{}", self.base_url, encode_path(task_id));
         let resp = self
             .http
             .get(&url)
@@ -119,7 +125,11 @@ impl Client {
         message_bytes: &[u8],
         client_id: &str,
     ) -> Result<Vec<u8>> {
-        let url = format!("{}/api/sync/protocol/{}", self.base_url, task_id);
+        let url = format!(
+            "{}/api/sync/protocol/{}",
+            self.base_url,
+            encode_path(task_id)
+        );
 
         let resp = self
             .http
@@ -149,7 +159,7 @@ impl Client {
 
     /// Get a specific project.
     pub async fn get_project(&self, id: &str) -> Result<Project> {
-        let url = format!("{}/api/projects/{}", self.base_url, id);
+        let url = format!("{}/api/projects/{}", self.base_url, encode_path(id));
         self.get(&url).await
     }
 
@@ -161,7 +171,7 @@ impl Client {
 
     /// Update a project.
     pub async fn update_project(&self, id: &str, req: &UpdateProjectRequest) -> Result<Project> {
-        let url = format!("{}/api/projects/{}", self.base_url, id);
+        let url = format!("{}/api/projects/{}", self.base_url, encode_path(id));
         self.put(&url, req).await
     }
 
@@ -178,7 +188,11 @@ impl Client {
         overdue: bool,
         limit: Option<u32>,
     ) -> Result<Vec<Task>> {
-        let mut url = format!("{}/api/projects/{}/tasks", self.base_url, project_id);
+        let mut url = format!(
+            "{}/api/projects/{}/tasks",
+            self.base_url,
+            encode_path(project_id)
+        );
         let mut params = Vec::new();
 
         if let Some(p) = priority {
@@ -213,19 +227,23 @@ impl Client {
 
     /// Get a specific task.
     pub async fn get_task(&self, task_id: &str) -> Result<Task> {
-        let url = format!("{}/api/tasks/{}", self.base_url, task_id);
+        let url = format!("{}/api/tasks/{}", self.base_url, encode_path(task_id));
         self.get(&url).await
     }
 
     /// Create a new task.
     pub async fn create_task(&self, project_id: &str, req: &CreateTaskRequest) -> Result<Task> {
-        let url = format!("{}/api/projects/{}/tasks", self.base_url, project_id);
+        let url = format!(
+            "{}/api/projects/{}/tasks",
+            self.base_url,
+            encode_path(project_id)
+        );
         self.post(&url, req).await
     }
 
     /// Update a task.
     pub async fn update_task(&self, task_id: &str, req: &UpdateTaskRequest) -> Result<Task> {
-        let url = format!("{}/api/tasks/{}", self.base_url, task_id);
+        let url = format!("{}/api/tasks/{}", self.base_url, encode_path(task_id));
         self.put(&url, req).await
     }
 
@@ -236,10 +254,10 @@ impl Client {
         project: Option<&str>,
         limit: Option<u32>,
     ) -> Result<Vec<Task>> {
-        let mut url = format!("{}/api/search?q={}", self.base_url, query);
+        let mut url = format!("{}/api/search?q={}", self.base_url, encode_path(query));
 
         if let Some(p) = project {
-            url.push_str(&format!("&project={}", p));
+            url.push_str(&format!("&project={}", encode_path(p)));
         }
         if let Some(l) = limit {
             url.push_str(&format!("&limit={}", l));
@@ -376,7 +394,11 @@ impl Client {
 
     /// Get project configuration.
     pub async fn get_project_config(&self, project_id: &str) -> Result<ConfigResponse> {
-        let url = format!("{}/api/projects/{}/config", self.base_url, project_id);
+        let url = format!(
+            "{}/api/projects/{}/config",
+            self.base_url,
+            encode_path(project_id)
+        );
         let response = self
             .http
             .get(&url)
@@ -402,7 +424,11 @@ impl Client {
         project_id: &str,
         req: &ConfigUpdateRequest,
     ) -> Result<ConfigResponse> {
-        let url = format!("{}/api/projects/{}/config", self.base_url, project_id);
+        let url = format!(
+            "{}/api/projects/{}/config",
+            self.base_url,
+            encode_path(project_id)
+        );
         let response = self
             .http
             .put(&url)
@@ -427,7 +453,8 @@ impl Client {
     pub async fn reset_project_config(&self, project_id: &str) -> Result<()> {
         let url = format!(
             "{}/api/projects/{}/config/promotion",
-            self.base_url, project_id
+            self.base_url,
+            encode_path(project_id)
         );
         let response = self
             .http
