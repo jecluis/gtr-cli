@@ -139,6 +139,23 @@ impl TaskCache {
             [],
         );
 
+        // Projects table: local registry mirroring server
+        self.conn
+            .execute_batch(
+                r#"
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_id TEXT,
+                deleted TEXT,
+                last_synced TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_projects_parent
+                ON projects(parent_id);
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("projects schema init failed: {e}")))?;
+
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
             .execute_batch(
@@ -666,6 +683,151 @@ impl TaskCache {
         Ok(depth)
     }
 
+    // -- Project operations --
+
+    /// Insert or update a project in the local cache.
+    pub fn upsert_project(&self, project: &CachedProject) -> Result<()> {
+        self.conn
+            .execute(
+                r#"
+            INSERT INTO projects (id, name, parent_id, deleted, last_synced)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                parent_id = excluded.parent_id,
+                deleted = excluded.deleted,
+                last_synced = excluded.last_synced
+            "#,
+                params![
+                    project.id,
+                    project.name,
+                    project.parent_id,
+                    project.deleted,
+                    project.last_synced,
+                ],
+            )
+            .map_err(|e| Error::Database(format!("upsert project failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Get a project by ID.
+    pub fn get_project(&self, id: &str) -> Result<Option<CachedProject>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, parent_id, deleted, last_synced FROM projects WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(CachedProject {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        parent_id: row.get(2)?,
+                        deleted: row.get(3)?,
+                        last_synced: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("get project failed: {e}")))
+    }
+
+    /// List all non-deleted projects.
+    pub fn list_projects(&self) -> Result<Vec<CachedProject>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, parent_id, deleted, last_synced \
+                 FROM projects WHERE deleted IS NULL ORDER BY id",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let projects = stmt
+            .query_map([], |row| {
+                Ok(CachedProject {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    parent_id: row.get(2)?,
+                    deleted: row.get(3)?,
+                    last_synced: row.get(4)?,
+                })
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(projects)
+    }
+
+    /// Soft-delete a project.
+    pub fn soft_delete_project(&self, id: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE projects SET deleted = ?1 WHERE id = ?2",
+                params![now, id],
+            )
+            .map_err(|e| Error::Database(format!("soft delete project failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Get direct subprojects of a project.
+    pub fn get_subprojects(&self, parent_id: &str) -> Result<Vec<CachedProject>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, parent_id, deleted, last_synced \
+                 FROM projects WHERE parent_id = ?1 AND deleted IS NULL ORDER BY id",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let projects = stmt
+            .query_map(params![parent_id], |row| {
+                Ok(CachedProject {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    parent_id: row.get(2)?,
+                    deleted: row.get(3)?,
+                    last_synced: row.get(4)?,
+                })
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(projects)
+    }
+
+    /// Check if a project exists (including deleted).
+    pub fn project_exists(&self, id: &str) -> Result<bool> {
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM projects WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?;
+
+        Ok(count > 0)
+    }
+
+    /// Get all descendant project IDs (recursive BFS).
+    pub fn get_project_descendants(&self, id: &str) -> Result<Vec<String>> {
+        let mut result = Vec::new();
+        let mut queue = vec![id.to_string()];
+
+        while let Some(parent) = queue.pop() {
+            let subs = self.get_subprojects(&parent)?;
+            for sub in &subs {
+                queue.push(sub.id.clone());
+                result.push(sub.id.clone());
+            }
+        }
+
+        Ok(result)
+    }
+
     // -- Feels operations --
 
     /// Set today's energy and focus values.
@@ -829,5 +991,22 @@ impl TaskSummary {
         } else {
             self.title.clone()
         }
+    }
+}
+
+/// A project stored in the local cache.
+#[derive(Debug, Clone)]
+pub struct CachedProject {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub deleted: Option<String>,
+    pub last_synced: Option<String>,
+}
+
+impl CachedProject {
+    /// Check if the project is soft-deleted.
+    pub fn is_deleted(&self) -> bool {
+        self.deleted.is_some()
     }
 }
