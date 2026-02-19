@@ -31,19 +31,9 @@ pub async fn create(config: &Config, name: &str, description: Option<String>) ->
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
 
-    // Generate slug-like ID from name
-    let id = name
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-
+    // Use name verbatim as the project ID (no slugification)
     let req = CreateProjectRequest {
-        id,
+        id: name.to_string(),
         name: name.to_string(),
         description,
     };
