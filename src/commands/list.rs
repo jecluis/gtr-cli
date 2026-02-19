@@ -56,7 +56,7 @@ pub async fn tasks(
     let ctx = LocalContext::new(config, !no_sync)?;
 
     // Determine which projects to query
-    let project_ids = match project {
+    let mut project_ids = match project {
         None => {
             // No -P flag: show all projects (new default)
             client
@@ -75,6 +75,20 @@ pub async fn tasks(
             vec
         }
     };
+
+    // Expand to include subproject tasks when --recursive is used with -P
+    // (but not when --for is set, which uses recursive for subtask trees)
+    if recursive && for_task.is_none() {
+        let mut expanded = project_ids.clone();
+        for pid in &project_ids {
+            if let Ok(descendants) = ctx.cache.get_project_descendants(pid) {
+                expanded.extend(descendants);
+            }
+        }
+        expanded.sort();
+        expanded.dedup();
+        project_ids = expanded;
+    }
 
     // Collect ALL task IDs from cache (for consistent prefix highlighting)
     let all_task_ids = {
