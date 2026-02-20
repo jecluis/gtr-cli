@@ -499,7 +499,11 @@ enum Commands {
     },
 
     /// Show current status (feels, active tasks, counts)
-    Status,
+    Status {
+        /// Show label distribution grouped by project
+        #[arg(short = 'L', long = "with-labels")]
+        with_labels: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -960,7 +964,7 @@ async fn run() -> Result<()> {
             focus,
             no_sync,
         } => gtr::commands::feels::run(&config, energy, focus, no_sync).await,
-        Commands::Status => gtr::commands::status::run(&config).await,
+        Commands::Status { with_labels } => gtr::commands::status::run(&config, with_labels).await,
         Commands::Init { .. } => unreachable!(),
         Commands::Version => unreachable!(),
     }

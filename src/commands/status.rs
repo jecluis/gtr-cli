@@ -26,7 +26,7 @@ use crate::commands::feels::{energy_description, focus_description};
 use crate::config::Config;
 
 /// Show a quick status dashboard.
-pub async fn run(config: &Config) -> Result<()> {
+pub async fn run(config: &Config, with_labels: bool) -> Result<()> {
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
     let today = Local::now().date_naive();
@@ -46,6 +46,11 @@ pub async fn run(config: &Config) -> Result<()> {
 
     println!();
     print_counts(overdue, due_today, done_today, pending_sync);
+
+    // -- Label distribution --
+    if with_labels {
+        print_label_stats(&cache)?;
+    }
 
     Ok(())
 }
@@ -137,4 +142,42 @@ fn print_counts(overdue: i64, due_today: i64, done_today: i64, pending_sync: i64
     };
 
     println!("{}  {}  {}  {}", overdue_str, due_str, done_str, sync_str);
+}
+
+fn print_label_stats(cache: &TaskCache) -> crate::Result<()> {
+    let projects = cache.list_projects()?;
+    let mut any_labels = false;
+
+    for project in &projects {
+        let counts = cache.count_tasks_by_label(&project.id)?;
+        if counts.is_empty() {
+            continue;
+        }
+
+        if !any_labels {
+            println!("\n{}", "Labels:".bold());
+            any_labels = true;
+        }
+
+        // Show project breadcrumb
+        let breadcrumb = cache
+            .get_project_path(&project.id)
+            .unwrap_or_else(|_| vec![project.id.clone()]);
+        println!("  {}", breadcrumb.join(" > ").cyan());
+
+        // Sort by count descending
+        let mut counts = counts;
+        counts.sort_by(|a, b| b.1.cmp(&a.1));
+
+        for (label, count) in &counts {
+            let task_word = if *count == 1 { "task" } else { "tasks" };
+            println!("    {}: {} {}", label, count, task_word.dimmed());
+        }
+    }
+
+    if !any_labels {
+        println!("\n{}", "No labels in any project.".dimmed());
+    }
+
+    Ok(())
 }
