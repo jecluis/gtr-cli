@@ -427,7 +427,7 @@ impl TaskCache {
             .conn
             .prepare(
                 r#"
-            SELECT id, project_id, title, priority, size, current_work_state, modified
+            SELECT id, project_id, title, priority, size, current_work_state, modified, labels
             FROM tasks
             WHERE current_work_state IS NOT NULL
               AND done IS NULL AND deleted IS NULL
@@ -440,6 +440,8 @@ impl TaskCache {
 
         let tasks = stmt
             .query_map([], |row| {
+                let labels_json: String = row.get(7)?;
+                let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
                 Ok(ActiveTask {
                     id: row.get(0)?,
                     project_id: row.get(1)?,
@@ -448,6 +450,7 @@ impl TaskCache {
                     size: row.get(4)?,
                     work_state: row.get(5)?,
                     modified: row.get(6)?,
+                    labels,
                 })
             })
             .map_err(|e| Error::Database(format!("query failed: {e}")))?
@@ -1150,6 +1153,7 @@ pub struct ActiveTask {
     pub size: String,
     pub work_state: String,
     pub modified: String,
+    pub labels: Vec<String>,
 }
 
 /// Summary of a task from the cache (for listing).

@@ -108,13 +108,26 @@ pub async fn run(config: &Config, project: Option<Vec<String>>) -> Result<()> {
             .map(|b| b.as_str())
             .unwrap_or(&task.project_id);
 
+        let label_suffix = if task.labels.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " {}",
+                task.labels
+                    .iter()
+                    .map(|l| l.cyan().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         println!(
-            "  {} {} [{}, {}] {}",
+            "  {} {} [{}, {}] {}{}",
             formatted_id,
             task.title,
             task.priority,
             task.size,
             project_label.cyan(),
+            label_suffix,
         );
     }
 

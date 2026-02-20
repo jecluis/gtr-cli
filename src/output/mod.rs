@@ -1031,6 +1031,11 @@ pub fn print_task_details(
 
     println!("  Version:  {}", task.version);
 
+    if !task.labels.is_empty() {
+        let label_strs: Vec<String> = task.labels.iter().map(|l| l.cyan().to_string()).collect();
+        println!("  Labels:   {}", label_strs.join(", "));
+    }
+
     // Print body with markdown rendering
     if !task.body.is_empty() {
         println!("\n{}", "Description:".bold());
