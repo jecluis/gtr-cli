@@ -510,6 +510,7 @@ mod tests {
             impact,
             joy,
             parent_id: None,
+            labels: Vec::new(),
         }
     }
 

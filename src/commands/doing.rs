@@ -156,6 +156,7 @@ fn doing_project_candidates(cache: &TaskCache, doing: &[crate::cache::ActiveTask
                 description: None,
                 deleted: None,
                 parent_id,
+                labels: Vec::new(),
             }
         })
         .collect()

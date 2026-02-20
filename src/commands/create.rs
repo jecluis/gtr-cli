@@ -179,6 +179,7 @@ pub async fn run(
         impact: impact.unwrap_or(3),
         joy: joy.unwrap_or(5),
         parent_id: resolved_parent.clone(),
+        labels: Vec::new(),
     };
 
     // Save locally

@@ -42,6 +42,8 @@ impl TaskDocument {
             .map_err(|e| Error::Storage(format!("custom serialization failed: {e}")))?;
         let log_json = serde_json::to_string(&task.log)
             .map_err(|e| Error::Storage(format!("log serialization failed: {e}")))?;
+        let labels_json = serde_json::to_string(&task.labels)
+            .map_err(|e| Error::Storage(format!("labels serialization failed: {e}")))?;
 
         // Serialize current_work_state as JSON (matching server format)
         let work_state_json = task
@@ -104,6 +106,9 @@ impl TaskDocument {
 
             // Log (stored as JSON string)
             tx.put(&meta, "log", log_json.as_str())?;
+
+            // Labels (stored as JSON string)
+            tx.put(&meta, "labels", labels_json.as_str())?;
 
             // Title and body
             tx.put(ROOT, "title", task.title.as_str())?;
@@ -191,6 +196,14 @@ impl TaskDocument {
         let log = serde_json::from_str(&log_json)
             .map_err(|e| Error::Storage(format!("invalid log JSON: {e}")))?;
 
+        // Parse labels
+        let labels: Vec<String> = self
+            .try_get_str(&meta_id, "labels")?
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(|e| Error::Storage(format!("invalid labels JSON: {e}")))?
+            .unwrap_or_default();
+
         Ok(Task {
             id,
             project_id,
@@ -212,6 +225,7 @@ impl TaskDocument {
             impact,
             joy,
             parent_id,
+            labels,
         })
     }
 
@@ -239,6 +253,14 @@ impl TaskDocument {
             Some(
                 serde_json::to_string(&task.custom)
                     .map_err(|e| Error::Storage(format!("custom serialization failed: {e}")))?,
+            )
+        } else {
+            None
+        };
+        let labels_json = if task.labels != current.labels {
+            Some(
+                serde_json::to_string(&task.labels)
+                    .map_err(|e| Error::Storage(format!("labels serialization failed: {e}")))?,
             )
         } else {
             None
@@ -360,6 +382,10 @@ impl TaskDocument {
 
                 if let Some(ref lj) = log_json {
                     tx.put::<_, _, &str>(&meta, "log", lj)?;
+                }
+
+                if let Some(ref labj) = labels_json {
+                    tx.put::<_, _, &str>(&meta, "labels", labj)?;
                 }
 
                 if task.title != current.title {

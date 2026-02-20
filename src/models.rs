@@ -33,6 +33,9 @@ pub struct Project {
     pub deleted: Option<String>,
     #[serde(default)]
     pub parent_id: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 /// Task representation (matches server's TaskResponse).
@@ -71,6 +74,9 @@ pub struct Task {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 fn default_impact() -> u8 {
@@ -193,6 +199,9 @@ pub struct CreateTaskRequest {
     pub joy: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 /// Request to move a task to another project.
@@ -220,6 +229,8 @@ pub struct UpdateTaskRequest {
     pub joy: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
 }
 
 impl Task {
