@@ -47,6 +47,7 @@ pub async fn run(
     target_project: Option<String>,
     parent_id: Option<String>,
     unset: bool,
+    recursive: bool,
     no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
@@ -339,6 +340,11 @@ pub async fn run(
         hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &task.id)?;
     }
 
+    // Capture which recursive-eligible fields changed (before display takes ownership)
+    let project_changed = target_project.is_some() && old_task.project_id != task.project_id;
+    let priority_changed = priority.is_some() && old_task.priority != task.priority;
+    let deadline_changed = deadline.is_some() && old_task.deadline != task.deadline;
+
     println!(
         "{}",
         format!("{} Task updated locally!", icons.success)
@@ -448,7 +454,7 @@ pub async fn run(
         );
     }
 
-    if target_project.is_some() && old_task.project_id != task.project_id {
+    if project_changed {
         println!(
             "  {} {} → {}",
             "Project:".bold(),
@@ -461,13 +467,54 @@ pub async fn run(
         println!("  {} {}", "Body:".bold(), "updated".green());
     }
 
+    // Apply recursive updates to all descendants
+    if recursive && (project_changed || priority_changed || deadline_changed) {
+        let descendants = ctx.cache.get_all_descendants(&full_id)?;
+        if !descendants.is_empty() {
+            let count = apply_recursive_updates(
+                &ctx,
+                &descendants,
+                if project_changed {
+                    Some(task.project_id.as_str())
+                } else {
+                    None
+                },
+                if priority_changed {
+                    Some(task.priority.as_str())
+                } else {
+                    None
+                },
+                if deadline_changed {
+                    task.deadline.as_deref()
+                } else {
+                    None
+                },
+                deadline_changed && task.deadline.is_none(),
+            )?;
+            println!(
+                "  {} Updated {} subtask{}",
+                icons.success,
+                count,
+                if count == 1 { "" } else { "s" }
+            );
+        }
+    }
+
     // Sync the project move on the server before general CRDT sync
-    if !no_sync
-        && target_project.is_some()
-        && old_task.project_id != task.project_id
-        && let Err(e) = client.move_task(&full_id, &task.project_id).await
-    {
-        tracing::warn!(error = %e, "server move failed, queued for sync");
+    if !no_sync && project_changed {
+        // Move the main task
+        if let Err(e) = client.move_task(&full_id, &task.project_id).await {
+            tracing::warn!(error = %e, "server move failed, queued for sync");
+        }
+        // Move descendants if recursive
+        if recursive {
+            let descendants = ctx.cache.get_all_descendants(&full_id)?;
+            for desc_id in &descendants {
+                if let Err(e) = client.move_task(desc_id, &task.project_id).await {
+                    tracing::warn!(task_id = %desc_id, error = %e, "server move for subtask failed");
+                }
+            }
+        }
     }
 
     // Attempt sync if enabled
@@ -488,4 +535,95 @@ pub async fn run(
     println!("\nView with: {}", format!("gtr show {}", task.id).dimmed());
 
     Ok(())
+}
+
+/// Apply recursive-eligible fields to a list of descendant tasks.
+///
+/// Returns the number of subtasks actually modified.
+fn apply_recursive_updates(
+    ctx: &LocalContext,
+    descendant_ids: &[String],
+    new_project: Option<&str>,
+    new_priority: Option<&str>,
+    new_deadline: Option<&str>,
+    clear_deadline: bool,
+) -> Result<usize> {
+    let now = Utc::now();
+    let mut count = 0;
+
+    for desc_id in descendant_ids {
+        let mut child = ctx.storage.load_task(desc_id)?;
+        let mut changed = false;
+
+        if let Some(project) = new_project
+            && child.project_id != project
+        {
+            child.project_id = project.to_string();
+            changed = true;
+        }
+
+        if let Some(priority) = new_priority
+            && child.priority != priority
+        {
+            child.log.push(LogEntry {
+                timestamp: now,
+                entry_type: LogEntryType::PriorityChanged {
+                    from: child.priority.clone(),
+                    to: priority.to_string(),
+                },
+                source: crate::models::LogSource::User,
+            });
+            child.priority = priority.to_string();
+            changed = true;
+        }
+
+        if let Some(deadline) = new_deadline
+            && child.deadline.as_deref() != Some(deadline)
+        {
+            let old_dt = child
+                .deadline
+                .as_ref()
+                .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+            let new_dt = chrono::DateTime::parse_from_rfc3339(deadline)
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+            child.log.push(LogEntry {
+                timestamp: now,
+                entry_type: LogEntryType::DeadlineChanged {
+                    from: old_dt,
+                    to: new_dt,
+                },
+                source: crate::models::LogSource::User,
+            });
+            child.deadline = Some(deadline.to_string());
+            changed = true;
+        } else if clear_deadline && child.deadline.is_some() {
+            let old_dt = child
+                .deadline
+                .as_ref()
+                .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+            child.log.push(LogEntry {
+                timestamp: now,
+                entry_type: LogEntryType::DeadlineChanged {
+                    from: old_dt,
+                    to: None,
+                },
+                source: crate::models::LogSource::User,
+            });
+            child.deadline = None;
+            changed = true;
+        }
+
+        if changed {
+            child.modified = now.to_rfc3339();
+            child.version += 1;
+            ctx.storage.update_task(&child)?;
+            ctx.cache.upsert_task(&child, true)?;
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }

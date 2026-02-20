@@ -253,6 +253,10 @@ enum Commands {
         #[arg(long)]
         unset: bool,
 
+        /// Apply --project, --priority, and --deadline to all subtasks
+        #[arg(short = 'R', long)]
+        recursive: bool,
+
         /// Skip sync (work offline)
         #[arg(long)]
         no_sync: bool,
@@ -732,11 +736,12 @@ async fn run() -> Result<()> {
             project,
             parent,
             unset,
+            recursive,
             no_sync,
         } => {
             gtr::commands::update::run(
                 &config, &task_id, title, body, priority, size, deadline, progress, impact, joy,
-                project, parent, unset, no_sync,
+                project, parent, unset, recursive, no_sync,
             )
             .await
         }
