@@ -69,6 +69,7 @@ pub async fn tasks(
                     parent_id: p.parent_id.clone(),
                     deleted: p.deleted.clone(),
                     last_synced: Some(now.clone()),
+                    labels: p.labels.clone(),
                 };
                 let _ = ctx.cache.upsert_project(&cached);
             }

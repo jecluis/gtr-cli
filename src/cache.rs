@@ -96,7 +96,8 @@ impl TaskCache {
                 impact INTEGER NOT NULL DEFAULT 3,
                 joy INTEGER NOT NULL DEFAULT 5,
                 current_work_state TEXT,
-                parent_id TEXT
+                parent_id TEXT,
+                labels TEXT NOT NULL DEFAULT '[]'
             );
 
             CREATE INDEX IF NOT EXISTS idx_project ON tasks(project_id);
@@ -139,6 +140,12 @@ impl TaskCache {
             [],
         );
 
+        // Migrate existing caches: add labels column to tasks if missing
+        let _ = self.conn.execute(
+            "ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
+
         // Projects table: local registry mirroring server
         self.conn
             .execute_batch(
@@ -148,13 +155,20 @@ impl TaskCache {
                 name TEXT NOT NULL,
                 parent_id TEXT,
                 deleted TEXT,
-                last_synced TEXT
+                last_synced TEXT,
+                labels TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS idx_projects_parent
                 ON projects(parent_id);
             "#,
             )
             .map_err(|e| Error::Database(format!("projects schema init failed: {e}")))?;
+
+        // Migrate existing caches: add labels column to projects if missing
+        let _ = self.conn.execute(
+            "ALTER TABLE projects ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
 
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
@@ -175,6 +189,29 @@ impl TaskCache {
         Ok(())
     }
 
+    /// Parse a TaskSummary from a row with columns:
+    /// id, project_id, title, priority, size, created, modified,
+    /// done, deleted, deadline, needs_push, is_bookmark, labels
+    fn row_to_summary(row: &rusqlite::Row) -> rusqlite::Result<TaskSummary> {
+        let labels_json: String = row.get(12)?;
+        let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        Ok(TaskSummary {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            title: row.get(2)?,
+            priority: row.get(3)?,
+            size: row.get(4)?,
+            created: row.get(5)?,
+            modified: row.get(6)?,
+            done: row.get(7)?,
+            deleted: row.get(8)?,
+            deadline: row.get(9)?,
+            needs_push: row.get::<_, i64>(10)? != 0,
+            is_bookmark: row.get::<_, i64>(11).unwrap_or(0) != 0,
+            labels,
+        })
+    }
+
     /// Insert or update a task in the cache.
     pub fn upsert_task(&self, task: &Task, needs_push: bool) -> Result<()> {
         self.conn
@@ -183,8 +220,8 @@ impl TaskCache {
             INSERT INTO tasks (
                 id, project_id, title, priority, size, created, modified,
                 done, deleted, deadline, version, needs_push, impact, joy,
-                current_work_state, parent_id, is_bookmark
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                current_work_state, parent_id, is_bookmark, labels
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
                 title = excluded.title,
@@ -200,7 +237,8 @@ impl TaskCache {
                 joy = excluded.joy,
                 current_work_state = excluded.current_work_state,
                 parent_id = excluded.parent_id,
-                is_bookmark = excluded.is_bookmark
+                is_bookmark = excluded.is_bookmark,
+                labels = excluded.labels
             "#,
                 params![
                     task.id,
@@ -220,6 +258,7 @@ impl TaskCache {
                     task.current_work_state,
                     task.parent_id,
                     task.is_bookmark() as i64,
+                    serde_json::to_string(&task.labels).unwrap_or_else(|_| "[]".to_string()),
                 ],
             )
             .map_err(|e| Error::Database(format!("upsert failed: {e}")))?;
@@ -275,26 +314,11 @@ impl TaskCache {
             .query_row(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push, is_bookmark
+                   done, deleted, deadline, needs_push, is_bookmark, labels
             FROM tasks WHERE id = ?1
             "#,
                 params![task_id],
-                |row| {
-                    Ok(TaskSummary {
-                        id: row.get(0)?,
-                        project_id: row.get(1)?,
-                        title: row.get(2)?,
-                        priority: row.get(3)?,
-                        size: row.get(4)?,
-                        created: row.get(5)?,
-                        modified: row.get(6)?,
-                        done: row.get(7)?,
-                        deleted: row.get(8)?,
-                        deadline: row.get(9)?,
-                        needs_push: row.get::<_, i64>(10)? != 0,
-                        is_bookmark: row.get::<_, i64>(11).unwrap_or(0) != 0,
-                    })
-                },
+                Self::row_to_summary,
             )
             .optional()
             .map_err(|e| Error::Database(format!("query failed: {e}")))
@@ -307,7 +331,7 @@ impl TaskCache {
             .prepare(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push, is_bookmark
+                   done, deleted, deadline, needs_push, is_bookmark, labels
             FROM tasks
             WHERE project_id = ?1
             ORDER BY modified DESC
@@ -316,22 +340,7 @@ impl TaskCache {
             .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
 
         let tasks = stmt
-            .query_map(params![project_id], |row| {
-                Ok(TaskSummary {
-                    id: row.get(0)?,
-                    project_id: row.get(1)?,
-                    title: row.get(2)?,
-                    priority: row.get(3)?,
-                    size: row.get(4)?,
-                    created: row.get(5)?,
-                    modified: row.get(6)?,
-                    done: row.get(7)?,
-                    deleted: row.get(8)?,
-                    deadline: row.get(9)?,
-                    needs_push: row.get::<_, i64>(10)? != 0,
-                    is_bookmark: row.get::<_, i64>(11).unwrap_or(0) != 0,
-                })
-            })
+            .query_map(params![project_id], Self::row_to_summary)
             .map_err(|e| Error::Database(format!("query failed: {e}")))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
@@ -522,7 +531,7 @@ impl TaskCache {
             .prepare(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push, is_bookmark
+                   done, deleted, deadline, needs_push, is_bookmark, labels
             FROM tasks
             WHERE parent_id = ?1 AND deleted IS NULL
             ORDER BY modified DESC
@@ -531,22 +540,7 @@ impl TaskCache {
             .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
 
         let tasks = stmt
-            .query_map(params![parent_id], |row| {
-                Ok(TaskSummary {
-                    id: row.get(0)?,
-                    project_id: row.get(1)?,
-                    title: row.get(2)?,
-                    priority: row.get(3)?,
-                    size: row.get(4)?,
-                    created: row.get(5)?,
-                    modified: row.get(6)?,
-                    done: row.get(7)?,
-                    deleted: row.get(8)?,
-                    deadline: row.get(9)?,
-                    needs_push: row.get::<_, i64>(10)? != 0,
-                    is_bookmark: row.get::<_, i64>(11).unwrap_or(0) != 0,
-                })
-            })
+            .query_map(params![parent_id], Self::row_to_summary)
             .map_err(|e| Error::Database(format!("query failed: {e}")))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
@@ -690,13 +684,14 @@ impl TaskCache {
         self.conn
             .execute(
                 r#"
-            INSERT INTO projects (id, name, parent_id, deleted, last_synced)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO projects (id, name, parent_id, deleted, last_synced, labels)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 parent_id = excluded.parent_id,
                 deleted = excluded.deleted,
-                last_synced = excluded.last_synced
+                last_synced = excluded.last_synced,
+                labels = excluded.labels
             "#,
                 params![
                     project.id,
@@ -704,6 +699,7 @@ impl TaskCache {
                     project.parent_id,
                     project.deleted,
                     project.last_synced,
+                    serde_json::to_string(&project.labels).unwrap_or_else(|_| "[]".to_string()),
                 ],
             )
             .map_err(|e| Error::Database(format!("upsert project failed: {e}")))?;
@@ -711,21 +707,29 @@ impl TaskCache {
         Ok(())
     }
 
+    /// Parse a CachedProject from a row with columns:
+    /// id, name, parent_id, deleted, last_synced, labels
+    fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<CachedProject> {
+        let labels_json: String = row.get(5)?;
+        let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        Ok(CachedProject {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            parent_id: row.get(2)?,
+            deleted: row.get(3)?,
+            last_synced: row.get(4)?,
+            labels,
+        })
+    }
+
     /// Get a project by ID.
     pub fn get_project(&self, id: &str) -> Result<Option<CachedProject>> {
         self.conn
             .query_row(
-                "SELECT id, name, parent_id, deleted, last_synced FROM projects WHERE id = ?1",
+                "SELECT id, name, parent_id, deleted, last_synced, labels \
+                 FROM projects WHERE id = ?1",
                 params![id],
-                |row| {
-                    Ok(CachedProject {
-                        id: row.get(0)?,
-                        name: row.get(1)?,
-                        parent_id: row.get(2)?,
-                        deleted: row.get(3)?,
-                        last_synced: row.get(4)?,
-                    })
-                },
+                Self::row_to_project,
             )
             .optional()
             .map_err(|e| Error::Database(format!("get project failed: {e}")))
@@ -736,21 +740,13 @@ impl TaskCache {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, parent_id, deleted, last_synced \
+                "SELECT id, name, parent_id, deleted, last_synced, labels \
                  FROM projects WHERE deleted IS NULL ORDER BY id",
             )
             .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
 
         let projects = stmt
-            .query_map([], |row| {
-                Ok(CachedProject {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    parent_id: row.get(2)?,
-                    deleted: row.get(3)?,
-                    last_synced: row.get(4)?,
-                })
-            })
+            .query_map([], Self::row_to_project)
             .map_err(|e| Error::Database(format!("query failed: {e}")))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
@@ -776,21 +772,13 @@ impl TaskCache {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, parent_id, deleted, last_synced \
+                "SELECT id, name, parent_id, deleted, last_synced, labels \
                  FROM projects WHERE parent_id = ?1 AND deleted IS NULL ORDER BY id",
             )
             .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
 
         let projects = stmt
-            .query_map(params![parent_id], |row| {
-                Ok(CachedProject {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    parent_id: row.get(2)?,
-                    deleted: row.get(3)?,
-                    last_synced: row.get(4)?,
-                })
-            })
+            .query_map(params![parent_id], Self::row_to_project)
             .map_err(|e| Error::Database(format!("query failed: {e}")))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
@@ -974,6 +962,146 @@ impl TaskCache {
         Ok(())
     }
 
+    // -- Label operations --
+
+    /// Get labels for a project from the cache.
+    pub fn get_project_labels(&self, project_id: &str) -> Result<Vec<String>> {
+        let labels_json: String = self
+            .conn
+            .query_row(
+                "SELECT labels FROM projects WHERE id = ?1",
+                params![project_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(format!("get labels failed: {e}")))?;
+        Ok(serde_json::from_str(&labels_json).unwrap_or_default())
+    }
+
+    /// Update the label registry for a project.
+    pub fn set_project_labels(&self, project_id: &str, labels: &[String]) -> Result<()> {
+        let json = serde_json::to_string(labels).unwrap_or_else(|_| "[]".to_string());
+        self.conn
+            .execute(
+                "UPDATE projects SET labels = ?1 WHERE id = ?2",
+                params![json, project_id],
+            )
+            .map_err(|e| Error::Database(format!("set labels failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Remove a label from all tasks in a project. Returns affected count.
+    pub fn remove_label_from_tasks(&self, project_id: &str, label: &str) -> Result<u64> {
+        // Find tasks that contain this label
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, labels FROM tasks \
+                 WHERE project_id = ?1 AND labels LIKE ?2",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let pattern = format!("%\"{}\"%", label.replace('"', "\\\""));
+        let rows: Vec<(String, String)> = stmt
+            .query_map(params![project_id, pattern], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        let mut count = 0u64;
+        for (id, labels_json) in &rows {
+            let mut labels: Vec<String> = serde_json::from_str(labels_json).unwrap_or_default();
+            let before = labels.len();
+            labels.retain(|l| l != label);
+            if labels.len() < before {
+                let new_json = serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string());
+                self.conn
+                    .execute(
+                        "UPDATE tasks SET labels = ?1 WHERE id = ?2",
+                        params![new_json, id],
+                    )
+                    .map_err(|e| Error::Database(format!("update failed: {e}")))?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    /// Rename a label in all tasks in a project. Returns affected count.
+    pub fn rename_label_in_tasks(&self, project_id: &str, old: &str, new: &str) -> Result<u64> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, labels FROM tasks \
+                 WHERE project_id = ?1 AND labels LIKE ?2",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let pattern = format!("%\"{}\"%", old.replace('"', "\\\""));
+        let rows: Vec<(String, String)> = stmt
+            .query_map(params![project_id, pattern], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        let mut count = 0u64;
+        for (id, labels_json) in &rows {
+            let mut labels: Vec<String> = serde_json::from_str(labels_json).unwrap_or_default();
+            let before = labels.clone();
+            for l in &mut labels {
+                if l == old {
+                    *l = new.to_string();
+                }
+            }
+            labels.sort();
+            labels.dedup();
+            if labels != before {
+                let new_json = serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string());
+                self.conn
+                    .execute(
+                        "UPDATE tasks SET labels = ?1 WHERE id = ?2",
+                        params![new_json, id],
+                    )
+                    .map_err(|e| Error::Database(format!("update failed: {e}")))?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    /// Count tasks per label in a project.
+    pub fn count_tasks_by_label(&self, project_id: &str) -> Result<Vec<(String, i64)>> {
+        // Get all non-deleted tasks for this project
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT labels FROM tasks \
+                 WHERE project_id = ?1 AND deleted IS NULL AND done IS NULL",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let label_jsons: Vec<String> = stmt
+            .query_map(params![project_id], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for json in &label_jsons {
+            let labels: Vec<String> = serde_json::from_str(json).unwrap_or_default();
+            for label in labels {
+                *counts.entry(label).or_insert(0) += 1;
+            }
+        }
+
+        let mut result: Vec<(String, i64)> = counts.into_iter().collect();
+        result.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        Ok(result)
+    }
+
     /// Determine whether to prompt for feels and what kind of prompt.
     pub fn should_prompt_feels(&self, today: &NaiveDate) -> Result<FeelsPrompt> {
         let row = self.get_today_feels(today)?;
@@ -1039,6 +1167,7 @@ pub struct TaskSummary {
     pub deadline: Option<String>,
     pub needs_push: bool,
     pub is_bookmark: bool,
+    pub labels: Vec<String>,
 }
 
 impl TaskSummary {
@@ -1060,6 +1189,7 @@ pub struct CachedProject {
     pub parent_id: Option<String>,
     pub deleted: Option<String>,
     pub last_synced: Option<String>,
+    pub labels: Vec<String>,
 }
 
 impl CachedProject {

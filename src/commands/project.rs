@@ -77,6 +77,7 @@ pub async fn create(
         parent_id: project.parent_id.clone(),
         deleted: None,
         last_synced: Some(chrono::Utc::now().to_rfc3339()),
+        labels: project.labels.clone(),
     };
     cache.upsert_project(&cached)?;
 
@@ -129,6 +130,7 @@ pub async fn update(
         parent_id: project.parent_id.clone(),
         deleted: project.deleted.clone(),
         last_synced: Some(chrono::Utc::now().to_rfc3339()),
+        labels: project.labels.clone(),
     };
     cache.upsert_project(&cached)?;
 
@@ -209,6 +211,7 @@ pub async fn restore(config: &Config, project_id: &str) -> Result<()> {
         parent_id: project.parent_id.clone(),
         deleted: None,
         last_synced: Some(chrono::Utc::now().to_rfc3339()),
+        labels: project.labels.clone(),
     };
     cache.upsert_project(&cached)?;
 

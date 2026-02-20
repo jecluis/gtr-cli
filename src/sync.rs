@@ -102,6 +102,7 @@ impl SyncManager {
                 parent_id: project.parent_id.clone(),
                 deleted: project.deleted.clone(),
                 last_synced: Some(now.clone()),
+                labels: project.labels.clone(),
             };
             self.cache.upsert_project(&cached)?;
         }
