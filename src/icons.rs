@@ -112,6 +112,10 @@ pub struct Icons {
     /// Bookmark glyph (prepended to title for --bookmark tasks)
     pub bookmark: String,
 
+    // -- Labels --
+    /// Label glyph (shown when --with-labels is active)
+    pub label: String,
+
     // -- Informational --
     /// Non-blocking informational message
     pub info: String,
@@ -168,6 +172,9 @@ impl Icons {
             // Bookmark
             bookmark: "\u{1f516} ".into(), // 🔖 + space
 
+            // Labels
+            label: "\u{1f3f7}".into(), // 🏷
+
             // Informational
             info: "\u{2139}".into(),      // ℹ
             cancelled: "\u{2717}".into(), // ✗
@@ -205,6 +212,9 @@ impl Icons {
 
             // Bookmark
             bookmark: format!("{} ", "\u{f00c0}".cyan()), // 󰃀 nf-md-bookmark (cyan)
+
+            // Labels
+            label: format!("{}", "\u{f03b}".cyan()), // nf-fa-tags (cyan)
 
             // Informational
             info: "\u{f05a}".into(),      // nf-fa-info_circle

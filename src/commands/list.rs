@@ -51,6 +51,8 @@ pub async fn tasks(
     for_task: Option<String>,
     recursive: bool,
     compact: bool,
+    label_filter: Vec<String>,
+    with_labels: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
@@ -218,6 +220,15 @@ pub async fn tasks(
         status_ok && priority_ok && size_ok && deadline_ok
     });
 
+    // Filter by labels (OR logic: task must have at least one of the specified labels)
+    if !label_filter.is_empty() {
+        all_tasks.retain(|task| {
+            label_filter
+                .iter()
+                .any(|lf| task.labels.iter().any(|tl| tl == lf))
+        });
+    }
+
     // Apply limit if specified
     if let Some(lim) = limit {
         all_tasks.truncate(lim as usize);
@@ -271,6 +282,7 @@ pub async fn tasks(
         &icons,
         compact,
         &project_paths,
+        with_labels,
     );
     Ok(())
 }

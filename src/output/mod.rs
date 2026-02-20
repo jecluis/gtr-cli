@@ -378,6 +378,7 @@ pub fn print_tasks(
     icons: &Icons,
     compact: bool,
     project_paths: &ProjectPaths,
+    with_labels: bool,
 ) {
     if tasks.is_empty() {
         println!("{}", "No tasks found".yellow());
@@ -394,6 +395,7 @@ pub fn print_tasks(
         icons,
         compact,
         project_paths,
+        with_labels,
     );
     println!("\n{} {}", "Total:".bold(), tasks.len());
 }
@@ -411,6 +413,7 @@ fn print_task_table(
     icons: &Icons,
     compact: bool,
     project_paths: &ProjectPaths,
+    with_labels: bool,
 ) {
     // Detect which columns to show
     let unique_projects: HashSet<&str> = tasks.iter().map(|t| t.project_id.as_str()).collect();
@@ -453,6 +456,7 @@ fn print_task_table(
             icons,
             compact,
             project_paths,
+            with_labels,
         );
     } else {
         // Narrow terminal: use simplified format
@@ -468,6 +472,7 @@ fn print_task_table(
             icons,
             compact,
             project_paths,
+            with_labels,
         );
     }
 }
@@ -641,6 +646,7 @@ fn render_task_table(
     icons: &Icons,
     compact: bool,
     project_paths: &ProjectPaths,
+    with_labels: bool,
 ) {
     let mut builder = Builder::default();
 
@@ -676,7 +682,21 @@ fn render_task_table(
             &subtask_counts,
         );
 
-        let mut record: Vec<String> = vec![row.id, row.title];
+        let title_with_labels = if with_labels && !task.labels.is_empty() {
+            let label_line = format!(
+                "  {} {}",
+                icons.label,
+                task.labels
+                    .iter()
+                    .map(|l| l.cyan().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            format!("{}\n{}", row.title, label_line)
+        } else {
+            row.title
+        };
+        let mut record: Vec<String> = vec![row.id, title_with_labels];
         if columns.show_project {
             let color = project_colors.get(task.project_id.as_str()).copied();
             record.push(format_project_cell(&task.project_id, project_paths, color));
@@ -767,6 +787,7 @@ fn render_simplified_table(
     icons: &Icons,
     _compact: bool,
     project_paths: &ProjectPaths,
+    with_labels: bool,
 ) {
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     let subtask_counts = compute_subtask_counts(tasks);
@@ -809,6 +830,19 @@ fn render_simplified_table(
         let wrapped_title = wrap_text(&task.display_title(icons), 60);
         for line in wrapped_title {
             println!("{}", line);
+        }
+
+        // Labels line (if --with-labels and task has labels)
+        if with_labels && !task.labels.is_empty() {
+            println!(
+                "  {} {}",
+                icons.label,
+                task.labels
+                    .iter()
+                    .map(|l| l.cyan().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
 
         // Line 3: PRIORITY - DEADLINE - SIZE

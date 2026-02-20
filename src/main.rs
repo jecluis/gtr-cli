@@ -86,7 +86,7 @@ enum Commands {
         overdue: bool,
 
         /// Maximum number of results
-        #[arg(short, long)]
+        #[arg(long)]
         limit: Option<u32>,
 
         /// Reverse the order of non-doing tasks
@@ -120,6 +120,14 @@ enum Commands {
         /// Compact output (no row separators)
         #[arg(long)]
         compact: bool,
+
+        /// Filter to tasks with any of these labels (OR logic, repeatable)
+        #[arg(short = 'l', long = "label")]
+        labels: Vec<String>,
+
+        /// Show labels below each task title
+        #[arg(short = 'L', long = "with-labels")]
+        with_labels: bool,
     },
 
     /// Show a specific task
@@ -709,6 +717,8 @@ async fn run() -> Result<()> {
             for_task,
             recursive,
             compact,
+            labels,
+            with_labels,
         } => {
             gtr::commands::list::tasks(
                 &config,
@@ -731,6 +741,8 @@ async fn run() -> Result<()> {
                 for_task,
                 recursive,
                 compact,
+                labels,
+                with_labels,
             )
             .await
         }

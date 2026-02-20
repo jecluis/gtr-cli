@@ -105,6 +105,7 @@ pub async fn run(
         &icons,
         false,
         &project_paths,
+        false,
     );
 
     Ok(())
