@@ -241,6 +241,10 @@ enum Commands {
         #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=10))]
         joy: Option<u8>,
 
+        /// Move task to a different project
+        #[arg(short = 'P', long = "project")]
+        project: Option<String>,
+
         /// Parent task ID (value required unless --unset is set)
         #[arg(long = "for", value_name = "PARENT_ID", num_args = 0..=1, default_missing_value = "")]
         parent: Option<String>,
@@ -359,20 +363,6 @@ enum Commands {
     Stop {
         /// Task ID (picks from "doing" tasks if omitted)
         task_id: Option<String>,
-
-        /// Skip sync (work offline)
-        #[arg(long)]
-        no_sync: bool,
-    },
-
-    /// Move a task to a different project
-    Move {
-        /// Task ID
-        task_id: String,
-
-        /// Target project ID
-        #[arg(short = 'P', long = "project")]
-        target_project: String,
 
         /// Skip sync (work offline)
         #[arg(long)]
@@ -739,13 +729,14 @@ async fn run() -> Result<()> {
             progress,
             impact,
             joy,
+            project,
             parent,
             unset,
             no_sync,
         } => {
             gtr::commands::update::run(
                 &config, &task_id, title, body, priority, size, deadline, progress, impact, joy,
-                parent, unset, no_sync,
+                project, parent, unset, no_sync,
             )
             .await
         }
@@ -791,11 +782,6 @@ async fn run() -> Result<()> {
         Commands::Stop { task_id, no_sync } => {
             gtr::commands::stop::run(&config, task_id, no_sync).await
         }
-        Commands::Move {
-            task_id,
-            target_project,
-            no_sync,
-        } => gtr::commands::move_task::run(&config, &task_id, &target_project, no_sync).await,
         Commands::Next { project, no_sync } => {
             gtr::commands::next::run(&config, project, no_sync).await
         }

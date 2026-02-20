@@ -44,6 +44,7 @@ pub async fn run(
     progress: Option<u8>,
     impact: Option<u8>,
     joy: Option<u8>,
+    target_project: Option<String>,
     parent_id: Option<String>,
     unset: bool,
     no_sync: bool,
@@ -83,10 +84,23 @@ pub async fn run(
         && progress.is_none()
         && impact.is_none()
         && joy.is_none()
+        && target_project.is_none()
         && parent_id.is_none()
     {
         return Err(Error::UserFacing(
-            "No updates specified. Provide at least one field to update (--title, --body, --priority, --size, --deadline, --progress, --impact, --joy, or --for)".to_string(),
+            "No updates specified. Please provide at least one field to update.\n\n\
+             Possible options:\n  \
+               --body\n  \
+               --deadline\n  \
+               --for\n  \
+               --impact\n  \
+               --joy\n  \
+               --priority\n  \
+               --progress\n  \
+               --project\n  \
+               --size\n  \
+               --title"
+                .to_string(),
         ));
     }
 
@@ -289,6 +303,13 @@ pub async fn run(
         }
     }
 
+    // Handle project move
+    if let Some(ref new_project) = target_project
+        && task.project_id != *new_project
+    {
+        task.project_id = new_project.clone();
+    }
+
     // Update metadata
     task.modified = now.to_rfc3339();
     task.version += 1;
@@ -427,8 +448,26 @@ pub async fn run(
         );
     }
 
+    if target_project.is_some() && old_task.project_id != task.project_id {
+        println!(
+            "  {} {} → {}",
+            "Project:".bold(),
+            old_task.project_id.dimmed().strikethrough(),
+            task.project_id.cyan()
+        );
+    }
+
     if edit_body && old_task.body != task.body {
         println!("  {} {}", "Body:".bold(), "updated".green());
+    }
+
+    // Sync the project move on the server before general CRDT sync
+    if !no_sync
+        && target_project.is_some()
+        && old_task.project_id != task.project_id
+        && let Err(e) = client.move_task(&full_id, &task.project_id).await
+    {
+        tracing::warn!(error = %e, "server move failed, queued for sync");
     }
 
     // Attempt sync if enabled
