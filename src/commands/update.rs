@@ -363,6 +363,45 @@ pub async fn run(
     if let Some(ref new_project) = target_project
         && task.project_id != *new_project
     {
+        // Check if task's labels exist in the target project
+        if !task.labels.is_empty() {
+            let target_labels = ctx.cache.get_project_labels(new_project)?;
+            let mut labels_to_create = Vec::new();
+            let mut labels_to_remove = Vec::new();
+
+            for label in &task.labels {
+                if !target_labels.contains(label) {
+                    let confirm = dialoguer::Confirm::new()
+                        .with_prompt(format!(
+                            "Label '{}' doesn't exist in target project '{}'. Create it?",
+                            label, new_project
+                        ))
+                        .default(true)
+                        .interact()
+                        .unwrap_or(false);
+                    if confirm {
+                        labels_to_create.push(label.clone());
+                    } else {
+                        labels_to_remove.push(label.clone());
+                    }
+                }
+            }
+
+            // Create missing labels in target project
+            if !labels_to_create.is_empty() {
+                let mut all_labels = target_labels;
+                all_labels.extend(labels_to_create);
+                all_labels.sort();
+                all_labels.dedup();
+                ctx.cache.set_project_labels(new_project, &all_labels)?;
+            }
+
+            // Remove labels the user declined to create
+            if !labels_to_remove.is_empty() {
+                task.labels.retain(|l| !labels_to_remove.contains(l));
+            }
+        }
+
         task.project_id = new_project.clone();
     }
 
