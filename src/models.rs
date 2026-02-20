@@ -233,6 +233,12 @@ pub struct UpdateTaskRequest {
     pub labels: Option<Vec<String>>,
 }
 
+/// Response from label mutation operations (delete/rename).
+#[derive(Debug, Deserialize)]
+pub struct LabelMutationResponse {
+    pub affected_tasks: u64,
+}
+
 impl Task {
     /// Check if task is pending (not done and not deleted).
     pub fn is_pending(&self) -> bool {

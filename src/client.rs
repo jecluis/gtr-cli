@@ -513,6 +513,60 @@ impl Client {
         }
     }
 
+    /// Add labels to a project's registry.
+    pub async fn create_project_labels(
+        &self,
+        project_id: &str,
+        labels: &[String],
+    ) -> Result<Project> {
+        let url = format!(
+            "{}/api/projects/{}/labels",
+            self.base_url,
+            encode_path(project_id)
+        );
+        let body = serde_json::json!({ "labels": labels });
+        self.post(&url, &body).await
+    }
+
+    /// Delete a label from a project's registry (removes from all tasks too).
+    pub async fn delete_project_label(
+        &self,
+        project_id: &str,
+        label: &str,
+    ) -> Result<LabelMutationResponse> {
+        let url = format!(
+            "{}/api/projects/{}/labels/{}",
+            self.base_url,
+            encode_path(project_id),
+            encode_path(label)
+        );
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
+    /// Rename a label in a project's registry (updates all tasks too).
+    pub async fn rename_project_label(
+        &self,
+        project_id: &str,
+        old: &str,
+        new_name: &str,
+    ) -> Result<LabelMutationResponse> {
+        let url = format!(
+            "{}/api/projects/{}/labels/{}",
+            self.base_url,
+            encode_path(project_id),
+            encode_path(old)
+        );
+        let body = serde_json::json!({ "name": new_name });
+        self.put(&url, &body).await
+    }
+
     /// Post a feels (energy/focus) entry to the server.
     pub async fn post_feels(&self, energy: u8, focus: u8, utc_offset: &str) -> Result<()> {
         let url = format!("{}/api/feels", self.base_url);

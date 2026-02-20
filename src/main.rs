@@ -526,6 +526,52 @@ enum ProjectCommands {
 
     /// List all projects
     List,
+
+    /// Manage project labels
+    Label {
+        #[command(subcommand)]
+        command: LabelCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum LabelCommands {
+    /// List labels in a project
+    List {
+        /// Project ID
+        project_id: String,
+    },
+
+    /// Add labels to a project
+    New {
+        /// Project ID
+        project_id: String,
+
+        /// Labels to add
+        #[arg(required = true)]
+        labels: Vec<String>,
+    },
+
+    /// Delete a label from a project (removes from all tasks)
+    Delete {
+        /// Project ID
+        project_id: String,
+
+        /// Label to delete
+        label: String,
+    },
+
+    /// Rename a label in a project (updates all tasks)
+    Rename {
+        /// Project ID
+        project_id: String,
+
+        /// Current label name
+        old: String,
+
+        /// New label name
+        new: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -829,6 +875,22 @@ async fn run() -> Result<()> {
                 gtr::commands::project::restore(&config, &project_id).await
             }
             ProjectCommands::List => gtr::commands::project::list(&config).await,
+            ProjectCommands::Label { command } => match command {
+                LabelCommands::List { project_id } => {
+                    gtr::commands::project::label_list(&config, &project_id).await
+                }
+                LabelCommands::New { project_id, labels } => {
+                    gtr::commands::project::label_new(&config, &project_id, &labels).await
+                }
+                LabelCommands::Delete { project_id, label } => {
+                    gtr::commands::project::label_delete(&config, &project_id, &label).await
+                }
+                LabelCommands::Rename {
+                    project_id,
+                    old,
+                    new,
+                } => gtr::commands::project::label_rename(&config, &project_id, &old, &new).await,
+            },
         },
         Commands::Config { command } => match command {
             ConfigCommands::Editor { set, unset } => {

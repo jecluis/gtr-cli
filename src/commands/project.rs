@@ -233,3 +233,153 @@ pub async fn list(config: &Config) -> Result<()> {
     output::print_projects(&projects);
     Ok(())
 }
+
+/// List labels for a project, with task counts.
+pub async fn label_list(config: &Config, project_id: &str) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    let labels = cache.get_project_labels(project_id)?;
+    if labels.is_empty() {
+        println!(
+            "{}",
+            format!("{} No labels in project '{}'.", icons.info, project_id).dimmed()
+        );
+        return Ok(());
+    }
+
+    let counts = cache.count_tasks_by_label(project_id)?;
+    let count_map: std::collections::HashMap<String, i64> = counts.into_iter().collect();
+
+    println!("{}", format!("Labels for project '{}':", project_id).bold());
+    for label in &labels {
+        let count = count_map.get(label).copied().unwrap_or(0);
+        println!(
+            "  {}  {}",
+            label.cyan(),
+            format!("({count} tasks)").dimmed()
+        );
+    }
+
+    Ok(())
+}
+
+/// Add labels to a project registry.
+pub async fn label_new(config: &Config, project_id: &str, labels: &[String]) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+    let client = Client::new(config)?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    // Validate all labels
+    for label in labels {
+        crate::labels::validate_label(label)?;
+    }
+
+    // Sync with server
+    let project = client.create_project_labels(project_id, labels).await?;
+
+    // Update local cache
+    cache.set_project_labels(project_id, &project.labels)?;
+
+    println!(
+        "{}",
+        format!(
+            "{} Added label(s) {} to project '{}'.",
+            icons.success,
+            labels
+                .iter()
+                .map(|l| l.cyan().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            project_id
+        )
+        .green()
+        .bold()
+    );
+
+    Ok(())
+}
+
+/// Delete a label from a project (removes from all tasks too).
+pub async fn label_delete(config: &Config, project_id: &str, label: &str) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+    let client = Client::new(config)?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    // Confirm with user
+    let confirm = dialoguer::Confirm::new()
+        .with_prompt(format!(
+            "Delete label '{}' from project '{}'? This removes it from all tasks.",
+            label, project_id
+        ))
+        .default(false)
+        .interact()
+        .unwrap_or(false);
+
+    if !confirm {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    // Sync with server
+    let resp = client.delete_project_label(project_id, label).await?;
+
+    // Update local cache
+    let mut labels = cache.get_project_labels(project_id)?;
+    labels.retain(|l| l != label);
+    cache.set_project_labels(project_id, &labels)?;
+    cache.remove_label_from_tasks(project_id, label)?;
+
+    println!(
+        "{}",
+        format!(
+            "{} Deleted label '{}' ({} tasks affected).",
+            icons.success, label, resp.affected_tasks
+        )
+        .green()
+        .bold()
+    );
+
+    Ok(())
+}
+
+/// Rename a label in a project (updates all tasks too).
+pub async fn label_rename(config: &Config, project_id: &str, old: &str, new: &str) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+    let client = Client::new(config)?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    // Validate new label
+    crate::labels::validate_label(new)?;
+
+    // Sync with server
+    let resp = client.rename_project_label(project_id, old, new).await?;
+
+    // Update local cache
+    let mut labels = cache.get_project_labels(project_id)?;
+    for l in &mut labels {
+        if l == old {
+            *l = new.to_string();
+        }
+    }
+    labels.sort();
+    labels.dedup();
+    cache.set_project_labels(project_id, &labels)?;
+    cache.rename_label_in_tasks(project_id, old, new)?;
+
+    println!(
+        "{}",
+        format!(
+            "{} Renamed '{}' -> '{}' ({} tasks affected).",
+            icons.success, old, new, resp.affected_tasks
+        )
+        .green()
+        .bold()
+    );
+
+    Ok(())
+}
