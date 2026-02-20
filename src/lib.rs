@@ -26,6 +26,7 @@ pub mod editor;
 pub mod error;
 pub mod hierarchy;
 pub mod icons;
+pub mod labels;
 pub mod local;
 pub mod logging;
 pub mod markdown;
