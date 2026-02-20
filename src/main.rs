@@ -373,6 +373,13 @@ enum Commands {
         no_sync: bool,
     },
 
+    /// List tasks currently in "doing" state
+    Doing {
+        /// Filter by project. No args = picker; omit entirely = all projects.
+        #[arg(short = 'P', long, num_args = 0.., value_name = "PROJECT")]
+        project: Option<Vec<String>>,
+    },
+
     /// Suggest next tasks to work on (ordered by urgency)
     Next {
         /// Filter to specific project
@@ -787,6 +794,7 @@ async fn run() -> Result<()> {
         Commands::Stop { task_id, no_sync } => {
             gtr::commands::stop::run(&config, task_id, no_sync).await
         }
+        Commands::Doing { project } => gtr::commands::doing::run(&config, project).await,
         Commands::Next { project, no_sync } => {
             gtr::commands::next::run(&config, project, no_sync).await
         }

@@ -20,6 +20,7 @@
 pub mod config;
 pub mod create;
 pub mod delete;
+pub mod doing;
 pub mod done;
 pub mod feels;
 pub mod init;
