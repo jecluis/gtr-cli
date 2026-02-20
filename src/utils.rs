@@ -26,8 +26,86 @@ use jiff::{Span, Zoned};
 use crate::client::Client;
 use crate::icons::Icons;
 use crate::local::LocalContext;
-use crate::models::Task;
+use crate::models::{Project, Task};
 use crate::{Error, Result};
+
+/// Build a breadcrumb string for a project (e.g., "work > research > ml").
+///
+/// Walks up the parent_id chain using the provided lookup map.
+fn project_breadcrumb(
+    project_id: &str,
+    parent_map: &std::collections::HashMap<String, Option<String>>,
+) -> String {
+    let mut chain = vec![project_id.to_string()];
+    let mut current = project_id.to_string();
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(current.clone());
+
+    while let Some(Some(pid)) = parent_map.get(&current) {
+        if !seen.insert(pid.clone()) {
+            break;
+        }
+        chain.push(pid.clone());
+        current = pid.clone();
+    }
+
+    chain.reverse();
+    chain.join(" > ")
+}
+
+/// Interactive project picker with breadcrumb display.
+///
+/// Shows projects sorted lexicographically by their hierarchy breadcrumb.
+/// Auto-selects if only one project is provided.
+pub fn pick_project(projects: &[Project]) -> Result<String> {
+    if projects.is_empty() {
+        return Err(Error::UserFacing("No projects to choose from.".to_string()));
+    }
+
+    if projects.len() == 1 {
+        return Ok(projects[0].id.clone());
+    }
+
+    // Build parent lookup for breadcrumbs
+    let parent_map: std::collections::HashMap<String, Option<String>> = projects
+        .iter()
+        .map(|p| (p.id.clone(), p.parent_id.clone()))
+        .collect();
+
+    // Build breadcrumbs and sort lexicographically
+    let mut entries: Vec<(String, String, Option<String>)> = projects
+        .iter()
+        .map(|p| {
+            let breadcrumb = project_breadcrumb(&p.id, &parent_map);
+            (p.id.clone(), breadcrumb, p.description.clone())
+        })
+        .collect();
+    entries.sort_by(|a, b| a.1.cmp(&b.1));
+
+    let items: Vec<String> = entries
+        .iter()
+        .map(|(_, breadcrumb, desc)| {
+            if let Some(desc) = desc {
+                format!("{} - {}", breadcrumb.cyan(), desc.dimmed())
+            } else {
+                breadcrumb.cyan().to_string()
+            }
+        })
+        .collect();
+
+    let selection = Select::new()
+        .with_prompt("Select project")
+        .items(&items)
+        .default(0)
+        .interact_opt()
+        .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {e}")))?;
+
+    let Some(idx) = selection else {
+        return Err(Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    Ok(entries[idx].0.clone())
+}
 
 /// Resolve project ID: use provided, or auto-select if 1, or prompt.
 pub async fn resolve_project(client: &Client, provided: Option<String>) -> Result<String> {
@@ -52,30 +130,7 @@ pub async fn resolve_project(client: &Client, provided: Option<String>) -> Resul
 
     // Multiple projects - prompt user
     println!("{}", "Multiple projects found. Please select one:".yellow());
-
-    let items: Vec<String> = projects
-        .iter()
-        .map(|p| {
-            if let Some(desc) = &p.description {
-                format!("{} - {}", p.name.cyan(), desc.dimmed())
-            } else {
-                p.name.cyan().to_string()
-            }
-        })
-        .collect();
-
-    let selection = Select::new()
-        .with_prompt("Select project")
-        .items(&items)
-        .default(0)
-        .interact_opt()
-        .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {}", e)))?;
-
-    let Some(idx) = selection else {
-        return Err(Error::UserFacing("Selection cancelled".to_string()));
-    };
-
-    Ok(projects[idx].id.clone())
+    pick_project(&projects)
 }
 
 /// Resolve a potentially shortened task ID to a full UUID.
