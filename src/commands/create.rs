@@ -166,8 +166,8 @@ pub async fn run(
             crate::labels::validate_label(label)?;
         }
 
-        // Check if labels exist in project registry; prompt to create if not
-        let project_labels = ctx.cache.get_project_labels(&project_id)?;
+        // Check if labels exist in project's effective registry (own + inherited)
+        let project_labels = ctx.cache.get_effective_labels(&project_id)?;
         let mut new_labels = Vec::new();
         for label in &labels {
             if !project_labels.contains(label) {

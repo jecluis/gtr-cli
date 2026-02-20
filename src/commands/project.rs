@@ -240,8 +240,8 @@ pub async fn label_list(config: &Config, project_id: &str) -> Result<()> {
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
 
-    let labels = cache.get_project_labels(project_id)?;
-    if labels.is_empty() {
+    let labels_with_source = cache.get_effective_labels_with_source(project_id)?;
+    if labels_with_source.is_empty() {
         println!(
             "{}",
             format!("{} No labels in project '{}'.", icons.info, project_id).dimmed()
@@ -253,13 +253,22 @@ pub async fn label_list(config: &Config, project_id: &str) -> Result<()> {
     let count_map: std::collections::HashMap<String, i64> = counts.into_iter().collect();
 
     println!("{}", format!("Labels for project '{}':", project_id).bold());
-    for label in &labels {
+    for (label, source) in &labels_with_source {
         let count = count_map.get(label).copied().unwrap_or(0);
-        println!(
-            "  {}  {}",
-            label.cyan(),
-            format!("({count} tasks)").dimmed()
-        );
+        if source == project_id {
+            println!(
+                "  {}  {}",
+                label.cyan(),
+                format!("({count} tasks)").dimmed()
+            );
+        } else {
+            println!(
+                "  {}  {}  {}",
+                label.cyan(),
+                format!("({count} tasks)").dimmed(),
+                format!("[inherited from {source}]").dimmed()
+            );
+        }
     }
 
     Ok(())

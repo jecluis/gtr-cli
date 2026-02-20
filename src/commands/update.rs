@@ -317,9 +317,9 @@ pub async fn run(
             crate::labels::validate_label(label)?;
         }
 
-        // Check if labels exist in project registry; prompt to create if not
+        // Check if labels exist in project's effective registry (own + inherited)
         if !labels.is_empty() {
-            let project_labels = ctx.cache.get_project_labels(&task.project_id)?;
+            let project_labels = ctx.cache.get_effective_labels(&task.project_id)?;
             let mut new_project_labels = Vec::new();
             for label in &labels {
                 if !project_labels.contains(label) {
@@ -363,9 +363,9 @@ pub async fn run(
     if let Some(ref new_project) = target_project
         && task.project_id != *new_project
     {
-        // Check if task's labels exist in the target project
+        // Check if task's labels exist in the target project (own + inherited)
         if !task.labels.is_empty() {
-            let target_labels = ctx.cache.get_project_labels(new_project)?;
+            let target_labels = ctx.cache.get_effective_labels(new_project)?;
             let mut labels_to_create = Vec::new();
             let mut labels_to_remove = Vec::new();
 

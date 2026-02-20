@@ -1075,6 +1075,39 @@ impl TaskCache {
         Ok(count)
     }
 
+    /// Get effective labels for a project: own labels + inherited from ancestors.
+    ///
+    /// Walks the project path (root-first) and collects all labels,
+    /// deduped and sorted. Returns `(label, source_project_id)` pairs
+    /// so callers can distinguish own vs inherited labels.
+    pub fn get_effective_labels_with_source(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, String)>> {
+        let path = self.get_project_path(project_id)?;
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+
+        // path is root-first, so ancestor labels come first
+        for pid in &path {
+            let labels = self.get_project_labels(pid)?;
+            for label in labels {
+                if seen.insert(label.clone()) {
+                    result.push((label, pid.clone()));
+                }
+            }
+        }
+
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(result)
+    }
+
+    /// Get the flat list of effective labels (own + inherited), deduped and sorted.
+    pub fn get_effective_labels(&self, project_id: &str) -> Result<Vec<String>> {
+        let with_source = self.get_effective_labels_with_source(project_id)?;
+        Ok(with_source.into_iter().map(|(label, _)| label).collect())
+    }
+
     /// Count tasks per label in a project.
     pub fn count_tasks_by_label(&self, project_id: &str) -> Result<Vec<(String, i64)>> {
         // Get all non-deleted tasks for this project
