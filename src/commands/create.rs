@@ -44,6 +44,7 @@ pub async fn run(
     impact: Option<u8>,
     joy: Option<u8>,
     parent_id: Option<String>,
+    labels: Vec<String>,
     no_sync: bool,
     from_url: Option<String>,
     is_bookmark: bool,
@@ -158,6 +159,44 @@ pub async fn run(
         None
     };
 
+    // Validate and resolve labels
+    let mut resolved_labels = Vec::new();
+    if !labels.is_empty() {
+        for label in &labels {
+            crate::labels::validate_label(label)?;
+        }
+
+        // Check if labels exist in project registry; prompt to create if not
+        let project_labels = ctx.cache.get_project_labels(&project_id)?;
+        let mut new_labels = Vec::new();
+        for label in &labels {
+            if !project_labels.contains(label) {
+                let confirm = dialoguer::Confirm::new()
+                    .with_prompt(format!(
+                        "Label '{}' doesn't exist in project '{}'. Create it?",
+                        label, project_id
+                    ))
+                    .default(true)
+                    .interact()
+                    .unwrap_or(false);
+                if confirm {
+                    new_labels.push(label.clone());
+                }
+            }
+            resolved_labels.push(label.clone());
+        }
+        // Create missing labels in cache (sync will push later)
+        if !new_labels.is_empty() {
+            let mut all_labels = project_labels;
+            all_labels.extend(new_labels);
+            all_labels.sort();
+            all_labels.dedup();
+            ctx.cache.set_project_labels(&project_id, &all_labels)?;
+        }
+        resolved_labels.sort();
+        resolved_labels.dedup();
+    }
+
     let task = Task {
         id: task_id.clone(),
         project_id: project_id.clone(),
@@ -179,7 +218,7 @@ pub async fn run(
         impact: impact.unwrap_or(3),
         joy: joy.unwrap_or(5),
         parent_id: resolved_parent.clone(),
-        labels: Vec::new(),
+        labels: resolved_labels,
     };
 
     // Save locally

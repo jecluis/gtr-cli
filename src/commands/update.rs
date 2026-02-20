@@ -48,6 +48,8 @@ pub async fn run(
     parent_id: Option<String>,
     unset: bool,
     recursive: bool,
+    labels: Vec<String>,
+    unlabels: Vec<String>,
     no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
@@ -87,6 +89,8 @@ pub async fn run(
         && joy.is_none()
         && target_project.is_none()
         && parent_id.is_none()
+        && labels.is_empty()
+        && unlabels.is_empty()
     {
         return Err(Error::UserFacing(
             "No updates specified. Please provide at least one field to update.\n\n\
@@ -302,6 +306,57 @@ pub async fn run(
             }
             task.parent_id = Some(full_pid);
         }
+    }
+
+    // Handle label changes
+    if !labels.is_empty() || !unlabels.is_empty() {
+        let mut current_labels = task.labels.clone();
+
+        // Validate new labels
+        for label in &labels {
+            crate::labels::validate_label(label)?;
+        }
+
+        // Check if labels exist in project registry; prompt to create if not
+        if !labels.is_empty() {
+            let project_labels = ctx.cache.get_project_labels(&task.project_id)?;
+            let mut new_project_labels = Vec::new();
+            for label in &labels {
+                if !project_labels.contains(label) {
+                    let confirm = dialoguer::Confirm::new()
+                        .with_prompt(format!(
+                            "Label '{}' doesn't exist in project '{}'. Create it?",
+                            label, task.project_id
+                        ))
+                        .default(true)
+                        .interact()
+                        .unwrap_or(false);
+                    if confirm {
+                        new_project_labels.push(label.clone());
+                    }
+                }
+                if !current_labels.contains(label) {
+                    current_labels.push(label.clone());
+                }
+            }
+            if !new_project_labels.is_empty() {
+                let mut all_labels = project_labels;
+                all_labels.extend(new_project_labels);
+                all_labels.sort();
+                all_labels.dedup();
+                ctx.cache
+                    .set_project_labels(&task.project_id, &all_labels)?;
+            }
+        }
+
+        // Remove unlabeled
+        for label in &unlabels {
+            current_labels.retain(|l| l != label);
+        }
+
+        current_labels.sort();
+        current_labels.dedup();
+        task.labels = current_labels;
     }
 
     // Handle project move

@@ -199,6 +199,10 @@ enum Commands {
         #[arg(long = "for", value_name = "PARENT_ID")]
         parent: Option<String>,
 
+        /// Add label(s) to the task (repeatable)
+        #[arg(short = 'l', long = "label")]
+        labels: Vec<String>,
+
         /// Skip sync (work offline)
         #[arg(long)]
         no_sync: bool,
@@ -256,6 +260,14 @@ enum Commands {
         /// Apply --project, --priority, and --deadline to all subtasks
         #[arg(short = 'R', long)]
         recursive: bool,
+
+        /// Add label(s) to the task (repeatable)
+        #[arg(short = 'l', long = "label")]
+        labels: Vec<String>,
+
+        /// Remove label(s) from the task (repeatable)
+        #[arg(long = "unlabel")]
+        unlabels: Vec<String>,
 
         /// Skip sync (work offline)
         #[arg(long)]
@@ -742,6 +754,7 @@ async fn run() -> Result<()> {
             impact,
             joy,
             parent,
+            labels,
             no_sync,
         } => {
             let url = from.or(bookmark_url.clone());
@@ -770,6 +783,7 @@ async fn run() -> Result<()> {
                 impact,
                 joy,
                 parent,
+                labels,
                 no_sync,
                 url,
                 is_bookmark,
@@ -790,11 +804,13 @@ async fn run() -> Result<()> {
             parent,
             unset,
             recursive,
+            labels,
+            unlabels,
             no_sync,
         } => {
             gtr::commands::update::run(
                 &config, &task_id, title, body, priority, size, deadline, progress, impact, joy,
-                project, parent, unset, recursive, no_sync,
+                project, parent, unset, recursive, labels, unlabels, no_sync,
             )
             .await
         }
