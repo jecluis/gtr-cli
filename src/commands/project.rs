@@ -234,6 +234,74 @@ pub async fn list(config: &Config, include_meta: bool) -> Result<()> {
     Ok(())
 }
 
+/// List all labels from `<root>` and every project in the hierarchy.
+pub async fn label_list_all(config: &Config) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
+    let client = Client::new(config)?;
+
+    // Fetch all projects including <root>
+    let projects = client.list_projects_all(true).await?;
+    if projects.is_empty() {
+        println!("{}", format!("{} No projects found.", icons.info).dimmed());
+        return Ok(());
+    }
+
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    let mut any_labels = false;
+    for project in &projects {
+        let labels_with_source = cache.get_effective_labels_with_source(&project.id)?;
+        if labels_with_source.is_empty() {
+            continue;
+        }
+        any_labels = true;
+
+        let counts = cache.count_tasks_by_label(&project.id)?;
+        let count_map: std::collections::HashMap<String, i64> = counts.into_iter().collect();
+
+        let header = if project.id == "<root>" {
+            "Global labels (<root>):".to_string()
+        } else {
+            format!("{}:", project.id)
+        };
+        println!("{}", header.bold());
+
+        for (label, source) in &labels_with_source {
+            let count = count_map.get(label).copied().unwrap_or(0);
+            if source == &project.id {
+                println!(
+                    "  {}  {}",
+                    label.cyan(),
+                    format!("({count} tasks)").dimmed()
+                );
+            } else {
+                let origin = if source == "<root>" {
+                    "[global]".to_string()
+                } else {
+                    format!("[inherited from {source}]")
+                };
+                println!(
+                    "  {}  {}  {}",
+                    label.cyan(),
+                    format!("({count} tasks)").dimmed(),
+                    origin.dimmed()
+                );
+            }
+        }
+        println!();
+    }
+
+    if !any_labels {
+        println!(
+            "{}",
+            format!("{} No labels defined in any project.", icons.info).dimmed()
+        );
+    }
+
+    Ok(())
+}
+
 /// List labels for a project, with task counts.
 pub async fn label_list(config: &Config, project_id: &str) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());

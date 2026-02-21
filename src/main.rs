@@ -564,10 +564,15 @@ enum ProjectCommands {
 
 #[derive(Subcommand, Debug)]
 enum LabelCommands {
-    /// List labels in a project
+    /// List labels in a project (or all global labels with --all)
     List {
         /// Project ID
-        project_id: String,
+        #[arg(required_unless_present = "all")]
+        project_id: Option<String>,
+
+        /// Show all labels from <root> cascaded through every project
+        #[arg(long, conflicts_with = "project_id")]
+        all: bool,
     },
 
     /// Add labels to a project
@@ -912,8 +917,13 @@ async fn run() -> Result<()> {
             }
             ProjectCommands::List { all } => gtr::commands::project::list(&config, all).await,
             ProjectCommands::Label { command } => match command {
-                LabelCommands::List { project_id } => {
-                    gtr::commands::project::label_list(&config, &project_id).await
+                LabelCommands::List { project_id, all } => {
+                    if all {
+                        gtr::commands::project::label_list_all(&config).await
+                    } else {
+                        gtr::commands::project::label_list(&config, project_id.as_deref().unwrap())
+                            .await
+                    }
                 }
                 LabelCommands::New { project_id, labels } => {
                     gtr::commands::project::label_new(&config, &project_id, &labels).await
