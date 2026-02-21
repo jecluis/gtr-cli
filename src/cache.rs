@@ -170,6 +170,22 @@ impl TaskCache {
             [],
         );
 
+        // Ensure <root> meta-root project exists and reparent orphans
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, name, parent_id, labels) \
+                 VALUES ('<root>', 'Root', NULL, '[]')",
+                [],
+            )
+            .map_err(|e| Error::Database(format!("meta-root init failed: {e}")))?;
+        self.conn
+            .execute(
+                "UPDATE projects SET parent_id = '<root>' \
+                 WHERE parent_id IS NULL AND id != '<root>'",
+                [],
+            )
+            .map_err(|e| Error::Database(format!("meta-root reparent failed: {e}")))?;
+
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
             .execute_batch(
