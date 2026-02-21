@@ -439,6 +439,36 @@ fn print_task_table(
         project_colors.insert(*project_id, colors[idx % colors.len()]);
     }
 
+    // Build label color mapping (order of first appearance across tasks)
+    let label_colors = if with_labels {
+        let label_palette = [
+            colored::Color::Cyan,
+            colored::Color::Yellow,
+            colored::Color::Green,
+            colored::Color::Magenta,
+            colored::Color::Blue,
+            colored::Color::Red,
+            colored::Color::BrightCyan,
+            colored::Color::BrightYellow,
+            colored::Color::BrightGreen,
+            colored::Color::BrightMagenta,
+            colored::Color::BrightBlue,
+            colored::Color::BrightRed,
+        ];
+        let mut map = HashMap::new();
+        for task in tasks {
+            for label in &task.labels {
+                if !map.contains_key(label.as_str()) {
+                    let idx = map.len();
+                    map.insert(label.as_str(), label_palette[idx % label_palette.len()]);
+                }
+            }
+        }
+        map
+    } else {
+        HashMap::new()
+    };
+
     // Detect terminal width and route to appropriate renderer
     let terminal_width = detect_terminal_width();
 
@@ -457,6 +487,7 @@ fn print_task_table(
             compact,
             project_paths,
             with_labels,
+            &label_colors,
         );
     } else {
         // Narrow terminal: use simplified format
@@ -473,6 +504,7 @@ fn print_task_table(
             compact,
             project_paths,
             with_labels,
+            &label_colors,
         );
     }
 }
@@ -647,6 +679,7 @@ fn render_task_table(
     compact: bool,
     project_paths: &ProjectPaths,
     with_labels: bool,
+    label_colors: &HashMap<&str, colored::Color>,
 ) {
     let mut builder = Builder::default();
 
@@ -688,7 +721,13 @@ fn render_task_table(
                 icons.label,
                 task.labels
                     .iter()
-                    .map(|l| l.cyan().to_string())
+                    .map(|l| {
+                        let c = label_colors
+                            .get(l.as_str())
+                            .copied()
+                            .unwrap_or(colored::Color::White);
+                        l.color(c).to_string()
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             );
@@ -788,6 +827,7 @@ fn render_simplified_table(
     _compact: bool,
     project_paths: &ProjectPaths,
     with_labels: bool,
+    label_colors: &HashMap<&str, colored::Color>,
 ) {
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     let subtask_counts = compute_subtask_counts(tasks);
@@ -839,7 +879,13 @@ fn render_simplified_table(
                 icons.label,
                 task.labels
                     .iter()
-                    .map(|l| l.cyan().to_string())
+                    .map(|l| {
+                        let c = label_colors
+                            .get(l.as_str())
+                            .copied()
+                            .unwrap_or(colored::Color::White);
+                        l.color(c).to_string()
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             );

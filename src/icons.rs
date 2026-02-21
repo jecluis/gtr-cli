@@ -214,7 +214,7 @@ impl Icons {
             bookmark: format!("{} ", "\u{f00c0}".cyan()), // 󰃀 nf-md-bookmark (cyan)
 
             // Labels
-            label: format!("{}", "\u{f03b}".cyan()), // nf-fa-tags (cyan)
+            label: format!("{}", "\u{f03b}".red()), // nf-fa-tags (red)
 
             // Informational
             info: "\u{f05a}".into(),      // nf-fa-info_circle
