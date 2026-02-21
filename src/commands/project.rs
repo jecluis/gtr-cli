@@ -270,23 +270,14 @@ pub async fn label_list_all(config: &Config) -> Result<()> {
         for (label, source) in &labels_with_source {
             let count = count_map.get(label).copied().unwrap_or(0);
             if source == &project.id {
-                println!(
-                    "  {}  {}",
-                    label.cyan(),
-                    format!("({count} tasks)").dimmed()
-                );
+                println!("  {}  ({count} tasks)", label.cyan());
             } else {
                 let origin = if source == "<root>" {
                     "[global]".to_string()
                 } else {
                     format!("[inherited from {source}]")
                 };
-                println!(
-                    "  {}  {}  {}",
-                    label.cyan(),
-                    format!("({count} tasks)").dimmed(),
-                    origin.dimmed()
-                );
+                println!("  {}  ({count} tasks)  {}", label.cyan(), origin.yellow());
             }
         }
         println!();
@@ -324,23 +315,14 @@ pub async fn label_list(config: &Config, project_id: &str) -> Result<()> {
     for (label, source) in &labels_with_source {
         let count = count_map.get(label).copied().unwrap_or(0);
         if source == project_id {
-            println!(
-                "  {}  {}",
-                label.cyan(),
-                format!("({count} tasks)").dimmed()
-            );
+            println!("  {}  ({count} tasks)", label.cyan());
         } else {
             let origin = if source == "<root>" {
                 "[global]".to_string()
             } else {
                 format!("[inherited from {source}]")
             };
-            println!(
-                "  {}  {}  {}",
-                label.cyan(),
-                format!("({count} tasks)").dimmed(),
-                origin.dimmed()
-            );
+            println!("  {}  ({count} tasks)  {}", label.cyan(), origin.yellow());
         }
     }
 
