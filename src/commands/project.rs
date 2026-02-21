@@ -262,11 +262,16 @@ pub async fn label_list(config: &Config, project_id: &str) -> Result<()> {
                 format!("({count} tasks)").dimmed()
             );
         } else {
+            let origin = if source == "<root>" {
+                "[global]".to_string()
+            } else {
+                format!("[inherited from {source}]")
+            };
             println!(
                 "  {}  {}  {}",
                 label.cyan(),
                 format!("({count} tasks)").dimmed(),
-                format!("[inherited from {source}]").dimmed()
+                origin.dimmed()
             );
         }
     }
