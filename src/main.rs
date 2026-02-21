@@ -549,7 +549,11 @@ enum ProjectCommands {
     },
 
     /// List all projects
-    List,
+    List {
+        /// Include meta-root projects (e.g. <root>)
+        #[arg(long)]
+        all: bool,
+    },
 
     /// Manage project labels
     Label {
@@ -906,7 +910,7 @@ async fn run() -> Result<()> {
             ProjectCommands::Restore { project_id } => {
                 gtr::commands::project::restore(&config, &project_id).await
             }
-            ProjectCommands::List => gtr::commands::project::list(&config).await,
+            ProjectCommands::List { all } => gtr::commands::project::list(&config, all).await,
             ProjectCommands::Label { command } => match command {
                 LabelCommands::List { project_id } => {
                     gtr::commands::project::label_list(&config, &project_id).await

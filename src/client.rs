@@ -157,6 +157,16 @@ impl Client {
         self.get(&url).await
     }
 
+    /// List projects, optionally including meta-root projects.
+    pub async fn list_projects_all(&self, include_meta: bool) -> Result<Vec<Project>> {
+        let url = if include_meta {
+            format!("{}/api/projects?include_meta=true", self.base_url)
+        } else {
+            format!("{}/api/projects", self.base_url)
+        };
+        self.get(&url).await
+    }
+
     /// Get a specific project.
     pub async fn get_project(&self, id: &str) -> Result<Project> {
         let url = format!("{}/api/projects/{}", self.base_url, encode_path(id));

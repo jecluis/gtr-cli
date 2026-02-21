@@ -226,9 +226,9 @@ pub async fn restore(config: &Config, project_id: &str) -> Result<()> {
 }
 
 /// List all projects.
-pub async fn list(config: &Config) -> Result<()> {
+pub async fn list(config: &Config, include_meta: bool) -> Result<()> {
     let client = Client::new(config)?;
-    let projects = client.list_projects().await?;
+    let projects = client.list_projects_all(include_meta).await?;
 
     output::print_projects(&projects);
     Ok(())
