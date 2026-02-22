@@ -177,6 +177,63 @@ impl TaskCache {
         // Ensure meta-root project exists with nil UUID and reparent orphans
         self.ensure_meta_root()?;
 
+        // Namespace table: mirrors server namespace registry
+        self.conn
+            .execute_batch(
+                r#"
+            CREATE TABLE IF NOT EXISTS namespaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_id TEXT,
+                deleted TEXT,
+                last_synced TEXT,
+                labels TEXT NOT NULL DEFAULT '[]'
+            );
+            CREATE INDEX IF NOT EXISTS idx_namespaces_parent
+                ON namespaces(parent_id);
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("namespaces schema init failed: {e}")))?;
+
+        // Documents table: local CRDT-backed knowledge entries
+        self.conn
+            .execute_batch(
+                r#"
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                namespace_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created TEXT NOT NULL,
+                modified TEXT NOT NULL,
+                deleted TEXT,
+                version INTEGER NOT NULL,
+                needs_push INTEGER NOT NULL DEFAULT 0,
+                last_synced TEXT,
+                sync_state BLOB,
+                parent_id TEXT,
+                labels TEXT NOT NULL DEFAULT '[]'
+            );
+            CREATE INDEX IF NOT EXISTS idx_documents_ns
+                ON documents(namespace_id);
+            CREATE INDEX IF NOT EXISTS idx_documents_needs_push
+                ON documents(needs_push);
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("documents schema init failed: {e}")))?;
+
+        // Namespace-project link table
+        self.conn
+            .execute_batch(
+                r#"
+            CREATE TABLE IF NOT EXISTS namespace_project_links (
+                namespace_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                PRIMARY KEY (namespace_id, project_id)
+            );
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("links schema init failed: {e}")))?;
+
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
             .execute_batch(
@@ -1025,6 +1082,349 @@ impl TaskCache {
         Ok(result)
     }
 
+    // -- Namespace operations --
+
+    /// Parse a CachedNamespace from a row with columns:
+    /// id, name, parent_id, deleted, last_synced, labels
+    fn row_to_namespace(row: &rusqlite::Row) -> rusqlite::Result<CachedNamespace> {
+        let labels_json: String = row.get(5)?;
+        let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        Ok(CachedNamespace {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            parent_id: row.get(2)?,
+            deleted: row.get(3)?,
+            last_synced: row.get(4)?,
+            labels,
+        })
+    }
+
+    /// Insert or update a namespace.
+    pub fn upsert_namespace(&self, ns: &CachedNamespace) -> Result<()> {
+        self.conn
+            .execute(
+                r#"
+            INSERT INTO namespaces (id, name, parent_id, deleted, last_synced, labels)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                parent_id = excluded.parent_id,
+                deleted = excluded.deleted,
+                last_synced = excluded.last_synced,
+                labels = excluded.labels
+            "#,
+                params![
+                    ns.id,
+                    ns.name,
+                    ns.parent_id,
+                    ns.deleted,
+                    ns.last_synced,
+                    serde_json::to_string(&ns.labels).unwrap_or_else(|_| "[]".to_string()),
+                ],
+            )
+            .map_err(|e| Error::Database(format!("upsert namespace failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Get a namespace by ID.
+    pub fn get_namespace(&self, id: &str) -> Result<Option<CachedNamespace>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, parent_id, deleted, last_synced, labels \
+                 FROM namespaces WHERE id = ?1",
+                params![id],
+                Self::row_to_namespace,
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("get namespace failed: {e}")))
+    }
+
+    /// List all non-deleted namespaces.
+    pub fn list_namespaces(&self) -> Result<Vec<CachedNamespace>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, parent_id, deleted, last_synced, labels \
+                 FROM namespaces WHERE deleted IS NULL ORDER BY name",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let namespaces = stmt
+            .query_map([], Self::row_to_namespace)
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(namespaces)
+    }
+
+    /// Soft-delete a namespace.
+    pub fn soft_delete_namespace(&self, id: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE namespaces SET deleted = ?1 WHERE id = ?2",
+                params![now, id],
+            )
+            .map_err(|e| Error::Database(format!("soft delete namespace failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Get direct sub-namespaces.
+    pub fn get_subnamespaces(&self, parent_id: &str) -> Result<Vec<CachedNamespace>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, parent_id, deleted, last_synced, labels \
+                 FROM namespaces WHERE parent_id = ?1 AND deleted IS NULL ORDER BY name",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let ns = stmt
+            .query_map(params![parent_id], Self::row_to_namespace)
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(ns)
+    }
+
+    /// Get the ancestor chain for a namespace (root-first).
+    pub fn get_namespace_path(&self, id: &str) -> Result<Vec<String>> {
+        let mut chain = vec![id.to_string()];
+        let mut current = id.to_string();
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(current.clone());
+
+        while let Some(ns) = self.get_namespace(&current)? {
+            match ns.parent_id {
+                Some(pid) if seen.insert(pid.clone()) => {
+                    chain.push(pid.clone());
+                    current = pid;
+                }
+                _ => break,
+            }
+        }
+
+        chain.reverse();
+        Ok(chain)
+    }
+
+    // -- Document operations --
+
+    /// Parse a CachedDocument from a row with columns:
+    /// id, namespace_id, title, created, modified, deleted, version,
+    /// needs_push, last_synced, parent_id, labels
+    fn row_to_cached_document(row: &rusqlite::Row) -> rusqlite::Result<CachedDocument> {
+        let labels_json: String = row.get(10)?;
+        let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        Ok(CachedDocument {
+            id: row.get(0)?,
+            namespace_id: row.get(1)?,
+            title: row.get(2)?,
+            created: row.get(3)?,
+            modified: row.get(4)?,
+            deleted: row.get(5)?,
+            version: row.get::<_, i64>(6)? as u64,
+            needs_push: row.get::<_, i64>(7)? != 0,
+            last_synced: row.get(8)?,
+            parent_id: row.get(9)?,
+            labels,
+        })
+    }
+
+    /// Insert or update a document in the cache.
+    pub fn upsert_document(&self, doc: &crate::models::Document, needs_push: bool) -> Result<()> {
+        self.conn
+            .execute(
+                r#"
+            INSERT INTO documents (
+                id, namespace_id, title, created, modified,
+                deleted, version, needs_push, parent_id, labels
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(id) DO UPDATE SET
+                namespace_id = excluded.namespace_id,
+                title = excluded.title,
+                modified = excluded.modified,
+                deleted = excluded.deleted,
+                version = excluded.version,
+                needs_push = excluded.needs_push OR needs_push,
+                parent_id = excluded.parent_id,
+                labels = excluded.labels
+            "#,
+                params![
+                    doc.id,
+                    doc.namespace_id,
+                    doc.title,
+                    doc.created,
+                    doc.modified,
+                    doc.deleted,
+                    doc.version as i64,
+                    needs_push as i64,
+                    doc.parent_id,
+                    serde_json::to_string(&doc.labels).unwrap_or_else(|_| "[]".to_string()),
+                ],
+            )
+            .map_err(|e| Error::Database(format!("upsert document failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Get a document by ID.
+    pub fn get_document(&self, id: &str) -> Result<Option<CachedDocument>> {
+        self.conn
+            .query_row(
+                "SELECT id, namespace_id, title, created, modified, deleted, \
+                        version, needs_push, last_synced, parent_id, labels \
+                 FROM documents WHERE id = ?1",
+                params![id],
+                Self::row_to_cached_document,
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("get document failed: {e}")))
+    }
+
+    /// List documents in a namespace (non-deleted by default).
+    pub fn list_documents(
+        &self,
+        namespace_id: &str,
+        include_deleted: bool,
+    ) -> Result<Vec<CachedDocument>> {
+        let sql = if include_deleted {
+            "SELECT id, namespace_id, title, created, modified, deleted, \
+                    version, needs_push, last_synced, parent_id, labels \
+             FROM documents WHERE namespace_id = ?1 ORDER BY modified DESC"
+        } else {
+            "SELECT id, namespace_id, title, created, modified, deleted, \
+                    version, needs_push, last_synced, parent_id, labels \
+             FROM documents WHERE namespace_id = ?1 AND deleted IS NULL \
+             ORDER BY modified DESC"
+        };
+
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let docs = stmt
+            .query_map(params![namespace_id], Self::row_to_cached_document)
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(docs)
+    }
+
+    /// Get document IDs that need to be pushed to server.
+    pub fn get_pending_documents(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM documents WHERE needs_push = 1")
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(ids)
+    }
+
+    /// Mark a document as synced.
+    pub fn mark_document_synced(&self, doc_id: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE documents SET needs_push = 0, last_synced = datetime('now') WHERE id = ?1",
+                params![doc_id],
+            )
+            .map_err(|e| Error::Database(format!("mark document synced failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Save sync state for a document.
+    pub fn save_document_sync_state(&self, doc_id: &str, state_bytes: &[u8]) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE documents SET sync_state = ?1 WHERE id = ?2",
+                params![state_bytes, doc_id],
+            )
+            .map_err(|e| Error::Database(format!("save document sync state failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Load sync state for a document.
+    pub fn load_document_sync_state(&self, doc_id: &str) -> Result<Option<Vec<u8>>> {
+        match self.conn.query_row(
+            "SELECT sync_state FROM documents WHERE id = ?1",
+            params![doc_id],
+            |row| row.get::<_, Option<Vec<u8>>>(0),
+        ) {
+            Ok(state) => Ok(state),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Error::Database(format!(
+                "load document sync state failed: {e}"
+            ))),
+        }
+    }
+
+    // -- Namespace-project link operations --
+
+    /// Link a namespace to a project.
+    pub fn link_namespace_project(&self, namespace_id: &str, project_id: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO namespace_project_links (namespace_id, project_id) \
+                 VALUES (?1, ?2)",
+                params![namespace_id, project_id],
+            )
+            .map_err(|e| Error::Database(format!("link namespace-project failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Unlink a namespace from a project.
+    pub fn unlink_namespace_project(&self, namespace_id: &str, project_id: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM namespace_project_links \
+                 WHERE namespace_id = ?1 AND project_id = ?2",
+                params![namespace_id, project_id],
+            )
+            .map_err(|e| Error::Database(format!("unlink namespace-project failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Get project IDs linked to a namespace.
+    pub fn get_linked_projects(&self, namespace_id: &str) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT project_id FROM namespace_project_links WHERE namespace_id = ?1")
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let ids = stmt
+            .query_map(params![namespace_id], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(ids)
+    }
+
+    /// Get namespace IDs linked to a project.
+    pub fn get_linked_namespaces(&self, project_id: &str) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT namespace_id FROM namespace_project_links WHERE project_id = ?1")
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let ids = stmt
+            .query_map(params![project_id], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(ids)
+    }
+
     // -- Feels operations --
 
     /// Set today's energy and focus values.
@@ -1382,4 +1782,38 @@ impl CachedProject {
     pub fn is_deleted(&self) -> bool {
         self.deleted.is_some()
     }
+}
+
+/// A namespace stored in the local cache.
+#[derive(Debug, Clone)]
+pub struct CachedNamespace {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub deleted: Option<String>,
+    pub last_synced: Option<String>,
+    pub labels: Vec<String>,
+}
+
+impl CachedNamespace {
+    /// Check if the namespace is soft-deleted.
+    pub fn is_deleted(&self) -> bool {
+        self.deleted.is_some()
+    }
+}
+
+/// A document cached in the local index.
+#[derive(Debug, Clone)]
+pub struct CachedDocument {
+    pub id: String,
+    pub namespace_id: String,
+    pub title: String,
+    pub created: String,
+    pub modified: String,
+    pub deleted: Option<String>,
+    pub version: u64,
+    pub needs_push: bool,
+    pub last_synced: Option<String>,
+    pub parent_id: Option<String>,
+    pub labels: Vec<String>,
 }
