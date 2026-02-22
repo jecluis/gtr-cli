@@ -26,8 +26,8 @@ use std::fs;
 use tracing::debug;
 
 use crate::Result;
-use crate::crdt::TaskDocument;
-use crate::models::Task;
+use crate::crdt::{PkmsDocument, TaskDocument};
+use crate::models::{Document, Task};
 
 /// Local task storage handling .automerge files.
 pub struct TaskStorage {
@@ -153,6 +153,98 @@ impl TaskStorage {
             .map_err(|e| crate::Error::InvalidInput(format!("invalid task ID: {e}")))?;
 
         let paths = self.config.task_paths(&uuid);
+        fs::write(&paths.automerge, bytes)?;
+
+        Ok(())
+    }
+
+    // -- Document storage --
+
+    /// Create a new document locally.
+    pub fn create_document(&self, doc: &Document) -> Result<()> {
+        self.config.ensure_documents_dir()?;
+
+        let doc_id = uuid::Uuid::parse_str(&doc.id)
+            .map_err(|e| crate::Error::InvalidInput(format!("invalid document ID: {e}")))?;
+
+        let paths = self.config.document_paths(&doc_id);
+        let crdt = PkmsDocument::new(doc)?;
+        let bytes = crdt.save();
+
+        fs::write(&paths.automerge, bytes)?;
+
+        Ok(())
+    }
+
+    /// Load a document from local storage.
+    pub fn load_document(&self, doc_id: &str) -> Result<Document> {
+        let uuid = uuid::Uuid::parse_str(doc_id)
+            .map_err(|e| crate::Error::InvalidInput(format!("invalid document ID: {e}")))?;
+
+        let paths = self.config.document_paths(&uuid);
+
+        if !paths.exists() {
+            return Err(crate::Error::Storage(format!(
+                "document {doc_id} not found locally"
+            )));
+        }
+
+        let bytes = fs::read(&paths.automerge)?;
+        debug!(
+            doc_id,
+            bytes_len = bytes.len(),
+            "loaded document from storage"
+        );
+        let crdt = PkmsDocument::load(&bytes)?;
+        crdt.to_document()
+    }
+
+    /// Update an existing document locally.
+    pub fn update_document(&self, doc: &Document) -> Result<()> {
+        let doc_id = uuid::Uuid::parse_str(&doc.id)
+            .map_err(|e| crate::Error::InvalidInput(format!("invalid document ID: {e}")))?;
+
+        let paths = self.config.document_paths(&doc_id);
+
+        let bytes = fs::read(&paths.automerge)?;
+        let mut crdt = PkmsDocument::load(&bytes)?;
+
+        crdt.update_document(doc)?;
+
+        let updated_bytes = crdt.save();
+        debug!(doc_id = %doc.id, old_bytes = bytes.len(), new_bytes = updated_bytes.len(), "updated document in storage");
+        fs::write(&paths.automerge, updated_bytes)?;
+
+        Ok(())
+    }
+
+    /// Check if a document exists locally.
+    pub fn document_exists(&self, doc_id: &str) -> bool {
+        if let Ok(uuid) = uuid::Uuid::parse_str(doc_id) {
+            let paths = self.config.document_paths(&uuid);
+            paths.exists()
+        } else {
+            false
+        }
+    }
+
+    /// Get document CRDT bytes for syncing.
+    pub fn get_document_bytes(&self, doc_id: &str) -> Result<Vec<u8>> {
+        let uuid = uuid::Uuid::parse_str(doc_id)
+            .map_err(|e| crate::Error::InvalidInput(format!("invalid document ID: {e}")))?;
+
+        let paths = self.config.document_paths(&uuid);
+        Ok(fs::read(&paths.automerge)?)
+    }
+
+    /// Save document CRDT bytes directly (for pull sync).
+    pub fn save_document_bytes(&self, doc_id: &str, bytes: &[u8]) -> Result<()> {
+        self.config.ensure_documents_dir()?;
+
+        let uuid = uuid::Uuid::parse_str(doc_id)
+            .map_err(|e| crate::Error::InvalidInput(format!("invalid document ID: {e}")))?;
+
+        let paths = self.config.document_paths(&uuid);
         fs::write(&paths.automerge, bytes)?;
 
         Ok(())

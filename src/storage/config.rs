@@ -49,11 +49,33 @@ impl StorageConfig {
         self.cache_dir.join("tasks")
     }
 
+    /// Get the documents directory (flat layout).
+    pub fn documents_dir(&self) -> PathBuf {
+        self.cache_dir.join("documents")
+    }
+
     /// Ensure tasks directory exists.
     pub fn ensure_tasks_dir(&self) -> Result<PathBuf> {
         let dir = self.tasks_dir();
         fs::create_dir_all(&dir)?;
         Ok(dir)
+    }
+
+    /// Ensure documents directory exists.
+    pub fn ensure_documents_dir(&self) -> Result<PathBuf> {
+        let dir = self.documents_dir();
+        fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    /// Get paths for a document's files (.automerge).
+    pub fn document_paths(&self, doc_id: &uuid::Uuid) -> DocumentPaths {
+        let docs_dir = self.documents_dir();
+        let base = docs_dir.join(doc_id.to_string());
+
+        DocumentPaths {
+            automerge: base.with_extension("automerge"),
+        }
     }
 
     /// Get the user directory (for migration detection).
@@ -81,6 +103,18 @@ pub struct TaskPaths {
 }
 
 impl TaskPaths {
+    pub fn exists(&self) -> bool {
+        self.automerge.exists()
+    }
+}
+
+/// Paths for a document's storage files.
+#[derive(Debug, Clone)]
+pub struct DocumentPaths {
+    pub automerge: PathBuf,
+}
+
+impl DocumentPaths {
     pub fn exists(&self) -> bool {
         self.automerge.exists()
     }

@@ -18,5 +18,7 @@
 //! CRDT operations for offline task management.
 
 pub mod document;
+pub mod pkms_document;
 
 pub use document::TaskDocument;
+pub use pkms_document::PkmsDocument;
