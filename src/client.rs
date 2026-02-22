@@ -602,6 +602,369 @@ impl Client {
         }
     }
 
+    // -- Namespace API --
+
+    /// List all namespaces.
+    pub async fn list_namespaces(&self) -> Result<Vec<Namespace>> {
+        let url = format!("{}/api/namespaces", self.base_url);
+        self.get(&url).await
+    }
+
+    /// Get a specific namespace.
+    pub async fn get_namespace(&self, id: &str) -> Result<Namespace> {
+        let url = format!("{}/api/namespaces/{}", self.base_url, encode_path(id));
+        self.get(&url).await
+    }
+
+    /// Create a new namespace.
+    pub async fn create_namespace(&self, req: &CreateNamespaceRequest) -> Result<Namespace> {
+        let url = format!("{}/api/namespaces", self.base_url);
+        self.post(&url, req).await
+    }
+
+    /// Update a namespace.
+    pub async fn update_namespace(
+        &self,
+        id: &str,
+        req: &UpdateNamespaceRequest,
+    ) -> Result<Namespace> {
+        let url = format!("{}/api/namespaces/{}", self.base_url, encode_path(id));
+        self.put(&url, req).await
+    }
+
+    /// Delete (soft-delete) a namespace.
+    pub async fn delete_namespace(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/namespaces/{}", self.base_url, encode_path(id));
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = response.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Restore a soft-deleted namespace.
+    pub async fn restore_namespace(&self, id: &str) -> Result<Namespace> {
+        let url = format!(
+            "{}/api/namespaces/{}/restore",
+            self.base_url,
+            encode_path(id)
+        );
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        self.handle_response(resp).await
+    }
+
+    // -- Namespace-project links --
+
+    /// Link a project to a namespace.
+    pub async fn link_namespace_project(&self, namespace_id: &str, project_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/api/namespaces/{}/links/{}",
+            self.base_url,
+            encode_path(namespace_id),
+            encode_path(project_id)
+        );
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = resp.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Unlink a project from a namespace.
+    pub async fn unlink_namespace_project(
+        &self,
+        namespace_id: &str,
+        project_id: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/api/namespaces/{}/links/{}",
+            self.base_url,
+            encode_path(namespace_id),
+            encode_path(project_id)
+        );
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = response.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Get projects linked to a namespace.
+    pub async fn get_namespace_links(&self, namespace_id: &str) -> Result<Vec<Project>> {
+        let url = format!(
+            "{}/api/namespaces/{}/links",
+            self.base_url,
+            encode_path(namespace_id)
+        );
+        self.get(&url).await
+    }
+
+    // -- Document API --
+
+    /// List documents in a namespace.
+    pub async fn list_documents(
+        &self,
+        namespace_id: &str,
+        include_deleted: bool,
+    ) -> Result<Vec<Document>> {
+        let mut url = format!(
+            "{}/api/namespaces/{}/documents",
+            self.base_url,
+            encode_path(namespace_id)
+        );
+        if include_deleted {
+            url.push_str("?include_deleted=true");
+        }
+        self.get(&url).await
+    }
+
+    /// Get a specific document.
+    pub async fn get_document(&self, id: &str) -> Result<Document> {
+        let url = format!("{}/api/documents/{}", self.base_url, encode_path(id));
+        self.get(&url).await
+    }
+
+    /// Create a new document.
+    pub async fn create_document(
+        &self,
+        namespace_id: &str,
+        req: &CreateDocumentRequest,
+    ) -> Result<Document> {
+        let url = format!(
+            "{}/api/namespaces/{}/documents",
+            self.base_url,
+            encode_path(namespace_id)
+        );
+        self.post(&url, req).await
+    }
+
+    /// Update a document.
+    pub async fn update_document(&self, id: &str, req: &UpdateDocumentRequest) -> Result<Document> {
+        let url = format!("{}/api/documents/{}", self.base_url, encode_path(id));
+        self.put(&url, req).await
+    }
+
+    /// Delete (soft-delete) a document.
+    pub async fn delete_document(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/documents/{}", self.base_url, encode_path(id));
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = response.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Restore a soft-deleted document.
+    pub async fn restore_document(&self, id: &str) -> Result<Document> {
+        let url = format!(
+            "{}/api/documents/{}/restore",
+            self.base_url,
+            encode_path(id)
+        );
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        self.handle_response(resp).await
+    }
+
+    /// Move a document to a different namespace.
+    pub async fn move_document(&self, doc_id: &str, target_namespace_id: &str) -> Result<Document> {
+        let url = format!(
+            "{}/api/documents/{}/move",
+            self.base_url,
+            encode_path(doc_id)
+        );
+        let req = MoveDocumentRequest {
+            target_namespace_id: target_namespace_id.to_string(),
+        };
+        self.post(&url, &req).await
+    }
+
+    // -- Document sync --
+
+    /// Post document CRDT bytes to server for merging.
+    pub async fn post_document_sync(&self, doc_id: &str, bytes: &[u8]) -> Result<Document> {
+        let url = format!(
+            "{}/api/sync/documents/{}",
+            self.base_url,
+            encode_path(doc_id)
+        );
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes.to_vec())
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            Ok(resp.json::<Document>().await?)
+        } else {
+            let status = resp.status();
+            let text = resp.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Fetch document CRDT bytes from server.
+    pub async fn fetch_document_sync(&self, doc_id: &str) -> Result<Vec<u8>> {
+        let url = format!(
+            "{}/api/sync/documents/{}",
+            self.base_url,
+            encode_path(doc_id)
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            Ok(resp.bytes().await?.to_vec())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    // -- Reference API --
+
+    /// Get references for an entity (forward + back).
+    pub async fn get_references(&self, id: &str, entity_type: &str) -> Result<EntityReferences> {
+        let url = format!(
+            "{}/api/references/{}?type={}",
+            self.base_url,
+            encode_path(id),
+            encode_path(entity_type)
+        );
+        self.get(&url).await
+    }
+
+    /// Add a reference from a task to another entity.
+    pub async fn add_task_reference(
+        &self,
+        task_id: &str,
+        req: &AddReferenceRequest,
+    ) -> Result<ReferenceResponse> {
+        let url = format!(
+            "{}/api/tasks/{}/references",
+            self.base_url,
+            encode_path(task_id)
+        );
+        self.post(&url, req).await
+    }
+
+    /// Remove a reference from a task.
+    pub async fn remove_task_reference(&self, task_id: &str, target_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/api/tasks/{}/references/{}",
+            self.base_url,
+            encode_path(task_id),
+            encode_path(target_id)
+        );
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = response.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
+    /// Add a reference from a document to another entity.
+    pub async fn add_document_reference(
+        &self,
+        doc_id: &str,
+        req: &AddReferenceRequest,
+    ) -> Result<ReferenceResponse> {
+        let url = format!(
+            "{}/api/documents/{}/references",
+            self.base_url,
+            encode_path(doc_id)
+        );
+        self.post(&url, req).await
+    }
+
+    /// Remove a reference from a document.
+    pub async fn remove_document_reference(&self, doc_id: &str, target_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/api/documents/{}/references/{}",
+            self.base_url,
+            encode_path(doc_id),
+            encode_path(target_id)
+        );
+        let response = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let text = response.text().await?;
+            Err(self.error_from_response(status, &text))
+        }
+    }
+
     /// Convert HTTP error response to Error.
     fn error_from_response(&self, status: StatusCode, body: &str) -> Error {
         match status {
