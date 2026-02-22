@@ -34,6 +34,7 @@ pub mod pkms;
 pub mod progress;
 pub mod project;
 pub mod promotion;
+pub mod reference;
 pub mod restore;
 pub mod search;
 pub mod show;

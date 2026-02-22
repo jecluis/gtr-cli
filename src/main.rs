@@ -516,6 +516,34 @@ enum Commands {
         #[arg(short = 'L', long = "with-labels")]
         with_labels: bool,
     },
+
+    /// Add a reference from a task to another entity
+    Ref {
+        /// Task ID
+        task_id: String,
+        /// Target entity ID
+        target: String,
+        /// Target type (task, document, project, namespace)
+        #[arg(short = 'T', long = "type", default_value = "task")]
+        target_type: String,
+        /// Reference type (related, extends, blocks, etc.)
+        #[arg(short, long, default_value = "related")]
+        ref_type: String,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
+    },
+
+    /// Remove a reference from a task
+    Unref {
+        /// Task ID
+        task_id: String,
+        /// Target entity ID to unlink
+        target: String,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1259,6 +1287,28 @@ async fn run() -> Result<()> {
             no_sync,
         } => gtr::commands::feels::run(&config, energy, focus, no_sync).await,
         Commands::Status { with_labels } => gtr::commands::status::run(&config, with_labels).await,
+        Commands::Ref {
+            task_id,
+            target,
+            target_type,
+            ref_type,
+            no_sync,
+        } => {
+            gtr::commands::reference::add_ref(
+                &config,
+                &task_id,
+                &target,
+                &target_type,
+                &ref_type,
+                no_sync,
+            )
+            .await
+        }
+        Commands::Unref {
+            task_id,
+            target,
+            no_sync,
+        } => gtr::commands::reference::remove_ref(&config, &task_id, &target, no_sync).await,
         Commands::Init { .. } => unreachable!(),
         Commands::Version => unreachable!(),
     }
