@@ -22,7 +22,7 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use crate::Result;
-use crate::cache::{CachedProject, TaskCache};
+use crate::cache::{CachedNamespace, CachedProject, TaskCache};
 use crate::client::Client;
 use crate::config::Config;
 use crate::storage::TaskStorage;
@@ -69,8 +69,10 @@ impl SyncManager {
     /// unnecessary network traffic.
     pub async fn sync_all(&self) -> Result<()> {
         // Push local changes (push_task now fetches merged CRDT back)
-        // This ensures local storage has the authoritative merged state
         self.push_pending().await?;
+
+        // Push pending documents
+        self.push_pending_documents().await?;
 
         Ok(())
     }
@@ -83,16 +85,24 @@ impl SyncManager {
     pub async fn sync_full(&self) -> Result<()> {
         // Push local changes first
         self.push_pending().await?;
+        self.push_pending_documents().await?;
 
         // Pull remote changes for all tasks
         self.pull_updates().await?;
+
+        // Sync namespaces and links
+        self.sync_namespaces().await?;
+        self.sync_namespace_links().await?;
+
+        // Pull all documents
+        self.pull_all_documents().await?;
 
         Ok(())
     }
 
     /// Sync projects from server into local cache.
     async fn sync_projects(&self) -> Result<()> {
-        let projects = self.client.list_projects().await?;
+        let projects = self.client.list_projects_all(true).await?;
         let now = chrono::Utc::now().to_rfc3339();
 
         for project in &projects {
@@ -309,15 +319,174 @@ impl SyncManager {
         Ok(())
     }
 
+    // -- Namespace sync --
+
+    /// Sync namespaces from server into local cache.
+    async fn sync_namespaces(&self) -> Result<()> {
+        let namespaces = self.client.list_namespaces().await?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        for ns in &namespaces {
+            let cached = CachedNamespace {
+                id: ns.id.clone(),
+                name: ns.name.clone(),
+                parent_id: ns.parent_id.clone(),
+                deleted: ns.deleted.clone(),
+                last_synced: Some(now.clone()),
+                labels: ns.labels.clone(),
+            };
+            self.cache.upsert_namespace(&cached)?;
+        }
+
+        info!(count = namespaces.len(), "synced namespaces from server");
+        Ok(())
+    }
+
+    /// Sync namespace-project links from server.
+    async fn sync_namespace_links(&self) -> Result<()> {
+        let namespaces = self.cache.list_namespaces()?;
+
+        for ns in &namespaces {
+            match self.client.get_namespace_links(&ns.id).await {
+                Ok(projects) => {
+                    // Clear existing links and re-add from server
+                    let existing = self.cache.get_linked_projects(&ns.id)?;
+                    for old_pid in &existing {
+                        self.cache.unlink_namespace_project(&ns.id, old_pid)?;
+                    }
+                    for project in &projects {
+                        self.cache.link_namespace_project(&ns.id, &project.id)?;
+                    }
+                    debug!(namespace_id = %ns.id, links = projects.len(), "synced namespace links");
+                }
+                Err(e) => {
+                    warn!(namespace_id = %ns.id, "failed to sync namespace links: {e}");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // -- Document sync --
+
+    /// Push all locally modified documents to server.
+    async fn push_pending_documents(&self) -> Result<()> {
+        let pending_ids = self.cache.get_pending_documents()?;
+        debug!(
+            pending_count = pending_ids.len(),
+            "pushing pending documents"
+        );
+
+        for doc_id in pending_ids {
+            if let Err(e) = self.push_document(&doc_id).await {
+                warn!(doc_id = %doc_id, "failed to push document: {e}");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Push a single document to server using full-document sync.
+    ///
+    /// Documents use full-document sync (POST bytes, receive merged JSON)
+    /// since the server doesn't have a sync-protocol endpoint for documents.
+    async fn push_document(&self, doc_id: &str) -> Result<()> {
+        // Load local CRDT bytes
+        let bytes = self.storage.get_document_bytes(doc_id)?;
+        debug!(doc_id, bytes_len = bytes.len(), "pushing document");
+
+        // Post to server and get merged result
+        let merged_doc = self.client.post_document_sync(doc_id, &bytes).await?;
+
+        // Fetch merged CRDT state back from server
+        let server_bytes = self.client.fetch_document_sync(doc_id).await?;
+
+        // Merge server state into local
+        let mut local_crdt = crate::crdt::PkmsDocument::load(&bytes)?;
+        let mut server_crdt = crate::crdt::PkmsDocument::load(&server_bytes)?;
+        local_crdt.merge(&mut server_crdt)?;
+
+        // Save merged document
+        let updated_bytes = local_crdt.save();
+        self.storage.save_document_bytes(doc_id, &updated_bytes)?;
+
+        // Update cache
+        self.cache.upsert_document(&merged_doc, false)?;
+        self.cache.mark_document_synced(doc_id)?;
+
+        debug!(
+            doc_id,
+            version = merged_doc.version,
+            "document pushed and merged"
+        );
+        Ok(())
+    }
+
+    /// Pull a single document from server and merge with local version.
+    async fn pull_document(&self, doc_id: &str) -> Result<()> {
+        let remote_bytes = self.client.fetch_document_sync(doc_id).await?;
+        debug!(
+            doc_id,
+            remote_bytes_len = remote_bytes.len(),
+            "fetched remote document CRDT state"
+        );
+
+        let merged_bytes = if self.storage.document_exists(doc_id) {
+            let local_bytes = self.storage.get_document_bytes(doc_id)?;
+            let mut local_crdt = crate::crdt::PkmsDocument::load(&local_bytes)?;
+            let mut remote_crdt = crate::crdt::PkmsDocument::load(&remote_bytes)?;
+            local_crdt.merge(&mut remote_crdt)?;
+            local_crdt.save()
+        } else {
+            info!(doc_id, "no local document version, using remote as-is");
+            remote_bytes
+        };
+
+        self.storage.save_document_bytes(doc_id, &merged_bytes)?;
+
+        let crdt = crate::crdt::PkmsDocument::load(&merged_bytes)?;
+        let doc = crdt.to_document()?;
+        self.cache.upsert_document(&doc, false)?;
+
+        Ok(())
+    }
+
+    /// Pull all documents from server across all namespaces.
+    async fn pull_all_documents(&self) -> Result<()> {
+        let namespaces = self.cache.list_namespaces()?;
+
+        for ns in &namespaces {
+            match self.client.list_documents(&ns.id, true).await {
+                Ok(docs) => {
+                    for doc in &docs {
+                        if let Err(e) = self.pull_document(&doc.id).await {
+                            warn!(doc_id = %doc.id, "failed to pull document: {e}");
+                        }
+                    }
+                    debug!(namespace_id = %ns.id, count = docs.len(), "pulled documents for namespace");
+                }
+                Err(e) => {
+                    warn!(namespace_id = %ns.id, "failed to list documents: {e}");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get sync status summary.
     pub async fn sync_status(&self) -> Result<SyncStatus> {
-        let pending_count = self.cache.get_pending_tasks()?.len();
+        let pending_tasks = self.cache.get_pending_tasks()?.len();
+        let pending_documents = self.cache.get_pending_documents()?.len();
 
         // Try to reach server (quick check with timeout)
         let server_reachable = self.client.health_check().await;
 
         Ok(SyncStatus {
-            pending_push: pending_count,
+            pending_push: pending_tasks + pending_documents,
+            pending_tasks,
+            pending_documents,
             server_reachable,
         })
     }
@@ -327,5 +496,7 @@ impl SyncManager {
 #[derive(Debug)]
 pub struct SyncStatus {
     pub pending_push: usize,
+    pub pending_tasks: usize,
+    pub pending_documents: usize,
     pub server_reachable: bool,
 }
