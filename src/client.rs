@@ -37,10 +37,20 @@ pub struct Client {
 }
 
 impl Client {
+    /// Header name for client version identification.
+    const VERSION_HEADER: &'static str = "x-gtr-client-version";
+
     /// Create a new client from configuration.
     pub fn new(config: &Config) -> Result<Self> {
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        default_headers.insert(
+            Self::VERSION_HEADER,
+            reqwest::header::HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+        );
+
         let http = HttpClient::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .default_headers(default_headers)
             .build()?;
 
         Ok(Client {
