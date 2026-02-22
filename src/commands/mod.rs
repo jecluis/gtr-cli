@@ -27,6 +27,7 @@ pub mod init;
 pub mod later;
 pub mod list;
 pub mod log;
+pub mod namespace;
 pub mod next;
 pub mod now;
 pub mod progress;

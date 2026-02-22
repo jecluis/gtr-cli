@@ -451,6 +451,12 @@ enum Commands {
         no_sync: bool,
     },
 
+    /// Manage namespaces (document containers)
+    Namespace {
+        #[command(subcommand)]
+        command: NamespaceCommands,
+    },
+
     /// Manage projects
     Project {
         #[command(subcommand)]
@@ -604,6 +610,62 @@ enum LabelCommands {
 
         /// New label name
         new: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum NamespaceCommands {
+    /// Create a new namespace
+    Create {
+        /// Namespace name
+        name: String,
+        /// Namespace description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Parent namespace (name or UUID)
+        #[arg(long)]
+        parent: Option<String>,
+    },
+    /// List namespaces
+    List {
+        /// Include deleted namespaces
+        #[arg(long)]
+        all: bool,
+    },
+    /// Update a namespace
+    Update {
+        /// Namespace (name or UUID)
+        id: String,
+        /// New description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// New parent namespace (empty to unparent)
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        parent: Option<String>,
+    },
+    /// Delete a namespace (soft-delete)
+    Delete {
+        /// Namespace (name or UUID)
+        id: String,
+    },
+    /// Restore a deleted namespace
+    Restore {
+        /// Namespace (name or UUID)
+        id: String,
+    },
+    /// Link a project to a namespace
+    Link {
+        /// Namespace (name or UUID)
+        id: String,
+        /// Project to link
+        project: String,
+    },
+    /// Unlink a project from a namespace
+    Unlink {
+        /// Namespace (name or UUID)
+        id: String,
+        /// Project to unlink
+        project: String,
     },
 }
 
@@ -898,6 +960,31 @@ async fn run() -> Result<()> {
             all,
             no_sync,
         } => gtr::commands::search::run(&config, &query, project, limit, all, no_sync).await,
+        Commands::Namespace { command } => match command {
+            NamespaceCommands::Create {
+                name,
+                description,
+                parent,
+            } => gtr::commands::namespace::create(&config, &name, description, parent).await,
+            NamespaceCommands::List { all } => gtr::commands::namespace::list(&config, all).await,
+            NamespaceCommands::Update {
+                id,
+                description,
+                parent,
+            } => gtr::commands::namespace::update(&config, &id, description, parent).await,
+            NamespaceCommands::Delete { id } => {
+                gtr::commands::namespace::delete(&config, &id).await
+            }
+            NamespaceCommands::Restore { id } => {
+                gtr::commands::namespace::restore(&config, &id).await
+            }
+            NamespaceCommands::Link { id, project } => {
+                gtr::commands::namespace::link(&config, &id, &project).await
+            }
+            NamespaceCommands::Unlink { id, project } => {
+                gtr::commands::namespace::unlink(&config, &id, &project).await
+            }
+        },
         Commands::Project { command } => match command {
             ProjectCommands::Create {
                 name,
