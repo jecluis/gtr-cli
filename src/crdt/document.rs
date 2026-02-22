@@ -138,12 +138,29 @@ impl TaskDocument {
         self.doc.save()
     }
 
+    /// Resolve the base/metadata map ObjId.
+    ///
+    /// Tries `"base"` first (server format), falls back to `"metadata"`
+    /// (legacy CLI format) for backward compatibility.
+    fn resolve_base_obj(&self) -> Result<automerge::ObjId> {
+        // Try "base" first (new server format)
+        if let Ok(Some((automerge::Value::Object(automerge::ObjType::Map), obj_id))) =
+            self.doc.get(ROOT, "base")
+        {
+            return Ok(obj_id);
+        }
+        // Fall back to "metadata" (legacy CLI format)
+        if let Ok(Some((automerge::Value::Object(automerge::ObjType::Map), obj_id))) =
+            self.doc.get(ROOT, "metadata")
+        {
+            return Ok(obj_id);
+        }
+        Err(Error::Storage("missing base/metadata map".to_string()))
+    }
+
     /// Convert document to Task.
     pub fn to_task(&self) -> Result<Task> {
-        let meta_id = match self.doc.get(ROOT, "metadata") {
-            Ok(Some((automerge::Value::Object(automerge::ObjType::Map), obj_id))) => obj_id,
-            _ => return Err(Error::Storage("missing metadata map".to_string())),
-        };
+        let meta_id = self.resolve_base_obj()?;
 
         let id = self.get_str(&meta_id, "id")?;
         let project_id = self.get_str(&meta_id, "project_id")?;
@@ -310,9 +327,13 @@ impl TaskDocument {
 
         self.doc
             .transact::<_, _, automerge::AutomergeError>(|tx| {
-                let meta = match tx.get(ROOT, "metadata").ok().flatten() {
+                // Try "base" first, then "metadata" (backward compat)
+                let meta = match tx.get(ROOT, "base").ok().flatten() {
                     Some((automerge::Value::Object(_), id)) => id,
-                    _ => tx.put_object(ROOT, "metadata", ObjType::Map)?,
+                    _ => match tx.get(ROOT, "metadata").ok().flatten() {
+                        Some((automerge::Value::Object(_), id)) => id,
+                        _ => tx.put_object(ROOT, "metadata", ObjType::Map)?,
+                    },
                 };
 
                 // Identity fields (id, created) never change.
