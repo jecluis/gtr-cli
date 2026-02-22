@@ -219,6 +219,7 @@ pub async fn run(
         joy: joy.unwrap_or(5),
         parent_id: resolved_parent.clone(),
         labels: resolved_labels,
+        references: vec![],
     };
 
     // Save locally

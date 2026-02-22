@@ -116,6 +116,7 @@ mod tests {
             joy: 5,
             parent_id: None,
             labels: Vec::new(),
+            references: Vec::new(),
         }
     }
 

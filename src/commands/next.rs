@@ -511,6 +511,7 @@ mod tests {
             joy,
             parent_id: None,
             labels: Vec::new(),
+            references: Vec::new(),
         }
     }
 

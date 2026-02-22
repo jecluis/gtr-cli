@@ -77,6 +77,9 @@ pub struct Task {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<Reference>,
 }
 
 fn default_impact() -> u8 {
@@ -358,4 +361,144 @@ pub struct PromotionThresholdsUpdate {
 pub struct ConfigUpdateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub promotion_thresholds: Option<PromotionThresholdsUpdate>,
+}
+
+// -- PKMS models --
+
+/// A reference from one entity to another.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Reference {
+    pub target_id: String,
+    pub target_type: String,
+    pub ref_type: String,
+}
+
+/// Document representation (PKMS knowledge entry).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Document {
+    pub id: String,
+    pub namespace_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub content: String,
+    pub created: String,
+    pub modified: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<String>,
+    pub version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub references: Vec<Reference>,
+    #[serde(default)]
+    pub custom: serde_json::Value,
+}
+
+impl Document {
+    /// Check if document is deleted (tombstone).
+    pub fn is_deleted(&self) -> bool {
+        self.deleted.is_some()
+    }
+}
+
+/// Namespace representation (document container hierarchy).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Namespace {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<String>,
+}
+
+impl Namespace {
+    /// Check if namespace is deleted (tombstone).
+    pub fn is_deleted(&self) -> bool {
+        self.deleted.is_some()
+    }
+}
+
+/// Request to create a namespace.
+#[derive(Debug, Serialize)]
+pub struct CreateNamespaceRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+}
+
+/// Request to update a namespace.
+#[derive(Debug, Serialize)]
+pub struct UpdateNamespaceRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+}
+
+/// Request to create a document.
+#[derive(Debug, Serialize)]
+pub struct CreateDocumentRequest {
+    pub title: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+}
+
+/// Request to update a document.
+#[derive(Debug, Default, Serialize)]
+pub struct UpdateDocumentRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+}
+
+/// Request to move a document to a different namespace.
+#[derive(Debug, Serialize)]
+pub struct MoveDocumentRequest {
+    pub target_namespace_id: String,
+}
+
+/// Request to add a reference to an entity.
+#[derive(Debug, Serialize)]
+pub struct AddReferenceRequest {
+    pub target_id: String,
+    pub target_type: String,
+    pub ref_type: String,
+}
+
+/// Reference API response (includes directionality info).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReferenceResponse {
+    pub source_id: String,
+    pub source_type: String,
+    pub target_id: String,
+    pub target_type: String,
+    pub ref_type: String,
+    pub origin: String,
+}
+
+/// Combined forward and back references for an entity.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EntityReferences {
+    pub forward: Vec<ReferenceResponse>,
+    pub back: Vec<ReferenceResponse>,
 }

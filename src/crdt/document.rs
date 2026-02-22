@@ -44,6 +44,8 @@ impl TaskDocument {
             .map_err(|e| Error::Storage(format!("log serialization failed: {e}")))?;
         let labels_json = serde_json::to_string(&task.labels)
             .map_err(|e| Error::Storage(format!("labels serialization failed: {e}")))?;
+        let references_json = serde_json::to_string(&task.references)
+            .map_err(|e| Error::Storage(format!("references serialization failed: {e}")))?;
 
         // Serialize current_work_state as JSON (matching server format)
         let work_state_json = task
@@ -109,6 +111,9 @@ impl TaskDocument {
 
             // Labels (stored as JSON string)
             tx.put(&meta, "labels", labels_json.as_str())?;
+
+            // References (stored as JSON string)
+            tx.put(&meta, "references", references_json.as_str())?;
 
             // Title and body
             tx.put(ROOT, "title", task.title.as_str())?;
@@ -204,6 +209,14 @@ impl TaskDocument {
             .map_err(|e| Error::Storage(format!("invalid labels JSON: {e}")))?
             .unwrap_or_default();
 
+        // Parse references
+        let references: Vec<crate::models::Reference> = self
+            .try_get_str(&meta_id, "references")?
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(|e| Error::Storage(format!("invalid references JSON: {e}")))?
+            .unwrap_or_default();
+
         Ok(Task {
             id,
             project_id,
@@ -226,6 +239,7 @@ impl TaskDocument {
             joy,
             parent_id,
             labels,
+            references,
         })
     }
 
@@ -261,6 +275,14 @@ impl TaskDocument {
             Some(
                 serde_json::to_string(&task.labels)
                     .map_err(|e| Error::Storage(format!("labels serialization failed: {e}")))?,
+            )
+        } else {
+            None
+        };
+        let references_json = if task.references != current.references {
+            Some(
+                serde_json::to_string(&task.references)
+                    .map_err(|e| Error::Storage(format!("references serialization failed: {e}")))?,
             )
         } else {
             None
@@ -386,6 +408,10 @@ impl TaskDocument {
 
                 if let Some(ref labj) = labels_json {
                     tx.put::<_, _, &str>(&meta, "labels", labj)?;
+                }
+
+                if let Some(ref refj) = references_json {
+                    tx.put::<_, _, &str>(&meta, "references", refj)?;
                 }
 
                 if task.title != current.title {
