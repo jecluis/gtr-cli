@@ -21,6 +21,7 @@ use std::path::Path;
 
 use chrono::{Local, NaiveDate};
 use rusqlite::{Connection, OptionalExtension, params};
+use tracing::{debug, info};
 
 use crate::models::Task;
 use crate::{Error, Result};
@@ -170,21 +171,11 @@ impl TaskCache {
             [],
         );
 
-        // Ensure <root> meta-root project exists and reparent orphans
-        self.conn
-            .execute(
-                "INSERT OR IGNORE INTO projects (id, name, parent_id, labels) \
-                 VALUES ('<root>', 'Root', NULL, '[]')",
-                [],
-            )
-            .map_err(|e| Error::Database(format!("meta-root init failed: {e}")))?;
-        self.conn
-            .execute(
-                "UPDATE projects SET parent_id = '<root>' \
-                 WHERE parent_id IS NULL AND id != '<root>'",
-                [],
-            )
-            .map_err(|e| Error::Database(format!("meta-root reparent failed: {e}")))?;
+        // Migrate project IDs from string-based to UUIDs
+        self.migrate_project_ids_to_uuids()?;
+
+        // Ensure meta-root project exists with nil UUID and reparent orphans
+        self.ensure_meta_root()?;
 
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
@@ -203,6 +194,120 @@ impl TaskCache {
             .map_err(|e| Error::Database(format!("feels schema init failed: {e}")))?;
 
         Ok(())
+    }
+
+    /// Nil UUID used as the meta-root project ID.
+    const META_ROOT_UUID: &'static str = "00000000-0000-0000-0000-000000000000";
+
+    /// Ensure the meta-root project exists with nil UUID and reparent orphans.
+    fn ensure_meta_root(&self) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, name, parent_id, labels) \
+                 VALUES (?1, 'Root', NULL, '[]')",
+                params![Self::META_ROOT_UUID],
+            )
+            .map_err(|e| Error::Database(format!("meta-root init failed: {e}")))?;
+        self.conn
+            .execute(
+                "UPDATE projects SET parent_id = ?1 \
+                 WHERE parent_id IS NULL AND id != ?1",
+                params![Self::META_ROOT_UUID],
+            )
+            .map_err(|e| Error::Database(format!("meta-root reparent failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Migrate non-UUID project IDs to proper UUIDs.
+    ///
+    /// The old `<root>` meta-root maps to the nil UUID. Other non-UUID IDs
+    /// get a freshly generated UUID, and all tasks referencing them are
+    /// updated to point at the new ID. A `project_id_map` table records the
+    /// old-to-new mapping for diagnostics.
+    fn migrate_project_ids_to_uuids(&self) -> Result<()> {
+        // Create mapping table (idempotent)
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS project_id_map (\
+                     old_id TEXT PRIMARY KEY, \
+                     new_id TEXT NOT NULL\
+                 )",
+            )
+            .map_err(|e| Error::Database(format!("project_id_map schema failed: {e}")))?;
+
+        // Collect non-UUID project IDs
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM projects")
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        for old_id in &ids {
+            // Skip if already a valid UUID
+            if uuid::Uuid::parse_str(old_id).is_ok() {
+                continue;
+            }
+
+            let new_id = if old_id == "<root>" {
+                Self::META_ROOT_UUID.to_string()
+            } else {
+                uuid::Uuid::new_v4().to_string()
+            };
+
+            info!(old_id, new_id = %new_id, "migrating project ID to UUID");
+
+            // Record mapping
+            self.conn
+                .execute(
+                    "INSERT OR IGNORE INTO project_id_map (old_id, new_id) VALUES (?1, ?2)",
+                    params![old_id, new_id],
+                )
+                .map_err(|e| Error::Database(format!("record mapping failed: {e}")))?;
+
+            // Update tasks referencing this project
+            self.conn
+                .execute(
+                    "UPDATE tasks SET project_id = ?1 WHERE project_id = ?2",
+                    params![new_id, old_id],
+                )
+                .map_err(|e| Error::Database(format!("migrate tasks failed: {e}")))?;
+
+            // Reparent child projects pointing at the old ID
+            self.conn
+                .execute(
+                    "UPDATE projects SET parent_id = ?1 WHERE parent_id = ?2",
+                    params![new_id, old_id],
+                )
+                .map_err(|e| Error::Database(format!("reparent projects failed: {e}")))?;
+
+            // Insert the project under the new ID, then delete the old one
+            self.conn
+                .execute(
+                    "INSERT OR IGNORE INTO projects (id, name, parent_id, deleted, last_synced, labels) \
+                     SELECT ?1, name, parent_id, deleted, last_synced, labels \
+                     FROM projects WHERE id = ?2",
+                    params![new_id, old_id],
+                )
+                .map_err(|e| Error::Database(format!("copy project failed: {e}")))?;
+
+            self.conn
+                .execute("DELETE FROM projects WHERE id = ?1", params![old_id])
+                .map_err(|e| Error::Database(format!("delete old project failed: {e}")))?;
+
+            debug!(old_id, new_id = %new_id, "project ID migration complete");
+        }
+
+        Ok(())
+    }
+
+    /// Get the nil UUID used as the meta-root project ID.
+    pub fn meta_root_id() -> &'static str {
+        Self::META_ROOT_UUID
     }
 
     /// Parse a TaskSummary from a row with columns:
@@ -860,6 +965,33 @@ impl TaskCache {
         Ok(chain)
     }
 
+    /// Get the ancestor ID chain for a project, from root to the project itself.
+    ///
+    /// Like `get_project_path` but returns UUIDs instead of names.
+    pub fn get_project_id_path(&self, id: &str) -> Result<Vec<String>> {
+        let mut chain = vec![id.to_string()];
+        let mut current = id.to_string();
+
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(current.clone());
+
+        while let Some(p) = self.get_project(&current)? {
+            match p.parent_id {
+                Some(pid) if seen.insert(pid.clone()) => {
+                    chain.push(pid.clone());
+                    if pid == "00000000-0000-0000-0000-000000000000" {
+                        break;
+                    }
+                    current = pid;
+                }
+                _ => break,
+            }
+        }
+
+        chain.reverse();
+        Ok(chain)
+    }
+
     /// Build a map of project_id -> ancestor path for all projects
     /// referenced by the given task list.
     pub fn build_project_paths(
@@ -1100,12 +1232,12 @@ impl TaskCache {
         &self,
         project_id: &str,
     ) -> Result<Vec<(String, String)>> {
-        let path = self.get_project_path(project_id)?;
+        let id_path = self.get_project_id_path(project_id)?;
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
 
-        // path is root-first, so ancestor labels come first
-        for pid in &path {
+        // id_path is root-first, so ancestor labels come first
+        for pid in &id_path {
             let labels = self.get_project_labels(pid)?;
             for label in labels {
                 if seen.insert(label.clone()) {

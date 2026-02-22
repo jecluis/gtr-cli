@@ -171,10 +171,15 @@ pub async fn run(
         let mut new_labels = Vec::new();
         for label in &labels {
             if !project_labels.contains(label) {
+                let project_name = ctx
+                    .cache
+                    .get_project_path(&project_id)
+                    .map(|path| path.join("/"))
+                    .unwrap_or_else(|_| project_id.clone());
                 let confirm = dialoguer::Confirm::new()
                     .with_prompt(format!(
                         "Label '{}' doesn't exist in project '{}'. Create it?",
-                        label, project_id
+                        label, project_name
                     ))
                     .default(true)
                     .interact()

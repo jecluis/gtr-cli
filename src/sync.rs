@@ -127,8 +127,11 @@ impl SyncManager {
                 .await?;
 
             for task in tasks {
-                // Always pull and merge - CRDT handles conflicts automatically
-                if let Err(e) = self.pull_task(&task.id).await {
+                // Always pull and merge - CRDT handles conflicts automatically.
+                // Pass project_id from the API response so the cache uses the
+                // server's canonical UUID, even if the CRDT file still stores
+                // an old string project name.
+                if let Err(e) = self.pull_task(&task.id, &task.project_id).await {
                     warn!(task_id = %task.id, "failed to pull task: {e}");
                     // Continue with other tasks
                 }
@@ -139,7 +142,11 @@ impl SyncManager {
     }
 
     /// Pull a single task from server and merge with local version.
-    async fn pull_task(&self, task_id: &str) -> Result<()> {
+    ///
+    /// `canonical_project_id` is the server's authoritative project UUID.
+    /// CRDT files may still store old string project names; we override
+    /// with the canonical UUID when updating the local cache.
+    async fn pull_task(&self, task_id: &str, canonical_project_id: &str) -> Result<()> {
         // Fetch CRDT bytes from server
         let remote_bytes = self.client.fetch_sync(task_id).await?;
         debug!(
@@ -175,9 +182,11 @@ impl SyncManager {
         // Save merged result to local storage
         self.storage.save_task_bytes(task_id, &merged_bytes)?;
 
-        // Extract task data for cache
+        // Extract task data for cache, using canonical project_id from
+        // server instead of whatever the CRDT file stores.
         let doc = crate::crdt::TaskDocument::load(&merged_bytes)?;
-        let task = doc.to_task()?;
+        let mut task = doc.to_task()?;
+        task.project_id = canonical_project_id.to_string();
 
         // Update cache
         self.cache.upsert_task(&task, false)?;
