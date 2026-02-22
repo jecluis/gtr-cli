@@ -45,7 +45,7 @@ struct Cli {
 enum Commands {
     /// List tasks
     List {
-        /// Filter by project ID (can be specified multiple times). If specified without arguments, shows project picker.
+        /// Filter by project (name, path, or UUID; repeatable). Shows picker if given without arguments.
         #[arg(short = 'P', long, num_args = 0.., value_name = "PROJECT")]
         project: Option<Vec<String>>,
 
@@ -154,7 +154,7 @@ enum Commands {
 
     /// Create a new task
     New {
-        /// Project ID (optional if default set)
+        /// Project (name, path, or UUID; optional if default set)
         #[arg(short = 'P', long)]
         project: Option<String>,
 
@@ -253,7 +253,7 @@ enum Commands {
         #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=10))]
         joy: Option<u8>,
 
-        /// Move task to a different project
+        /// Move task to a different project (name, path, or UUID)
         #[arg(short = 'P', long = "project")]
         project: Option<String>,
 
@@ -395,14 +395,14 @@ enum Commands {
 
     /// List tasks currently in "doing" state
     Doing {
-        /// Filter by project. No args = picker; omit entirely = all projects.
+        /// Filter by project (name, path, or UUID). No args = picker; omit = all.
         #[arg(short = 'P', long, num_args = 0.., value_name = "PROJECT")]
         project: Option<Vec<String>>,
     },
 
     /// Suggest next tasks to work on (ordered by urgency)
     Next {
-        /// Filter to specific project
+        /// Filter to specific project (name, path, or UUID)
         #[arg(short = 'P', long)]
         project: Option<String>,
 
@@ -434,7 +434,7 @@ enum Commands {
         /// Search query
         query: String,
 
-        /// Filter by project
+        /// Filter by project (name, path, or UUID)
         #[arg(short = 'P', long)]
         project: Option<String>,
 
@@ -451,13 +451,13 @@ enum Commands {
         no_sync: bool,
     },
 
-    /// Manage PKMS documents
+    /// Manage documents (knowledge base entries)
     Doc {
         #[command(subcommand)]
         command: DocCommands,
     },
 
-    /// Manage namespaces (document containers)
+    /// Manage namespaces (containers for documents and projects)
     Namespace {
         #[command(subcommand)]
         command: NamespaceCommands,
@@ -654,7 +654,7 @@ enum DocCommands {
         /// Title (all remaining arguments)
         #[arg(num_args = 1..)]
         title: Vec<String>,
-        /// Namespace (name or UUID; uses default if omitted)
+        /// Namespace (name, path, or UUID; uses default if omitted)
         #[arg(short = 'N', long)]
         namespace: Option<String>,
         /// Edit document body in external editor
@@ -672,7 +672,7 @@ enum DocCommands {
     },
     /// List documents
     List {
-        /// Filter by namespace
+        /// Filter by namespace (name, path, or UUID)
         #[arg(short = 'N', long)]
         namespace: Option<String>,
         /// Include deleted documents
@@ -739,7 +739,7 @@ enum DocCommands {
     Move {
         /// Document ID
         doc_id: String,
-        /// Target namespace (name or UUID)
+        /// Target namespace (name, path, or UUID)
         namespace: String,
     },
     /// Add a reference to another entity
@@ -778,7 +778,7 @@ enum NamespaceCommands {
         /// Namespace description
         #[arg(short, long)]
         description: Option<String>,
-        /// Parent namespace (name or UUID)
+        /// Parent namespace (name, path, or UUID)
         #[arg(long)]
         parent: Option<String>,
     },
@@ -790,37 +790,37 @@ enum NamespaceCommands {
     },
     /// Update a namespace
     Update {
-        /// Namespace (name or UUID)
+        /// Namespace (name, path, or UUID)
         id: String,
         /// New description
         #[arg(short, long)]
         description: Option<String>,
-        /// New parent namespace (empty to unparent)
+        /// New parent namespace (name, path, or UUID; empty to unparent)
         #[arg(long, num_args = 0..=1, default_missing_value = "")]
         parent: Option<String>,
     },
     /// Delete a namespace (soft-delete)
     Delete {
-        /// Namespace (name or UUID)
+        /// Namespace (name, path, or UUID)
         id: String,
     },
     /// Restore a deleted namespace
     Restore {
-        /// Namespace (name or UUID)
+        /// Namespace (name, path, or UUID)
         id: String,
     },
     /// Link a project to a namespace
     Link {
-        /// Namespace (name or UUID)
+        /// Namespace (name, path, or UUID)
         id: String,
-        /// Project to link
+        /// Project to link (name, path, or UUID)
         project: String,
     },
     /// Unlink a project from a namespace
     Unlink {
-        /// Namespace (name or UUID)
+        /// Namespace (name, path, or UUID)
         id: String,
-        /// Project to unlink
+        /// Project to unlink (name, path, or UUID)
         project: String,
     },
 }
