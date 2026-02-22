@@ -30,7 +30,7 @@ use tabled::settings::{Alignment, Modify, Style, object::Columns};
 
 use crate::icons::Icons;
 use crate::markdown::MarkdownRenderer;
-use crate::models::{Project, Task};
+use crate::models::{Document, Namespace, Project, Task};
 use crate::promotion;
 use crate::threshold_cache::CachedThresholds;
 
@@ -1130,6 +1130,229 @@ pub fn print_task_details(
     }
 
     println!("{}\n", "═".repeat(80));
+}
+
+/// Print a list of documents in a compact format.
+///
+/// Shows each document with short ID, title, modification time, and optionally
+/// labels. Deleted documents are tagged.
+pub fn print_documents(docs: &[Document], icons: &Icons, with_labels: bool) {
+    use chrono_humanize::{Accuracy, HumanTime, Tense};
+
+    if docs.is_empty() {
+        println!("{}", format!("{} No documents found.", icons.info).dimmed());
+        return;
+    }
+
+    for doc in docs {
+        let short_id = &doc.id[..8.min(doc.id.len())];
+        let modified_rel = chrono::DateTime::parse_from_rfc3339(&doc.modified)
+            .map(|dt| {
+                let ht = HumanTime::from(dt);
+                ht.to_text_en(Accuracy::Rough, Tense::Past)
+            })
+            .unwrap_or_else(|_| "-".to_string());
+
+        let deleted_tag = if doc.is_deleted() {
+            " [deleted]".red().to_string()
+        } else {
+            String::new()
+        };
+
+        println!(
+            "  {} {}{}  ({})",
+            short_id.cyan(),
+            doc.title,
+            deleted_tag,
+            modified_rel.dimmed()
+        );
+
+        if with_labels && !doc.labels.is_empty() {
+            let label_strs: Vec<String> = doc.labels.iter().map(|l| l.cyan().to_string()).collect();
+            println!("    {} {}", icons.label, label_strs.join(", "));
+        }
+    }
+
+    println!("\n{} {}", "Total:".bold(), docs.len());
+}
+
+/// Print full details for a single document.
+///
+/// Shows title as header, metadata block, references, and content with
+/// optional markdown rendering. If `no_format` is true, content is shown
+/// as plain text.
+pub fn print_document_detail(doc: &Document, icons: &Icons, no_format: bool) {
+    let _ = icons; // reserved for future glyph use
+
+    let renderer = if no_format {
+        MarkdownRenderer::with_override(Some(false))
+    } else {
+        MarkdownRenderer::with_override(None)
+    };
+
+    println!("\n{}", "═".repeat(80));
+    println!("{}", doc.title.bold().green());
+    println!("{}", "═".repeat(80));
+
+    println!("\n{}", "Metadata:".bold());
+    println!("  ID:        {}", doc.id.cyan());
+    println!("  Namespace: {}", doc.namespace_id);
+
+    if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&doc.created) {
+        let local = created.with_timezone(&Local);
+        println!("  Created:   {}", local.format("%Y-%m-%d %H:%M:%S"));
+    }
+    if let Ok(modified) = chrono::DateTime::parse_from_rfc3339(&doc.modified) {
+        let local = modified.with_timezone(&Local);
+        println!("  Modified:  {}", local.format("%Y-%m-%d %H:%M:%S"));
+    }
+    if let Some(ref deleted) = doc.deleted
+        && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(deleted)
+    {
+        let local = dt.with_timezone(&Local);
+        println!(
+            "  {}",
+            format!("Deleted:  {}", local.format("%Y-%m-%d %H:%M:%S")).red()
+        );
+    }
+    if let Some(ref pid) = doc.parent_id {
+        println!("  Parent:    {}", pid);
+    }
+    println!("  Version:   {}", doc.version);
+
+    if !doc.labels.is_empty() {
+        let label_strs: Vec<String> = doc.labels.iter().map(|l| l.cyan().to_string()).collect();
+        println!("  Labels:    {}", label_strs.join(", "));
+    }
+
+    if !doc.references.is_empty() {
+        println!("\n{}", "References:".bold());
+        for r in &doc.references {
+            println!(
+                "  {} {} ({})",
+                r.ref_type.dimmed(),
+                r.target_id.cyan(),
+                r.target_type
+            );
+        }
+    }
+
+    if !doc.content.is_empty() {
+        println!("\n{}", "Content:".bold());
+        println!("{}", "─".repeat(80));
+        print!("{}", renderer.render(&doc.content));
+    } else {
+        println!("\n{}", "(No content)".italic().dimmed());
+    }
+
+    println!("{}\n", "═".repeat(80));
+}
+
+/// Print namespaces as a tree showing parent-child relationships.
+///
+/// Uses the same tree-connector style as `print_projects()`.
+pub fn print_namespaces(namespaces: &[Namespace]) {
+    if namespaces.is_empty() {
+        println!("{}", "No namespaces found".yellow());
+        return;
+    }
+
+    // Build lookup: parent_id -> children
+    let mut children_map: HashMap<Option<&str>, Vec<&Namespace>> = HashMap::new();
+    for ns in namespaces {
+        children_map
+            .entry(ns.parent_id.as_deref())
+            .or_default()
+            .push(ns);
+    }
+
+    // Sort each group alphabetically
+    for group in children_map.values_mut() {
+        group.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    // Roots (parent_id = None)
+    let roots = children_map.get(&None).cloned().unwrap_or_default();
+
+    // Orphans whose parent_id points to a namespace not in the list
+    let known_ids: HashSet<&str> = namespaces.iter().map(|ns| ns.id.as_str()).collect();
+    let mut orphans: Vec<&Namespace> = Vec::new();
+    for ns in namespaces {
+        if let Some(ref pid) = ns.parent_id
+            && !known_ids.contains(pid.as_str())
+            && !roots.iter().any(|r| r.id == ns.id)
+        {
+            orphans.push(ns);
+        }
+    }
+
+    for (i, root) in roots.iter().enumerate() {
+        let is_last = i == roots.len() - 1 && orphans.is_empty();
+        print_namespace_tree_node(root, "", is_last, true, &children_map);
+    }
+
+    for (i, orphan) in orphans.iter().enumerate() {
+        let is_last = i == orphans.len() - 1;
+        print_namespace_tree_node(orphan, "", is_last, true, &children_map);
+    }
+
+    println!("\n{} {}", "Total:".bold(), namespaces.len());
+}
+
+/// Recursively print a namespace node with tree connectors.
+fn print_namespace_tree_node(
+    ns: &Namespace,
+    prefix: &str,
+    is_last: bool,
+    is_root: bool,
+    children_map: &HashMap<Option<&str>, Vec<&Namespace>>,
+) {
+    let connector = if is_root {
+        ""
+    } else if is_last {
+        "└── "
+    } else {
+        "├── "
+    };
+
+    let desc = ns
+        .description
+        .as_deref()
+        .map(|d| format!(" - {}", d.dimmed()))
+        .unwrap_or_default();
+
+    let deleted_tag = if ns.is_deleted() {
+        " [deleted]".red().to_string()
+    } else {
+        String::new()
+    };
+
+    println!(
+        "{}{}{}{}{}",
+        prefix,
+        connector,
+        ns.name.cyan().bold(),
+        desc,
+        deleted_tag
+    );
+
+    let children = children_map
+        .get(&Some(ns.id.as_str()))
+        .cloned()
+        .unwrap_or_default();
+
+    let child_prefix = if is_root {
+        "  ".to_string()
+    } else if is_last {
+        format!("{}    ", prefix)
+    } else {
+        format!("{}│   ", prefix)
+    };
+
+    for (i, child) in children.iter().enumerate() {
+        let child_is_last = i == children.len() - 1;
+        print_namespace_tree_node(child, &child_prefix, child_is_last, false, children_map);
+    }
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ use crate::cache::{CachedNamespace, TaskCache};
 use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
-use crate::models::{CreateNamespaceRequest, Namespace, UpdateNamespaceRequest};
+use crate::models::{CreateNamespaceRequest, UpdateNamespaceRequest};
 use crate::resolve;
 
 /// Create a new namespace.
@@ -84,27 +84,19 @@ pub async fn create(
 
 /// List namespaces.
 pub async fn list(config: &Config, all: bool) -> Result<()> {
-    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let namespaces = client.list_namespaces().await?;
 
-    let filtered: Vec<&Namespace> = if all {
-        namespaces.iter().collect()
+    let filtered: Vec<_> = if all {
+        namespaces
     } else {
-        namespaces.iter().filter(|ns| !ns.is_deleted()).collect()
+        namespaces
+            .into_iter()
+            .filter(|ns| !ns.is_deleted())
+            .collect()
     };
 
-    if filtered.is_empty() {
-        println!(
-            "{}",
-            format!("{} No namespaces found.", icons.info).dimmed()
-        );
-        return Ok(());
-    }
-
-    print_namespace_tree(&filtered);
-
-    println!("\n{} {}", "Total:".bold(), filtered.len());
+    crate::output::print_namespaces(&filtered);
     Ok(())
 }
 
@@ -269,105 +261,4 @@ pub async fn unlink(config: &Config, id: &str, project: &str) -> Result<()> {
     );
 
     Ok(())
-}
-
-/// Print namespaces as a tree.
-fn print_namespace_tree(namespaces: &[&Namespace]) {
-    use std::collections::HashMap;
-
-    // Build lookup: parent_id -> children
-    let mut children_map: HashMap<Option<&str>, Vec<&&Namespace>> = HashMap::new();
-    for ns in namespaces {
-        children_map
-            .entry(ns.parent_id.as_deref())
-            .or_default()
-            .push(ns);
-    }
-
-    // Sort each group alphabetically
-    for group in children_map.values_mut() {
-        group.sort_by(|a, b| a.name.cmp(&b.name));
-    }
-
-    // Print roots (parent_id = None)
-    let roots = children_map.get(&None).cloned().unwrap_or_default();
-
-    // Also collect orphans whose parent_id is not in the list
-    let known_ids: std::collections::HashSet<&str> =
-        namespaces.iter().map(|ns| ns.id.as_str()).collect();
-    let mut orphans: Vec<&&Namespace> = Vec::new();
-    for ns in namespaces {
-        if let Some(ref pid) = ns.parent_id
-            && !known_ids.contains(pid.as_str())
-            && !roots.iter().any(|r| r.id == ns.id)
-        {
-            orphans.push(ns);
-        }
-    }
-
-    for (i, root) in roots.iter().enumerate() {
-        let is_last = i == roots.len() - 1 && orphans.is_empty();
-        print_namespace_node(root, "", is_last, true, &children_map);
-    }
-
-    for (i, orphan) in orphans.iter().enumerate() {
-        let is_last = i == orphans.len() - 1;
-        print_namespace_node(orphan, "", is_last, true, &children_map);
-    }
-}
-
-/// Recursively print a namespace node with tree connectors.
-fn print_namespace_node(
-    ns: &Namespace,
-    prefix: &str,
-    is_last: bool,
-    is_root: bool,
-    children_map: &std::collections::HashMap<Option<&str>, Vec<&&Namespace>>,
-) {
-    let connector = if is_root {
-        ""
-    } else if is_last {
-        "└── "
-    } else {
-        "├── "
-    };
-
-    let desc = ns
-        .description
-        .as_deref()
-        .map(|d| format!(" - {}", d.dimmed()))
-        .unwrap_or_default();
-
-    let deleted_tag = if ns.is_deleted() {
-        " [deleted]".red().to_string()
-    } else {
-        String::new()
-    };
-
-    println!(
-        "{}{}{}{}{}",
-        prefix,
-        connector,
-        ns.name.cyan().bold(),
-        desc,
-        deleted_tag
-    );
-
-    let children = children_map
-        .get(&Some(ns.id.as_str()))
-        .cloned()
-        .unwrap_or_default();
-
-    let child_prefix = if is_root {
-        "  ".to_string()
-    } else if is_last {
-        format!("{}    ", prefix)
-    } else {
-        format!("{}│   ", prefix)
-    };
-
-    for (i, child) in children.iter().enumerate() {
-        let child_is_last = i == children.len() - 1;
-        print_namespace_node(child, &child_prefix, child_is_last, false, children_map);
-    }
 }

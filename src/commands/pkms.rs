@@ -152,94 +152,25 @@ pub async fn list(
     };
 
     // Filter by labels if specified
-    let filtered: Vec<&Document> = if labels.is_empty() {
-        docs.iter().collect()
+    let filtered: Vec<Document> = if labels.is_empty() {
+        docs
     } else {
-        docs.iter()
+        docs.into_iter()
             .filter(|d| labels.iter().any(|l| d.labels.contains(l)))
             .collect()
     };
 
-    if filtered.is_empty() {
-        println!("{}", format!("{} No documents found.", icons.info).dimmed());
-        return Ok(());
-    }
-
-    // Print document table
-    print_document_list(&filtered, with_labels);
-
-    println!("\n{} {}", "Total:".bold(), filtered.len());
+    crate::output::print_documents(&filtered, &icons, with_labels);
     Ok(())
 }
 
 /// Show a single document.
 pub async fn show(config: &Config, doc_id: &str, _no_sync: bool, no_format: bool) -> Result<()> {
+    let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let doc = client.get_document(doc_id).await?;
 
-    let renderer = if no_format {
-        crate::markdown::MarkdownRenderer::with_override(Some(false))
-    } else {
-        crate::markdown::MarkdownRenderer::with_override(None)
-    };
-
-    println!("\n{}", "=".repeat(80));
-    println!("{}", doc.title.bold().green());
-    println!("{}", "=".repeat(80));
-
-    println!("\n{}", "Metadata:".bold());
-    println!("  ID:        {}", doc.id.cyan());
-    println!("  Namespace: {}", doc.namespace_id);
-
-    if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&doc.created) {
-        let local = created.with_timezone(&chrono::Local);
-        println!("  Created:   {}", local.format("%Y-%m-%d %H:%M:%S"));
-    }
-    if let Ok(modified) = chrono::DateTime::parse_from_rfc3339(&doc.modified) {
-        let local = modified.with_timezone(&chrono::Local);
-        println!("  Modified:  {}", local.format("%Y-%m-%d %H:%M:%S"));
-    }
-    if let Some(ref deleted) = doc.deleted
-        && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(deleted)
-    {
-        let local = dt.with_timezone(&chrono::Local);
-        println!(
-            "  {}",
-            format!("Deleted:  {}", local.format("%Y-%m-%d %H:%M:%S")).red()
-        );
-    }
-    if let Some(ref pid) = doc.parent_id {
-        println!("  Parent:    {}", pid);
-    }
-    println!("  Version:   {}", doc.version);
-
-    if !doc.labels.is_empty() {
-        let label_strs: Vec<String> = doc.labels.iter().map(|l| l.cyan().to_string()).collect();
-        println!("  Labels:    {}", label_strs.join(", "));
-    }
-
-    if !doc.references.is_empty() {
-        println!("\n{}", "References:".bold());
-        for r in &doc.references {
-            println!(
-                "  {} {} ({})",
-                r.ref_type.dimmed(),
-                r.target_id.cyan(),
-                r.target_type
-            );
-        }
-    }
-
-    if !doc.content.is_empty() {
-        println!("\n{}", "Content:".bold());
-        println!("{}", "-".repeat(80));
-        print!("{}", renderer.render(&doc.content));
-    } else {
-        println!("\n{}", "(No content)".italic().dimmed());
-    }
-
-    println!("{}\n", "=".repeat(80));
-
+    crate::output::print_document_detail(&doc, &icons, no_format);
     Ok(())
 }
 
@@ -477,38 +408,4 @@ pub async fn backlinks(config: &Config, doc_id: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Print a simple document list.
-fn print_document_list(docs: &[&Document], with_labels: bool) {
-    use chrono_humanize::{Accuracy, HumanTime, Tense};
-
-    for doc in docs {
-        let short_id = &doc.id[..8.min(doc.id.len())];
-        let modified_rel = chrono::DateTime::parse_from_rfc3339(&doc.modified)
-            .map(|dt| {
-                let ht = HumanTime::from(dt);
-                ht.to_text_en(Accuracy::Rough, Tense::Past)
-            })
-            .unwrap_or_else(|_| "-".to_string());
-
-        let deleted_tag = if doc.is_deleted() {
-            " [deleted]".red().to_string()
-        } else {
-            String::new()
-        };
-
-        println!(
-            "  {} {}{}  ({})",
-            short_id.cyan(),
-            doc.title,
-            deleted_tag,
-            modified_rel.dimmed()
-        );
-
-        if with_labels && !doc.labels.is_empty() {
-            let label_strs: Vec<String> = doc.labels.iter().map(|l| l.cyan().to_string()).collect();
-            println!("       {}", label_strs.join(", "));
-        }
-    }
 }
