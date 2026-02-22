@@ -451,6 +451,12 @@ enum Commands {
         no_sync: bool,
     },
 
+    /// Manage PKMS documents
+    Doc {
+        #[command(subcommand)]
+        command: DocCommands,
+    },
+
     /// Manage namespaces (document containers)
     Namespace {
         #[command(subcommand)]
@@ -610,6 +616,128 @@ enum LabelCommands {
 
         /// New label name
         new: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DocCommands {
+    /// Create a new document
+    New {
+        /// Title (all remaining arguments)
+        #[arg(num_args = 1..)]
+        title: Vec<String>,
+        /// Namespace (name or UUID; uses default if omitted)
+        #[arg(short = 'N', long)]
+        namespace: Option<String>,
+        /// Edit document body in external editor
+        #[arg(short, long)]
+        body: bool,
+        /// Add label(s) (repeatable)
+        #[arg(short = 'l', long = "label")]
+        labels: Vec<String>,
+        /// Parent document ID
+        #[arg(long = "for", value_name = "PARENT_ID")]
+        parent: Option<String>,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
+    },
+    /// List documents
+    List {
+        /// Filter by namespace
+        #[arg(short = 'N', long)]
+        namespace: Option<String>,
+        /// Include deleted documents
+        #[arg(long)]
+        all: bool,
+        /// Show labels
+        #[arg(short = 'L', long = "with-labels")]
+        with_labels: bool,
+        /// Filter by label (repeatable)
+        #[arg(short = 'l', long = "label")]
+        labels: Vec<String>,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
+    },
+    /// Show a document
+    Show {
+        /// Document ID
+        doc_id: String,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
+        /// Disable markdown formatting
+        #[arg(long)]
+        no_format: bool,
+    },
+    /// Update a document
+    Update {
+        /// Document ID
+        doc_id: String,
+        /// New title
+        #[arg(short, long)]
+        title: Option<String>,
+        /// Edit body in external editor
+        #[arg(short, long)]
+        body: bool,
+        /// Add label(s) (repeatable)
+        #[arg(short = 'l', long = "label")]
+        labels: Vec<String>,
+        /// Remove label(s) (repeatable)
+        #[arg(long = "unlabel")]
+        unlabels: Vec<String>,
+        /// Parent document ID
+        #[arg(long = "for", value_name = "PARENT_ID", num_args = 0..=1, default_missing_value = "")]
+        parent: Option<String>,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
+    },
+    /// Delete a document (soft-delete)
+    Delete {
+        /// Document ID
+        doc_id: String,
+        /// Also delete child documents
+        #[arg(long)]
+        recursive: bool,
+    },
+    /// Restore a deleted document
+    Restore {
+        /// Document ID
+        doc_id: String,
+    },
+    /// Move document to a different namespace
+    Move {
+        /// Document ID
+        doc_id: String,
+        /// Target namespace (name or UUID)
+        namespace: String,
+    },
+    /// Add a reference to another entity
+    Link {
+        /// Document ID
+        doc_id: String,
+        /// Target entity ID
+        target: String,
+        /// Target entity type (task, document, project, namespace)
+        #[arg(short = 'T', long = "type", default_value = "document")]
+        target_type: String,
+        /// Reference type (related, extends, etc.)
+        #[arg(short, long, default_value = "related")]
+        ref_type: String,
+    },
+    /// Remove a reference
+    Unlink {
+        /// Document ID
+        doc_id: String,
+        /// Target entity ID to unlink
+        target: String,
+    },
+    /// Show back-links (what references this document)
+    Backlinks {
+        /// Document ID
+        doc_id: String,
     },
 }
 
@@ -960,6 +1088,71 @@ async fn run() -> Result<()> {
             all,
             no_sync,
         } => gtr::commands::search::run(&config, &query, project, limit, all, no_sync).await,
+        Commands::Doc { command } => match command {
+            DocCommands::New {
+                title,
+                namespace,
+                body,
+                labels,
+                parent,
+                no_sync,
+            } => {
+                gtr::commands::pkms::create(
+                    &config, namespace, title, body, labels, parent, no_sync,
+                )
+                .await
+            }
+            DocCommands::List {
+                namespace,
+                all,
+                with_labels,
+                labels,
+                no_sync,
+            } => {
+                gtr::commands::pkms::list(&config, namespace, all, with_labels, labels, no_sync)
+                    .await
+            }
+            DocCommands::Show {
+                doc_id,
+                no_sync,
+                no_format,
+            } => gtr::commands::pkms::show(&config, &doc_id, no_sync, no_format).await,
+            DocCommands::Update {
+                doc_id,
+                title,
+                body,
+                labels,
+                unlabels,
+                parent,
+                no_sync,
+            } => {
+                gtr::commands::pkms::update(
+                    &config, &doc_id, title, body, labels, unlabels, parent, no_sync,
+                )
+                .await
+            }
+            DocCommands::Delete { doc_id, recursive } => {
+                gtr::commands::pkms::delete(&config, &doc_id, recursive).await
+            }
+            DocCommands::Restore { doc_id } => gtr::commands::pkms::restore(&config, &doc_id).await,
+            DocCommands::Move { doc_id, namespace } => {
+                gtr::commands::pkms::move_doc(&config, &doc_id, &namespace).await
+            }
+            DocCommands::Link {
+                doc_id,
+                target,
+                target_type,
+                ref_type,
+            } => {
+                gtr::commands::pkms::link(&config, &doc_id, &target, &target_type, &ref_type).await
+            }
+            DocCommands::Unlink { doc_id, target } => {
+                gtr::commands::pkms::unlink(&config, &doc_id, &target).await
+            }
+            DocCommands::Backlinks { doc_id } => {
+                gtr::commands::pkms::backlinks(&config, &doc_id).await
+            }
+        },
         Commands::Namespace { command } => match command {
             NamespaceCommands::Create {
                 name,

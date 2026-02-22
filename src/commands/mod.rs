@@ -30,6 +30,7 @@ pub mod log;
 pub mod namespace;
 pub mod next;
 pub mod now;
+pub mod pkms;
 pub mod progress;
 pub mod project;
 pub mod promotion;
