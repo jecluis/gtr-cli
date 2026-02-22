@@ -1001,17 +1001,30 @@ impl TaskCache {
     /// parent, returns `["self"]`. Returns an empty vec if the project is
     /// not in the cache.
     pub fn get_project_path(&self, id: &str) -> Result<Vec<String>> {
-        let mut chain = vec![id.to_string()];
+        // Start with the current project's name (fall back to ID)
+        let current_name = self
+            .get_project(id)?
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| id.to_string());
+        let mut chain = vec![current_name];
         let mut current = id.to_string();
 
-        // Walk up parent_id links (with cycle guard)
+        // Walk up parent_id links (with cycle guard), collecting names
         let mut seen = std::collections::HashSet::new();
         seen.insert(current.clone());
 
         while let Some(p) = self.get_project(&current)? {
             match p.parent_id {
                 Some(pid) if seen.insert(pid.clone()) => {
-                    chain.push(pid.clone());
+                    if pid == "00000000-0000-0000-0000-000000000000" {
+                        break;
+                    }
+                    if let Some(parent) = self.get_project(&pid)? {
+                        chain.push(parent.name.clone());
+                    } else {
+                        // Parent not in cache — use ID as fallback
+                        chain.push(pid.clone());
+                    }
                     current = pid;
                 }
                 _ => break,

@@ -87,8 +87,8 @@ pub async fn create(
             .green()
             .bold()
     );
-    println!("  ID:          {}", project.id.cyan());
-    println!("  Name:        {}", project.name);
+    println!("  Name:        {}", project.name.cyan().bold());
+    println!("  ID:          {}", project.id.dimmed());
     if let Some(desc) = &project.description {
         println!("  Description: {}", desc);
     }
@@ -97,7 +97,7 @@ pub async fn create(
     }
     println!(
         "\nCreate tasks: {}",
-        format!("gtr new <title> -P {}", project.id).dimmed()
+        format!("gtr new <title> -P {}", project.name).dimmed()
     );
 
     Ok(())
@@ -140,8 +140,8 @@ pub async fn update(
             .green()
             .bold()
     );
-    println!("  ID:          {}", project.id.cyan());
-    println!("  Name:        {}", project.name);
+    println!("  Name:        {}", project.name.cyan().bold());
+    println!("  ID:          {}", project.id.dimmed());
     if let Some(desc) = &project.description {
         println!("  Description: {}", desc);
     }
@@ -249,6 +249,14 @@ pub async fn label_list_all(config: &Config) -> Result<()> {
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
 
+    // Build ID -> name map for display
+    let name_map: std::collections::HashMap<&str, &str> = projects
+        .iter()
+        .map(|p| (p.id.as_str(), p.name.as_str()))
+        .collect();
+
+    let meta_root_id = "00000000-0000-0000-0000-000000000000";
+
     let mut any_labels = false;
     for project in &projects {
         let labels_with_source = cache.get_effective_labels_with_source(&project.id)?;
@@ -260,10 +268,14 @@ pub async fn label_list_all(config: &Config) -> Result<()> {
         let counts = cache.count_tasks_by_label(&project.id)?;
         let count_map: std::collections::HashMap<String, i64> = counts.into_iter().collect();
 
-        let header = if project.id == "<root>" {
-            "Global labels (<root>):".to_string()
+        let header = if project.id == meta_root_id {
+            "Global labels (Root):".to_string()
         } else {
-            format!("{}:", project.id)
+            let display_name = cache
+                .get_project_path(&project.id)
+                .map(|path| path.join("/"))
+                .unwrap_or_else(|_| project.name.clone());
+            format!("{}:", display_name)
         };
         println!("{}", header.bold());
 
@@ -272,10 +284,14 @@ pub async fn label_list_all(config: &Config) -> Result<()> {
             if source == &project.id {
                 println!("  {}  ({count} tasks)", label.cyan());
             } else {
-                let origin = if source == "<root>" {
+                let origin = if source == meta_root_id {
                     "[global]".to_string()
                 } else {
-                    format!("[inherited from {source}]")
+                    let source_name = name_map
+                        .get(source.as_str())
+                        .copied()
+                        .unwrap_or(source.as_str());
+                    format!("[inherited from {source_name}]")
                 };
                 println!("  {}  ({count} tasks)  {}", label.cyan(), origin.yellow());
             }
@@ -298,29 +314,47 @@ pub async fn label_list(config: &Config, project_id: &str) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
+    let project_id = crate::resolve::resolve_project(&cache, project_id)?;
 
-    let labels_with_source = cache.get_effective_labels_with_source(project_id)?;
+    let meta_root_id = "00000000-0000-0000-0000-000000000000";
+
+    let labels_with_source = cache.get_effective_labels_with_source(&project_id)?;
     if labels_with_source.is_empty() {
+        let display_name = cache
+            .get_project_path(&project_id)
+            .map(|path| path.join("/"))
+            .unwrap_or_else(|_| project_id.to_string());
         println!(
             "{}",
-            format!("{} No labels in project '{}'.", icons.info, project_id).dimmed()
+            format!("{} No labels in project '{}'.", icons.info, display_name).dimmed()
         );
         return Ok(());
     }
 
-    let counts = cache.count_tasks_by_label(project_id)?;
+    let counts = cache.count_tasks_by_label(&project_id)?;
     let count_map: std::collections::HashMap<String, i64> = counts.into_iter().collect();
 
-    println!("{}", format!("Labels for project '{}':", project_id).bold());
+    let display_name = cache
+        .get_project_path(&project_id)
+        .map(|path| path.join("/"))
+        .unwrap_or_else(|_| project_id.to_string());
+    println!(
+        "{}",
+        format!("Labels for project '{}':", display_name).bold()
+    );
     for (label, source) in &labels_with_source {
         let count = count_map.get(label).copied().unwrap_or(0);
-        if source == project_id {
+        if source == &project_id {
             println!("  {}  ({count} tasks)", label.cyan());
         } else {
-            let origin = if source == "<root>" {
+            let origin = if source == meta_root_id {
                 "[global]".to_string()
             } else {
-                format!("[inherited from {source}]")
+                let source_name = cache
+                    .get_project_path(source)
+                    .map(|path| path.join("/"))
+                    .unwrap_or_else(|_| source.clone());
+                format!("[inherited from {source_name}]")
             };
             println!("  {}  ({count} tasks)  {}", label.cyan(), origin.yellow());
         }
@@ -335,6 +369,7 @@ pub async fn label_new(config: &Config, project_id: &str, labels: &[String]) -> 
     let client = Client::new(config)?;
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
+    let project_id = crate::resolve::resolve_project(&cache, project_id)?;
 
     // Validate all labels
     for label in labels {
@@ -342,11 +377,15 @@ pub async fn label_new(config: &Config, project_id: &str, labels: &[String]) -> 
     }
 
     // Sync with server
-    let project = client.create_project_labels(project_id, labels).await?;
+    let project = client.create_project_labels(&project_id, labels).await?;
 
     // Update local cache
-    cache.set_project_labels(project_id, &project.labels)?;
+    cache.set_project_labels(&project_id, &project.labels)?;
 
+    let display_name = cache
+        .get_project_path(&project_id)
+        .map(|path| path.join("/"))
+        .unwrap_or_else(|_| project_id.clone());
     println!(
         "{}",
         format!(
@@ -357,7 +396,7 @@ pub async fn label_new(config: &Config, project_id: &str, labels: &[String]) -> 
                 .map(|l| l.cyan().to_string())
                 .collect::<Vec<_>>()
                 .join(", "),
-            project_id
+            display_name
         )
         .green()
         .bold()
@@ -372,6 +411,7 @@ pub async fn label_delete(config: &Config, project_id: &str, label: &str) -> Res
     let client = Client::new(config)?;
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
+    let project_id = crate::resolve::resolve_project(&cache, project_id)?;
 
     // Confirm with user
     let confirm = dialoguer::Confirm::new()
@@ -389,13 +429,13 @@ pub async fn label_delete(config: &Config, project_id: &str, label: &str) -> Res
     }
 
     // Sync with server
-    let resp = client.delete_project_label(project_id, label).await?;
+    let resp = client.delete_project_label(&project_id, label).await?;
 
     // Update local cache
-    let mut labels = cache.get_project_labels(project_id)?;
+    let mut labels = cache.get_project_labels(&project_id)?;
     labels.retain(|l| l != label);
-    cache.set_project_labels(project_id, &labels)?;
-    cache.remove_label_from_tasks(project_id, label)?;
+    cache.set_project_labels(&project_id, &labels)?;
+    cache.remove_label_from_tasks(&project_id, label)?;
 
     println!(
         "{}",
@@ -416,15 +456,16 @@ pub async fn label_rename(config: &Config, project_id: &str, old: &str, new: &st
     let client = Client::new(config)?;
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
+    let project_id = crate::resolve::resolve_project(&cache, project_id)?;
 
     // Validate new label
     crate::labels::validate_label(new)?;
 
     // Sync with server
-    let resp = client.rename_project_label(project_id, old, new).await?;
+    let resp = client.rename_project_label(&project_id, old, new).await?;
 
     // Update local cache
-    let mut labels = cache.get_project_labels(project_id)?;
+    let mut labels = cache.get_project_labels(&project_id)?;
     for l in &mut labels {
         if l == old {
             *l = new.to_string();
@@ -432,8 +473,8 @@ pub async fn label_rename(config: &Config, project_id: &str, old: &str, new: &st
     }
     labels.sort();
     labels.dedup();
-    cache.set_project_labels(project_id, &labels)?;
-    cache.rename_label_in_tasks(project_id, old, new)?;
+    cache.set_project_labels(&project_id, &labels)?;
+    cache.rename_label_in_tasks(&project_id, old, new)?;
 
     println!(
         "{}",

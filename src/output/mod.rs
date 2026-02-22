@@ -201,7 +201,7 @@ fn format_progress(progress: Option<u8>, fancy: bool, colorize: bool) -> String 
 /// └ dev
 /// ```
 ///
-/// For a single-element path, just returns the project ID.
+/// For a single-element path, returns the project name from the path.
 fn format_project_cell(
     project_id: &str,
     project_paths: &ProjectPaths,
@@ -209,8 +209,17 @@ fn format_project_cell(
 ) -> String {
     let path = match project_paths.get(project_id) {
         Some(p) if p.len() > 1 => p,
+        Some(p) if !p.is_empty() => {
+            // Single-element path — use the name from path
+            let name = &p[0];
+            return if let Some(c) = color {
+                name.color(c).to_string()
+            } else {
+                name.clone()
+            };
+        }
         _ => {
-            // No hierarchy or not in map — just the ID
+            // Not in map — fall back to raw project_id
             return if let Some(c) = color {
                 project_id.color(c).to_string()
             } else {
@@ -256,9 +265,9 @@ pub fn print_projects(projects: &[Project]) {
             .push(p);
     }
 
-    // Sort each group alphabetically by ID
+    // Sort each group alphabetically by name
     for group in children_map.values_mut() {
-        group.sort_by(|a, b| a.id.cmp(&b.id));
+        group.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
     // Print tree starting from roots (parent_id = None)
@@ -311,11 +320,16 @@ fn print_project_node(
         .map(|d| format!(" - {}", d.dimmed()))
         .unwrap_or_default();
 
+    let display_name = if project.name.is_empty() {
+        &project.id
+    } else {
+        &project.name
+    };
     println!(
         "{}{}{}{}",
         prefix,
         connector,
-        project.id.cyan().bold(),
+        display_name.cyan().bold(),
         desc
     );
 
@@ -849,12 +863,17 @@ fn render_simplified_table(
             println!("{}", "═".repeat(70).dimmed());
         }
 
-        // Line 1: ID - PROJECT (leaf only, colored) - STATUS
+        // Line 1: ID - PROJECT (leaf name, colored) - STATUS
         let color = project_colors.get(task.project_id.as_str()).copied();
+        let project_name = project_paths
+            .get(&task.project_id)
+            .and_then(|p| p.last())
+            .map(|s| s.as_str())
+            .unwrap_or(&task.project_id);
         let project_colored = if let Some(c) = color {
-            task.project_id.color(c).to_string()
+            project_name.color(c).to_string()
         } else {
-            task.project_id.clone()
+            project_name.to_string()
         };
         println!("{} - {} - {}", row.id, project_colored, row.status);
 
@@ -991,7 +1010,7 @@ pub fn print_task_details(
     println!("\n{}", "Metadata:".bold());
     println!("  ID:       {}", format_full_id(&task.id, prefix_len));
 
-    // Show project with ancestry breadcrumb
+    // Show project with ancestry breadcrumb (names, not UUIDs)
     if let Some(path) = project_paths.get(&task.project_id) {
         if path.len() > 1 {
             let breadcrumb: Vec<_> = path
@@ -1010,9 +1029,10 @@ pub fn print_task_details(
                 breadcrumb.join(&" › ".dimmed().to_string())
             );
         } else {
-            println!("  Project:  {}", task.project_id.cyan());
+            println!("  Project:  {}", path[0].cyan());
         }
     } else {
+        // No path in map — show raw project_id as fallback
         println!("  Project:  {}", task.project_id.cyan());
     }
 

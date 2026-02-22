@@ -31,10 +31,12 @@ use crate::{Error, Result};
 
 /// Build a breadcrumb string for a project (e.g., "work > research > ml").
 ///
-/// Walks up the parent_id chain using the provided lookup map.
+/// Walks up the parent_id chain using the provided lookup map, displaying
+/// human-readable names instead of raw UUIDs.
 fn project_breadcrumb(
     project_id: &str,
     parent_map: &std::collections::HashMap<String, Option<String>>,
+    name_map: &std::collections::HashMap<String, String>,
 ) -> String {
     let mut chain = vec![project_id.to_string()];
     let mut current = project_id.to_string();
@@ -50,7 +52,22 @@ fn project_breadcrumb(
     }
 
     chain.reverse();
-    chain.join(" > ")
+
+    // Filter out the meta-root (nil UUID) — it's an internal container,
+    // not a user-visible project.
+    const META_ROOT_ID: &str = "00000000-0000-0000-0000-000000000000";
+
+    chain
+        .iter()
+        .filter(|id| id.as_str() != META_ROOT_ID)
+        .map(|id| {
+            name_map
+                .get(id)
+                .map(|s| s.as_str())
+                .unwrap_or_else(|| id.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(" > ")
 }
 
 /// Interactive project picker with breadcrumb display.
@@ -66,17 +83,21 @@ pub fn pick_project(projects: &[Project]) -> Result<String> {
         return Ok(projects[0].id.clone());
     }
 
-    // Build parent lookup for breadcrumbs
+    // Build parent and name lookups for breadcrumbs
     let parent_map: std::collections::HashMap<String, Option<String>> = projects
         .iter()
         .map(|p| (p.id.clone(), p.parent_id.clone()))
+        .collect();
+    let name_map: std::collections::HashMap<String, String> = projects
+        .iter()
+        .map(|p| (p.id.clone(), p.name.clone()))
         .collect();
 
     // Build breadcrumbs and sort lexicographically
     let mut entries: Vec<(String, String, Option<String>)> = projects
         .iter()
         .map(|p| {
-            let breadcrumb = project_breadcrumb(&p.id, &parent_map);
+            let breadcrumb = project_breadcrumb(&p.id, &parent_map, &name_map);
             (p.id.clone(), breadcrumb, p.description.clone())
         })
         .collect();
