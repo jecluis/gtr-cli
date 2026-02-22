@@ -92,6 +92,41 @@ pub async fn run(
         }
     }
 
+    // Show forward references (from task metadata)
+    if !task.references.is_empty() {
+        println!("\n{}", "References:".bold());
+        for r in &task.references {
+            println!(
+                "  {} {} {} ({})",
+                "→".dimmed(),
+                r.ref_type.yellow(),
+                r.target_id[..8.min(r.target_id.len())].cyan(),
+                r.target_type.dimmed()
+            );
+        }
+    }
+
+    // Show back-links (entities that reference this task)
+    if !no_sync
+        && let Ok(Ok(refs)) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.get_references(&full_id, "task"),
+        )
+        .await
+        && !refs.back.is_empty()
+    {
+        println!("\n{}", "Referenced by:".bold());
+        for r in &refs.back {
+            println!(
+                "  {} {} ({}) [{}]",
+                "←".dimmed(),
+                r.source_id[..8.min(r.source_id.len())].cyan(),
+                r.source_type.dimmed(),
+                r.ref_type.yellow()
+            );
+        }
+    }
+
     // Try to refresh from server in background if sync enabled
     if !no_sync {
         match tokio::time::timeout(std::time::Duration::from_secs(2), client.get_task(&full_id))
@@ -349,6 +384,41 @@ async fn run_tree(
         println!("\n{}", "Subtasks:".bold());
         for child in &children {
             print_child_entry(child, prefix_len, &icons, &ctx.cache);
+        }
+    }
+
+    // Show forward references (from task metadata)
+    if !task.references.is_empty() {
+        println!("\n{}", "References:".bold());
+        for r in &task.references {
+            println!(
+                "  {} {} {} ({})",
+                "→".dimmed(),
+                r.ref_type.yellow(),
+                r.target_id[..8.min(r.target_id.len())].cyan(),
+                r.target_type.dimmed()
+            );
+        }
+    }
+
+    // Show back-links (entities that reference this task)
+    if !no_sync
+        && let Ok(Ok(refs)) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.get_references(selected_id, "task"),
+        )
+        .await
+        && !refs.back.is_empty()
+    {
+        println!("\n{}", "Referenced by:".bold());
+        for r in &refs.back {
+            println!(
+                "  {} {} ({}) [{}]",
+                "←".dimmed(),
+                r.source_id[..8.min(r.source_id.len())].cyan(),
+                r.source_type.dimmed(),
+                r.ref_type.yellow()
+            );
         }
     }
 
