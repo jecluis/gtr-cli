@@ -134,6 +134,10 @@ pub async fn run(
     // Save locally first so we can resolve parent_id against cache
     let ctx = LocalContext::new(config, !no_sync)?;
 
+    // Resolve project name/path to UUID (utils::resolve_project may
+    // return a raw name from the picker or CLI argument)
+    let project_id = crate::resolve::resolve_project(&ctx.cache, &project_id)?;
+
     // Resolve parent_id if provided
     let resolved_parent = if let Some(ref pid) = parent_id {
         let full_pid = utils::resolve_task_id_from_cache(&ctx.cache, pid)?;

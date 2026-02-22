@@ -82,8 +82,12 @@ pub async fn tasks(
             vec![utils::resolve_project(&client, None).await?]
         }
         Some(vec) => {
-            // -P with args: use specified projects
-            vec
+            // -P with args: resolve names/paths to project UUIDs
+            let mut resolved = Vec::new();
+            for v in vec {
+                resolved.push(crate::resolve::resolve_project(&ctx.cache, &v)?);
+            }
+            resolved
         }
     };
 

@@ -33,6 +33,7 @@ pub mod markdown;
 pub mod models;
 pub mod output;
 pub mod promotion;
+pub mod resolve;
 pub mod storage;
 pub mod sync;
 pub mod threshold_cache;

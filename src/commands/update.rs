@@ -112,6 +112,11 @@ pub async fn run(
     // Initialize local context
     let ctx = LocalContext::new(config, !no_sync)?;
 
+    // Resolve project name/path to UUID before any CRDT writes
+    let target_project = target_project
+        .map(|p| crate::resolve::resolve_project(&ctx.cache, &p))
+        .transpose()?;
+
     // Load task from local storage (or fetch from server if not cached)
     let mut task = ctx.load_task(&client, &full_id).await?;
 
