@@ -183,16 +183,81 @@ pub async fn list(
     Ok(())
 }
 
-/// Show a single document.
-pub async fn show(config: &Config, doc_id: &str, _no_sync: bool, no_format: bool) -> Result<()> {
+/// Show one or more documents.
+pub async fn show(
+    config: &Config,
+    doc_ids: &[String],
+    _no_sync: bool,
+    no_format: bool,
+    recursive: bool,
+) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
-    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
-    let doc = client.get_document(&doc_id).await?;
 
-    crate::output::print_document_detail(&doc, &icons, no_format);
+    let all_ids = cache.all_document_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+
+    let count = doc_ids.len();
+    for (i, raw_id) in doc_ids.iter().enumerate() {
+        let resolved = crate::utils::resolve_document_id(&cache, raw_id)?;
+        show_one_document(
+            &client, &cache, &icons, no_format, recursive, &resolved, prefix_len, 0,
+        )
+        .await?;
+
+        // Separator between top-level entities
+        if i + 1 < count {
+            println!("\n{}", "─".repeat(60));
+        }
+    }
+    Ok(())
+}
+
+/// Display a single document with optional recursive child expansion.
+#[allow(clippy::too_many_arguments)]
+async fn show_one_document(
+    client: &Client,
+    cache: &TaskCache,
+    icons: &Icons,
+    no_format: bool,
+    recursive: bool,
+    doc_id: &str,
+    prefix_len: usize,
+    depth: usize,
+) -> Result<()> {
+    // Depth marker for nested children
+    if depth > 0 {
+        let connector = format!(
+            "{}├─ Child: {}",
+            "│ ".repeat(depth - 1),
+            output::format_task_id(doc_id, prefix_len, true),
+        );
+        println!("\n{}", connector);
+    }
+
+    let doc = client.get_document(doc_id).await?;
+    output::print_document_detail(&doc, icons, no_format);
+
+    // Children: either recurse into them or show inline summary
+    if recursive {
+        let children = cache.get_document_children(doc_id)?;
+        for child in &children {
+            Box::pin(show_one_document(
+                client,
+                cache,
+                icons,
+                no_format,
+                recursive,
+                &child.id,
+                prefix_len,
+                depth + 1,
+            ))
+            .await?;
+        }
+    }
+
     Ok(())
 }
 

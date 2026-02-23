@@ -25,41 +25,105 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
 use crate::local::LocalContext;
+use crate::threshold_cache::CachedThresholds;
 use crate::{Error, Result, output, threshold_cache, utils};
 
-/// Show a specific task (local-first with optional refresh).
+/// Show one or more tasks (local-first with optional refresh).
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     config: &Config,
-    task_id: &str,
+    task_ids: &[String],
     no_sync: bool,
     no_format: bool,
     no_wrap: bool,
     tree: bool,
+    recursive: bool,
 ) -> Result<()> {
     let client = Client::new(config)?;
-    let full_id = utils::resolve_task_id(&client, task_id).await?;
-
     let ctx = LocalContext::new(config, !no_sync)?;
-
-    if tree {
-        return run_tree(config, &client, &ctx, &full_id, no_sync, no_format, no_wrap).await;
-    }
-
-    // Load from local storage (or fetch from server if not cached)
-    let task = ctx.load_task(&client, &full_id).await?;
-
     let icons = Icons::new(config.effective_icon_theme());
     let cached = threshold_cache::fetch_thresholds(config, &client, no_sync).await;
     let all_ids = ctx.cache.all_task_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
+
+    // --tree applies to the first ID only
+    if tree {
+        let full_id = utils::resolve_task_id(&client, &task_ids[0]).await?;
+        return run_tree(config, &client, &ctx, &full_id, no_sync, no_format, no_wrap).await;
+    }
+
+    let count = task_ids.len();
+    for (i, raw_id) in task_ids.iter().enumerate() {
+        let full_id = utils::resolve_task_id(&client, raw_id).await?;
+        let is_last = i == count - 1;
+
+        show_one_task(
+            config, &client, &ctx, &icons, &cached, prefix_len, &full_id, no_sync, no_format,
+            no_wrap, recursive, 0,
+        )
+        .await?;
+
+        // Background refresh only for the last top-level task
+        if is_last && !no_sync {
+            let task = ctx.load_task(&client, &full_id).await?;
+            if let Ok(Ok(fresh)) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), client.get_task(&full_id))
+                    .await
+                && fresh.version > task.version
+            {
+                ctx.storage.update_task(&fresh)?;
+                ctx.cache.upsert_task(&fresh, false)?;
+                eprintln!(
+                    "\n(Refreshed from server - version {} → {})",
+                    task.version, fresh.version
+                );
+            }
+        }
+
+        // Separator between top-level entities
+        if !is_last {
+            println!("\n{}", "─".repeat(60));
+        }
+    }
+
+    Ok(())
+}
+
+/// Display a single task with optional recursive child expansion.
+#[allow(clippy::too_many_arguments)]
+async fn show_one_task(
+    config: &Config,
+    client: &Client,
+    ctx: &LocalContext,
+    icons: &Icons,
+    cached: &CachedThresholds,
+    prefix_len: usize,
+    full_id: &str,
+    no_sync: bool,
+    no_format: bool,
+    no_wrap: bool,
+    recursive: bool,
+    depth: usize,
+) -> Result<()> {
+    // Depth marker for nested children
+    if depth > 0 {
+        let connector = format!(
+            "{}├─ Child: {}",
+            "│ ".repeat(depth - 1),
+            output::format_task_id(full_id, prefix_len, true),
+        );
+        println!("\n{}", connector);
+    }
+
+    let task = ctx.load_task(client, full_id).await?;
     let project_paths = ctx.cache.build_project_paths(std::slice::from_ref(&task));
     output::print_task_details(
         config,
         &task,
         no_format,
         no_wrap,
-        &cached,
-        &icons,
+        cached,
+        icons,
         prefix_len,
         &project_paths,
     );
@@ -70,7 +134,6 @@ pub async fn run(
             .cache
             .get_task_title(parent_id)?
             .unwrap_or_else(|| "?".to_string());
-        // "Parent: " + icon + " " + "XXXX|XXXX" + " "
         let indent =
             8 + unicode_width::UnicodeWidthStr::width(icons.hierarchy_parent.as_str()) + 1 + 9 + 1;
         let prefix_colored = format!(
@@ -83,12 +146,32 @@ pub async fn run(
         print!("{}{}", prefix_colored, wrapped);
     }
 
-    // Show children
-    let children = ctx.cache.get_children(&full_id)?;
+    // Children: either recurse into them or show inline summary
+    let children = ctx.cache.get_children(full_id)?;
     if !children.is_empty() {
-        println!("\n{}", "Subtasks:".bold());
-        for child in &children {
-            print_child_entry(child, prefix_len, &icons, &ctx.cache);
+        if recursive {
+            for child in &children {
+                Box::pin(show_one_task(
+                    config,
+                    client,
+                    ctx,
+                    icons,
+                    cached,
+                    prefix_len,
+                    &child.id,
+                    no_sync,
+                    no_format,
+                    no_wrap,
+                    recursive,
+                    depth + 1,
+                ))
+                .await?;
+            }
+        } else {
+            println!("\n{}", "Subtasks:".bold());
+            for child in &children {
+                print_child_entry(child, prefix_len, icons, &ctx.cache);
+            }
         }
     }
 
@@ -106,11 +189,12 @@ pub async fn run(
         }
     }
 
-    // Show back-links (entities that reference this task)
-    if !no_sync
+    // Show back-links (entities that reference this task) — only at depth 0
+    if depth == 0
+        && !no_sync
         && let Ok(Ok(refs)) = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            client.get_references(&full_id, "task"),
+            client.get_references(full_id, "task"),
         )
         .await
         && !refs.back.is_empty()
@@ -124,24 +208,6 @@ pub async fn run(
                 r.source_type.dimmed(),
                 r.ref_type.yellow()
             );
-        }
-    }
-
-    // Try to refresh from server in background if sync enabled
-    if !no_sync {
-        match tokio::time::timeout(std::time::Duration::from_secs(2), client.get_task(&full_id))
-            .await
-        {
-            Ok(Ok(fresh)) if fresh.version > task.version => {
-                // Update local with fresh version
-                ctx.storage.update_task(&fresh)?;
-                ctx.cache.upsert_task(&fresh, false)?;
-                eprintln!(
-                    "\n(Refreshed from server - version {} → {})",
-                    task.version, fresh.version
-                );
-            }
-            _ => {}
         }
     }
 
@@ -365,7 +431,6 @@ async fn run_tree(
             .cache
             .get_task_title(parent_id)?
             .unwrap_or_else(|| "?".to_string());
-        // "Parent: " + icon + " " + "XXXX|XXXX" + " "
         let indent =
             8 + unicode_width::UnicodeWidthStr::width(icons.hierarchy_parent.as_str()) + 1 + 9 + 1;
         let prefix_colored = format!(

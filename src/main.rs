@@ -132,8 +132,9 @@ enum Commands {
 
     /// Show a specific task
     Show {
-        /// Task ID
-        task_id: String,
+        /// Task ID(s)
+        #[arg(required = true, num_args = 1..)]
+        task_ids: Vec<String>,
 
         /// Skip sync refresh (use cached only)
         #[arg(long)]
@@ -148,8 +149,12 @@ enum Commands {
         no_wrap: bool,
 
         /// Show subtask tree with interactive picker
-        #[arg(long)]
+        #[arg(long, conflicts_with = "recursive")]
         tree: bool,
+
+        /// Recursively show child tasks
+        #[arg(short = 'r', long, conflicts_with = "tree")]
+        recursive: bool,
     },
 
     /// Create a new task
@@ -685,14 +690,18 @@ enum DocCommands {
     },
     /// Show a document
     Show {
-        /// Document ID
-        doc_id: String,
+        /// Document ID(s)
+        #[arg(required = true, num_args = 1..)]
+        doc_ids: Vec<String>,
         /// Skip sync
         #[arg(long)]
         no_sync: bool,
         /// Disable markdown formatting
         #[arg(long)]
         no_format: bool,
+        /// Recursively show child documents
+        #[arg(short = 'r', long)]
+        recursive: bool,
     },
     /// Update a document
     Update {
@@ -972,12 +981,18 @@ async fn run() -> Result<()> {
             .await
         }
         Commands::Show {
-            task_id,
+            task_ids,
             no_sync,
             no_format,
             no_wrap,
             tree,
-        } => gtr::commands::show::run(&config, &task_id, no_sync, no_format, no_wrap, tree).await,
+            recursive,
+        } => {
+            gtr::commands::show::run(
+                &config, &task_ids, no_sync, no_format, no_wrap, tree, recursive,
+            )
+            .await
+        }
         Commands::New {
             project,
             title,
@@ -1135,10 +1150,11 @@ async fn run() -> Result<()> {
                     .await
             }
             DocCommands::Show {
-                doc_id,
+                doc_ids,
                 no_sync,
                 no_format,
-            } => gtr::commands::pkms::show(&config, &doc_id, no_sync, no_format).await,
+                recursive,
+            } => gtr::commands::pkms::show(&config, &doc_ids, no_sync, no_format, recursive).await,
             DocCommands::Update {
                 doc_id,
                 title,

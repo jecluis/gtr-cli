@@ -1343,6 +1343,28 @@ impl TaskCache {
         Ok(docs)
     }
 
+    /// Get child documents of a parent document (non-deleted).
+    pub fn get_document_children(&self, parent_id: &str) -> Result<Vec<CachedDocument>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, namespace_id, title, created, modified, deleted, \
+                        version, needs_push, last_synced, parent_id, labels \
+                 FROM documents \
+                 WHERE parent_id = ?1 AND deleted IS NULL \
+                 ORDER BY modified DESC",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let docs = stmt
+            .query_map(params![parent_id], Self::row_to_cached_document)
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(docs)
+    }
+
     /// Get document IDs that need to be pushed to server.
     pub fn get_pending_documents(&self) -> Result<Vec<String>> {
         let mut stmt = self
