@@ -194,13 +194,29 @@ pub async fn run(
             }
             resolved_labels.push(label.clone());
         }
-        // Create missing labels in cache (sync will push later)
+        // Push new labels to server and update local cache
         if !new_labels.is_empty() {
-            let mut all_labels = project_labels;
-            all_labels.extend(new_labels);
-            all_labels.sort();
-            all_labels.dedup();
-            ctx.cache.set_project_labels(&project_id, &all_labels)?;
+            if !no_sync {
+                match client.create_project_labels(&project_id, &new_labels).await {
+                    Ok(project) => {
+                        ctx.cache.set_project_labels(&project_id, &project.labels)?;
+                    }
+                    Err(_) => {
+                        // Server unreachable — save locally, will sync later
+                        let mut all_labels = project_labels;
+                        all_labels.extend(new_labels);
+                        all_labels.sort();
+                        all_labels.dedup();
+                        ctx.cache.set_project_labels(&project_id, &all_labels)?;
+                    }
+                }
+            } else {
+                let mut all_labels = project_labels;
+                all_labels.extend(new_labels);
+                all_labels.sort();
+                all_labels.dedup();
+                ctx.cache.set_project_labels(&project_id, &all_labels)?;
+            }
         }
         resolved_labels.sort();
         resolved_labels.dedup();

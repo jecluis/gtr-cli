@@ -350,12 +350,32 @@ pub async fn run(
                 }
             }
             if !new_project_labels.is_empty() {
-                let mut all_labels = project_labels;
-                all_labels.extend(new_project_labels);
-                all_labels.sort();
-                all_labels.dedup();
-                ctx.cache
-                    .set_project_labels(&task.project_id, &all_labels)?;
+                if !no_sync {
+                    match client
+                        .create_project_labels(&task.project_id, &new_project_labels)
+                        .await
+                    {
+                        Ok(project) => {
+                            ctx.cache
+                                .set_project_labels(&task.project_id, &project.labels)?;
+                        }
+                        Err(_) => {
+                            let mut all_labels = project_labels;
+                            all_labels.extend(new_project_labels);
+                            all_labels.sort();
+                            all_labels.dedup();
+                            ctx.cache
+                                .set_project_labels(&task.project_id, &all_labels)?;
+                        }
+                    }
+                } else {
+                    let mut all_labels = project_labels;
+                    all_labels.extend(new_project_labels);
+                    all_labels.sort();
+                    all_labels.dedup();
+                    ctx.cache
+                        .set_project_labels(&task.project_id, &all_labels)?;
+                }
             }
         }
 
@@ -399,11 +419,29 @@ pub async fn run(
 
             // Create missing labels in target project
             if !labels_to_create.is_empty() {
-                let mut all_labels = target_labels;
-                all_labels.extend(labels_to_create);
-                all_labels.sort();
-                all_labels.dedup();
-                ctx.cache.set_project_labels(new_project, &all_labels)?;
+                if !no_sync {
+                    match client
+                        .create_project_labels(new_project, &labels_to_create)
+                        .await
+                    {
+                        Ok(project) => {
+                            ctx.cache.set_project_labels(new_project, &project.labels)?;
+                        }
+                        Err(_) => {
+                            let mut all_labels = target_labels;
+                            all_labels.extend(labels_to_create);
+                            all_labels.sort();
+                            all_labels.dedup();
+                            ctx.cache.set_project_labels(new_project, &all_labels)?;
+                        }
+                    }
+                } else {
+                    let mut all_labels = target_labels;
+                    all_labels.extend(labels_to_create);
+                    all_labels.sort();
+                    all_labels.dedup();
+                    ctx.cache.set_project_labels(new_project, &all_labels)?;
+                }
             }
 
             // Remove labels the user declined to create
