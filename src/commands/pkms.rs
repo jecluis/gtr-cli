@@ -203,7 +203,7 @@ pub async fn show(
     for (i, raw_id) in doc_ids.iter().enumerate() {
         let resolved = crate::utils::resolve_document_id(&cache, raw_id)?;
         show_one_document(
-            &client, &cache, &icons, no_format, recursive, &resolved, prefix_len, 0,
+            &client, &cache, &icons, no_format, recursive, &resolved, prefix_len, 0, "",
         )
         .await?;
 
@@ -216,6 +216,9 @@ pub async fn show(
 }
 
 /// Display a single document with optional recursive child expansion.
+///
+/// `tree_prefix` is the accumulated connector continuation from all
+/// ancestor levels.
 #[allow(clippy::too_many_arguments)]
 async fn show_one_document(
     client: &Client,
@@ -226,24 +229,33 @@ async fn show_one_document(
     doc_id: &str,
     prefix_len: usize,
     depth: usize,
+    tree_prefix: &str,
 ) -> Result<()> {
-    // Depth marker for nested children
-    if depth > 0 {
-        let connector = format!(
-            "{}├─ Child: {}",
-            "│ ".repeat(depth - 1),
-            output::format_task_id(doc_id, prefix_len, true),
-        );
-        println!("\n{}", connector);
-    }
+    let indent_str = if depth > 0 {
+        format!("{}│ ", tree_prefix)
+    } else {
+        String::new()
+    };
 
     let doc = client.get_document(doc_id).await?;
-    output::print_document_detail(&doc, icons, no_format);
+    output::print_document_detail(&doc, icons, no_format, &indent_str);
 
     // Children: either recurse into them or show inline summary
     if recursive {
         let children = cache.get_document_children(doc_id)?;
-        for child in &children {
+        for (i, child) in children.iter().enumerate() {
+            let is_last = i == children.len() - 1;
+            let connector = if is_last { "└─" } else { "├─" };
+            let continuation = if is_last { "   " } else { "│  " };
+
+            println!(
+                "{}{} Child: {}",
+                tree_prefix,
+                connector,
+                output::format_task_id(&child.id, prefix_len, true),
+            );
+
+            let child_tree = format!("{}{}", tree_prefix, continuation);
             Box::pin(show_one_document(
                 client,
                 cache,
@@ -253,8 +265,13 @@ async fn show_one_document(
                 &child.id,
                 prefix_len,
                 depth + 1,
+                &child_tree,
             ))
             .await?;
+
+            if !is_last {
+                println!("{}", child_tree.trim_end());
+            }
         }
     }
 

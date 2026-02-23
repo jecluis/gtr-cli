@@ -59,7 +59,7 @@ pub async fn run(
 
         show_one_task(
             config, &client, &ctx, &icons, &cached, prefix_len, &full_id, no_sync, no_format,
-            no_wrap, recursive, 0,
+            no_wrap, recursive, 0, "",
         )
         .await?;
 
@@ -90,6 +90,10 @@ pub async fn run(
 }
 
 /// Display a single task with optional recursive child expansion.
+///
+/// `tree_prefix` is the accumulated connector continuation from all
+/// ancestor levels (e.g. `"│  "` when inside a non-last child). The
+/// detail view indent is derived from it.
 #[allow(clippy::too_many_arguments)]
 async fn show_one_task(
     config: &Config,
@@ -104,16 +108,14 @@ async fn show_one_task(
     no_wrap: bool,
     recursive: bool,
     depth: usize,
+    tree_prefix: &str,
 ) -> Result<()> {
-    // Depth marker for nested children
-    if depth > 0 {
-        let connector = format!(
-            "{}├─ Child: {}",
-            "│ ".repeat(depth - 1),
-            output::format_task_id(full_id, prefix_len, true),
-        );
-        println!("\n{}", connector);
-    }
+    let indent_str = if depth > 0 {
+        format!("{}│ ", tree_prefix)
+    } else {
+        String::new()
+    };
+    let blank_str = indent_str.trim_end();
 
     let task = ctx.load_task(client, full_id).await?;
     let project_paths = ctx.cache.build_project_paths(std::slice::from_ref(&task));
@@ -126,6 +128,7 @@ async fn show_one_task(
         icons,
         prefix_len,
         &project_paths,
+        &indent_str,
     );
 
     // Show parent info
@@ -134,15 +137,16 @@ async fn show_one_task(
             .cache
             .get_task_title(parent_id)?
             .unwrap_or_else(|| "?".to_string());
-        let indent =
+        let indent_cols =
             8 + unicode_width::UnicodeWidthStr::width(icons.hierarchy_parent.as_str()) + 1 + 9 + 1;
         let prefix_colored = format!(
-            "{} {} {} ",
+            "{}{} {} {} ",
+            indent_str,
             "Parent:".bold(),
             icons.hierarchy_parent.blue(),
             output::format_task_id(parent_id, prefix_len, true),
         );
-        let wrapped = output::wrap_with_indent(&parent_title, 80, indent);
+        let wrapped = output::wrap_with_indent(&parent_title, 80, indent_cols);
         print!("{}{}", prefix_colored, wrapped);
     }
 
@@ -150,7 +154,19 @@ async fn show_one_task(
     let children = ctx.cache.get_children(full_id)?;
     if !children.is_empty() {
         if recursive {
-            for child in &children {
+            for (i, child) in children.iter().enumerate() {
+                let is_last = i == children.len() - 1;
+                let connector = if is_last { "└─" } else { "├─" };
+                let continuation = if is_last { "   " } else { "│  " };
+
+                println!(
+                    "{}{} Child: {}",
+                    tree_prefix,
+                    connector,
+                    output::format_task_id(&child.id, prefix_len, true),
+                );
+
+                let child_tree = format!("{}{}", tree_prefix, continuation);
                 Box::pin(show_one_task(
                     config,
                     client,
@@ -164,23 +180,31 @@ async fn show_one_task(
                     no_wrap,
                     recursive,
                     depth + 1,
+                    &child_tree,
                 ))
                 .await?;
+
+                if !is_last {
+                    println!("{}", child_tree.trim_end());
+                }
             }
         } else {
-            println!("\n{}", "Subtasks:".bold());
+            println!("{}", blank_str);
+            println!("{}{}", indent_str, "Subtasks:".bold());
             for child in &children {
-                print_child_entry(child, prefix_len, icons, &ctx.cache);
+                print_child_entry(child, prefix_len, icons, &ctx.cache, &indent_str);
             }
         }
     }
 
     // Show forward references (from task metadata)
     if !task.references.is_empty() {
-        println!("\n{}", "References:".bold());
+        println!("{}", blank_str);
+        println!("{}{}", indent_str, "References:".bold());
         for r in &task.references {
             println!(
-                "  {} {} {} ({})",
+                "{}  {} {} {} ({})",
+                indent_str,
                 "→".dimmed(),
                 r.ref_type.yellow(),
                 r.target_id[..8.min(r.target_id.len())].cyan(),
@@ -199,7 +223,8 @@ async fn show_one_task(
         .await
         && !refs.back.is_empty()
     {
-        println!("\n{}", "Referenced by:".bold());
+        println!();
+        println!("{}", "Referenced by:".bold());
         for r in &refs.back {
             println!(
                 "  {} {} ({}) [{}]",
@@ -350,6 +375,7 @@ fn print_child_entry(
     prefix_len: usize,
     icons: &Icons,
     cache: &TaskCache,
+    outer_indent: &str,
 ) {
     use unicode_width::UnicodeWidthStr;
 
@@ -365,7 +391,8 @@ fn print_child_entry(
         + status_label.len()
         + 2;
     let prefix_colored = format!(
-        "  {} {} [{}] ",
+        "{}  {} {} [{}] ",
+        outer_indent,
         icons.hierarchy_subtasks.green(),
         output::format_task_id(&child.id, prefix_len, true),
         status_colored,
@@ -408,84 +435,26 @@ async fn run_tree(
 
     let selected_id = &entries[idx].task_id;
 
-    // Show full details for the selected task (reuse normal show path)
-    let task = ctx.load_task(client, selected_id).await?;
     let cached = threshold_cache::fetch_thresholds(config, client, no_sync).await;
     let all_ids = ctx.cache.all_task_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
-    let project_paths = ctx.cache.build_project_paths(std::slice::from_ref(&task));
-    output::print_task_details(
+
+    show_one_task(
         config,
-        &task,
+        client,
+        ctx,
+        &icons,
+        &cached,
+        prefix_len,
+        selected_id,
+        no_sync,
         no_format,
         no_wrap,
-        &cached,
-        &icons,
-        prefix_len,
-        &project_paths,
-    );
-
-    // Show parent info
-    if let Some(ref parent_id) = task.parent_id {
-        let parent_title = ctx
-            .cache
-            .get_task_title(parent_id)?
-            .unwrap_or_else(|| "?".to_string());
-        let indent =
-            8 + unicode_width::UnicodeWidthStr::width(icons.hierarchy_parent.as_str()) + 1 + 9 + 1;
-        let prefix_colored = format!(
-            "{} {} {} ",
-            "Parent:".bold(),
-            icons.hierarchy_parent.blue(),
-            output::format_task_id(parent_id, prefix_len, true),
-        );
-        let wrapped = output::wrap_with_indent(&parent_title, 80, indent);
-        print!("{}{}", prefix_colored, wrapped);
-    }
-
-    // Show children
-    let children = ctx.cache.get_children(selected_id)?;
-    if !children.is_empty() {
-        println!("\n{}", "Subtasks:".bold());
-        for child in &children {
-            print_child_entry(child, prefix_len, &icons, &ctx.cache);
-        }
-    }
-
-    // Show forward references (from task metadata)
-    if !task.references.is_empty() {
-        println!("\n{}", "References:".bold());
-        for r in &task.references {
-            println!(
-                "  {} {} {} ({})",
-                "→".dimmed(),
-                r.ref_type.yellow(),
-                r.target_id[..8.min(r.target_id.len())].cyan(),
-                r.target_type.dimmed()
-            );
-        }
-    }
-
-    // Show back-links (entities that reference this task)
-    if !no_sync
-        && let Ok(Ok(refs)) = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            client.get_references(selected_id, "task"),
-        )
-        .await
-        && !refs.back.is_empty()
-    {
-        println!("\n{}", "Referenced by:".bold());
-        for r in &refs.back {
-            println!(
-                "  {} {} ({}) [{}]",
-                "←".dimmed(),
-                r.source_id[..8.min(r.source_id.len())].cyan(),
-                r.source_type.dimmed(),
-                r.ref_type.yellow()
-            );
-        }
-    }
+        false,
+        0,
+        "",
+    )
+    .await?;
 
     Ok(())
 }

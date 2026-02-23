@@ -102,6 +102,11 @@ impl MarkdownRenderer {
         self.render_with_width(markdown, None)
     }
 
+    /// Render markdown hard-wrapped at a custom column width.
+    pub fn render_at_width(&self, markdown: &str, width: usize) -> String {
+        self.render_with_width(markdown, Some(width))
+    }
+
     fn render_with_width(&self, markdown: &str, width: Option<usize>) -> String {
         if !self.enabled || markdown.is_empty() {
             return markdown.to_string();

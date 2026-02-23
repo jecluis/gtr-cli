@@ -28,11 +28,124 @@ use tabled::settings::themes::Theme;
 use tabled::settings::width::Width;
 use tabled::settings::{Alignment, Modify, Style, object::Columns};
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::icons::Icons;
 use crate::markdown::MarkdownRenderer;
 use crate::models::{Document, Namespace, Project, Task};
 use crate::promotion;
 use crate::threshold_cache::CachedThresholds;
+
+/// A single key-value field in a detail view (e.g. "Priority: high").
+pub struct DetailField {
+    pub label: String,
+    pub value: String,
+}
+
+/// A titled list section (e.g. "References:" followed by lines).
+pub struct DetailSection {
+    pub header: String,
+    pub lines: Vec<String>,
+}
+
+/// The markdown body of a detail view.
+pub struct DetailBody {
+    pub header: String,
+    pub text: String,
+    pub no_wrap: bool,
+}
+
+/// Unified detail rendering for tasks and documents.
+///
+/// Collects title, metadata fields, optional sections, and body into a
+/// single structure that renders with consistent formatting and indent
+/// support for recursive/nested display.
+pub struct DetailView {
+    pub title: String,
+    pub fields: Vec<DetailField>,
+    pub sections: Vec<DetailSection>,
+    pub body: Option<DetailBody>,
+    pub empty_body_text: String,
+    pub no_format: bool,
+}
+
+impl DetailView {
+    /// Render the detail view to stdout with the given indent prefix.
+    ///
+    /// Each output line is prefixed with `indent`, and separators/body
+    /// wrapping are adjusted to fit within 80 columns minus the indent
+    /// width.
+    pub fn render(&self, indent: &str) {
+        let indent_width = UnicodeWidthStr::width(indent);
+        let sep_width = (80usize.saturating_sub(indent_width)).max(40);
+
+        // Blank separator lines carry the indent (for │ continuity)
+        let blank = indent.trim_end();
+
+        let sep = "═".repeat(sep_width);
+        let thin_sep = "─".repeat(sep_width);
+
+        // Header
+        println!("{}", blank);
+        println!("{}{}", indent, sep);
+        println!("{}{}", indent, self.title.bold().green());
+        println!("{}{}", indent, sep);
+
+        // Metadata
+        println!("{}", blank);
+        println!("{}{}", indent, "Metadata:".bold());
+        let max_label_len = self.fields.iter().map(|f| f.label.len()).max().unwrap_or(0);
+        for field in &self.fields {
+            println!(
+                "{}  {:<width$}  {}",
+                indent,
+                field.label,
+                field.value,
+                width = max_label_len
+            );
+        }
+
+        // Sections
+        for section in &self.sections {
+            println!("{}", blank);
+            println!("{}{}", indent, section.header.bold());
+            for line in &section.lines {
+                println!("{}  {}", indent, line);
+            }
+        }
+
+        // Body
+        let renderer = if self.no_format {
+            MarkdownRenderer::with_override(Some(false))
+        } else {
+            MarkdownRenderer::with_override(None)
+        };
+
+        match &self.body {
+            Some(body) if !body.text.is_empty() => {
+                println!("{}", blank);
+                println!("{}{}", indent, body.header.bold());
+                println!("{}{}", indent, thin_sep);
+                let rendered = if body.no_wrap {
+                    renderer.render_no_wrap(&body.text)
+                } else {
+                    renderer.render_at_width(&body.text, sep_width)
+                };
+                for line in rendered.lines() {
+                    println!("{}{}", indent, line);
+                }
+            }
+            _ => {
+                println!("{}", blank);
+                println!("{}{}", indent, self.empty_body_text.italic().dimmed());
+            }
+        }
+
+        // Footer
+        println!("{}{}", indent, sep);
+        println!("{}", blank);
+    }
+}
 
 /// Map from project_id to its ancestor chain (root-first).
 ///
@@ -1012,6 +1125,8 @@ pub fn wrap_with_indent(text: &str, width: usize, indent: usize) -> String {
 ///
 /// If `no_format` is true or NO_COLOR is set, markdown will not be rendered.
 /// If `no_wrap` is true, the body will not be hard-wrapped at 80 columns.
+/// `indent` is prepended to every output line (used for nested/recursive
+/// display).
 #[allow(clippy::too_many_arguments)]
 pub fn print_task_details(
     config: &crate::config::Config,
@@ -1022,24 +1137,18 @@ pub fn print_task_details(
     icons: &Icons,
     prefix_len: usize,
     project_paths: &ProjectPaths,
+    indent: &str,
 ) {
-    let renderer = if no_format {
-        MarkdownRenderer::with_override(Some(false)) // Force disable
-    } else {
-        MarkdownRenderer::with_override(None) // Use default (respects NO_COLOR/TTY)
-    };
+    let mut fields = Vec::new();
 
-    // Print header
-    println!("\n{}", "═".repeat(80));
-    println!("{}", task.display_title(icons).bold().green());
-    println!("{}", "═".repeat(80));
+    // ID
+    fields.push(DetailField {
+        label: "ID:".into(),
+        value: format_full_id(&task.id, prefix_len),
+    });
 
-    // Print metadata
-    println!("\n{}", "Metadata:".bold());
-    println!("  ID:       {}", format_full_id(&task.id, prefix_len));
-
-    // Show project with ancestry breadcrumb (names, not UUIDs)
-    if let Some(path) = project_paths.get(&task.project_id) {
+    // Project with ancestry breadcrumb
+    let project_value = if let Some(path) = project_paths.get(&task.project_id) {
         if path.len() > 1 {
             let breadcrumb: Vec<_> = path
                 .iter()
@@ -1052,32 +1161,41 @@ pub fn print_task_details(
                     }
                 })
                 .collect();
-            println!(
-                "  Project:  {}",
-                breadcrumb.join(&" › ".dimmed().to_string())
-            );
+            breadcrumb.join(&" › ".dimmed().to_string())
         } else {
-            println!("  Project:  {}", path[0].cyan());
+            path[0].cyan().to_string()
         }
     } else {
-        // No path in map — show raw project_id as fallback
-        println!("  Project:  {}", task.project_id.cyan());
-    }
+        task.project_id.cyan().to_string()
+    };
+    fields.push(DetailField {
+        label: "Project:".into(),
+        value: project_value,
+    });
 
+    // Priority
     let eff_priority = promotion::effective_priority(task, thresholds);
     let promoted = eff_priority != task.priority.as_str();
     let priority_colored = match eff_priority {
         "now" => eff_priority.red(),
         _ => eff_priority.normal(),
     };
-    if promoted {
-        println!("  Priority: {} {}", priority_colored, "(promoted)".dimmed());
-    } else {
-        println!("  Priority: {}", priority_colored);
-    }
-    println!("  Size:     {}", task.size);
+    fields.push(DetailField {
+        label: "Priority:".into(),
+        value: if promoted {
+            format!("{} {}", priority_colored, "(promoted)".dimmed())
+        } else {
+            priority_colored.to_string()
+        },
+    });
 
-    // Always show status (priority: done > deleted > work_state > pending)
+    // Size
+    fields.push(DetailField {
+        label: "Size:".into(),
+        value: task.size.clone(),
+    });
+
+    // Status
     let status_colored = if task.done.is_some() {
         "done".blue()
     } else if task.deleted.is_some() {
@@ -1091,54 +1209,78 @@ pub fn print_task_details(
     } else {
         "pending".dimmed()
     };
-    println!("  Status:   {}", status_colored);
+    fields.push(DetailField {
+        label: "Status:".into(),
+        value: status_colored.to_string(),
+    });
 
+    // Created
     if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&task.created) {
         let created_time = created.with_timezone(&Local);
-        println!("  Created:  {}", created_time.format("%Y-%m-%d %H:%M:%S"));
+        fields.push(DetailField {
+            label: "Created:".into(),
+            value: created_time.format("%Y-%m-%d %H:%M:%S").to_string(),
+        });
     }
 
+    // Modified
     if let Ok(modified) = chrono::DateTime::parse_from_rfc3339(&task.modified) {
         let modified_time = modified.with_timezone(&Local);
-        println!("  Modified: {}", modified_time.format("%Y-%m-%d %H:%M:%S"));
+        fields.push(DetailField {
+            label: "Modified:".into(),
+            value: modified_time.format("%Y-%m-%d %H:%M:%S").to_string(),
+        });
     }
 
+    // Deadline (conditional)
     if let Some(ref deadline_str) = task.deadline
         && let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_str)
     {
         let deadline_time = deadline.with_timezone(&Local);
         let now = chrono::Utc::now();
         let is_overdue = deadline < now;
-        let formatted = format!("Deadline: {}", deadline_time.format("%Y-%m-%d %H:%M:%S"));
-
-        if is_overdue {
-            println!("  {}", formatted.red().bold());
-        } else {
-            println!("  {}", formatted);
-        }
+        let formatted = deadline_time.format("%Y-%m-%d %H:%M:%S").to_string();
+        fields.push(DetailField {
+            label: "Deadline:".into(),
+            value: if is_overdue {
+                formatted.red().bold().to_string()
+            } else {
+                formatted
+            },
+        });
     }
 
+    // Done (conditional)
     if let Some(ref done_str) = task.done
         && let Ok(done) = chrono::DateTime::parse_from_rfc3339(done_str)
     {
         let done_time = done.with_timezone(&Local);
-        println!(
-            "  {}",
-            format!("Done:     {}", done_time.format("%Y-%m-%d %H:%M:%S")).blue()
-        );
+        fields.push(DetailField {
+            label: "Done:".into(),
+            value: done_time
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+                .blue()
+                .to_string(),
+        });
     }
 
+    // Deleted (conditional)
     if let Some(ref deleted_str) = task.deleted
         && let Ok(deleted) = chrono::DateTime::parse_from_rfc3339(deleted_str)
     {
         let deleted_time = deleted.with_timezone(&Local);
-        println!(
-            "  {}",
-            format!("Deleted:  {}", deleted_time.format("%Y-%m-%d %H:%M:%S")).red()
-        );
+        fields.push(DetailField {
+            label: "Deleted:".into(),
+            value: deleted_time
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+                .red()
+                .to_string(),
+        });
     }
 
-    // Get impact label from cache (with fallback to defaults)
+    // Impact
     let impact_label = crate::threshold_cache::read_cache(config)
         .and_then(|cached| cached.impact_labels.get(&task.impact.to_string()).cloned())
         .or_else(|| {
@@ -1147,37 +1289,60 @@ pub fn print_task_details(
                 .cloned()
         })
         .unwrap_or_else(|| "Unknown".to_string());
-    println!("  Impact:   {} ({})", impact_label, task.impact);
+    fields.push(DetailField {
+        label: "Impact:".into(),
+        value: format!("{} ({})", impact_label, task.impact),
+    });
 
+    // Joy
     let je = icons.joy_icon(task.joy);
     let joy_suffix = if je.is_empty() { "" } else { " " };
-    println!("  Joy:      {}{}{}", task.joy, joy_suffix, je);
+    fields.push(DetailField {
+        label: "Joy:".into(),
+        value: format!("{}{}{}", task.joy, joy_suffix, je),
+    });
 
+    // Progress (conditional)
     if let Some(progress) = task.progress {
-        println!("  Progress: {}%", progress);
+        fields.push(DetailField {
+            label: "Progress:".into(),
+            value: format!("{}%", progress),
+        });
     }
 
-    println!("  Version:  {}", task.version);
+    // Version
+    fields.push(DetailField {
+        label: "Version:".into(),
+        value: task.version.to_string(),
+    });
 
+    // Labels (conditional)
     if !task.labels.is_empty() {
         let label_strs: Vec<String> = task.labels.iter().map(|l| l.cyan().to_string()).collect();
-        println!("  Labels:   {}", label_strs.join(", "));
+        fields.push(DetailField {
+            label: "Labels:".into(),
+            value: label_strs.join(", "),
+        });
     }
 
-    // Print body with markdown rendering
-    if !task.body.is_empty() {
-        println!("\n{}", "Description:".bold());
-        println!("{}", "─".repeat(80));
-        if no_wrap {
-            print!("{}", renderer.render_no_wrap(&task.body));
+    let view = DetailView {
+        title: task.display_title(icons),
+        fields,
+        sections: Vec::new(),
+        body: if task.body.is_empty() {
+            None
         } else {
-            print!("{}", renderer.render(&task.body));
-        }
-    } else {
-        println!("\n{}", "(No description)".italic().dimmed());
-    }
+            Some(DetailBody {
+                header: "Description:".into(),
+                text: task.body.clone(),
+                no_wrap,
+            })
+        },
+        empty_body_text: "(No description)".into(),
+        no_format,
+    };
 
-    println!("{}\n", "═".repeat(80));
+    view.render(indent);
 }
 
 /// Print a list of documents in a compact format.
@@ -1592,72 +1757,104 @@ fn build_doc_label_colors(docs: &[Document], with_labels: bool) -> HashMap<&str,
 ///
 /// Shows title as header, metadata block, references, and content with
 /// optional markdown rendering. If `no_format` is true, content is shown
-/// as plain text.
-pub fn print_document_detail(doc: &Document, icons: &Icons, no_format: bool) {
+/// as plain text. `indent` is prepended to every output line.
+pub fn print_document_detail(doc: &Document, icons: &Icons, no_format: bool, indent: &str) {
     let _ = icons; // reserved for future glyph use
 
-    let renderer = if no_format {
-        MarkdownRenderer::with_override(Some(false))
-    } else {
-        MarkdownRenderer::with_override(None)
-    };
+    let mut fields = Vec::new();
 
-    println!("\n{}", "═".repeat(80));
-    println!("{}", doc.title.bold().green());
-    println!("{}", "═".repeat(80));
-
-    println!("\n{}", "Metadata:".bold());
-    println!("  ID:        {}", doc.id.cyan());
-    println!("  Namespace: {}", doc.namespace_id);
+    fields.push(DetailField {
+        label: "ID:".into(),
+        value: doc.id.cyan().to_string(),
+    });
+    fields.push(DetailField {
+        label: "Namespace:".into(),
+        value: doc.namespace_id.clone(),
+    });
 
     if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&doc.created) {
         let local = created.with_timezone(&Local);
-        println!("  Created:   {}", local.format("%Y-%m-%d %H:%M:%S"));
+        fields.push(DetailField {
+            label: "Created:".into(),
+            value: local.format("%Y-%m-%d %H:%M:%S").to_string(),
+        });
     }
     if let Ok(modified) = chrono::DateTime::parse_from_rfc3339(&doc.modified) {
         let local = modified.with_timezone(&Local);
-        println!("  Modified:  {}", local.format("%Y-%m-%d %H:%M:%S"));
+        fields.push(DetailField {
+            label: "Modified:".into(),
+            value: local.format("%Y-%m-%d %H:%M:%S").to_string(),
+        });
     }
     if let Some(ref deleted) = doc.deleted
         && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(deleted)
     {
         let local = dt.with_timezone(&Local);
-        println!(
-            "  {}",
-            format!("Deleted:  {}", local.format("%Y-%m-%d %H:%M:%S")).red()
-        );
+        fields.push(DetailField {
+            label: "Deleted:".into(),
+            value: local
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+                .red()
+                .to_string(),
+        });
     }
     if let Some(ref pid) = doc.parent_id {
-        println!("  Parent:    {}", pid);
+        fields.push(DetailField {
+            label: "Parent:".into(),
+            value: pid.clone(),
+        });
     }
-    println!("  Version:   {}", doc.version);
-
+    fields.push(DetailField {
+        label: "Version:".into(),
+        value: doc.version.to_string(),
+    });
     if !doc.labels.is_empty() {
         let label_strs: Vec<String> = doc.labels.iter().map(|l| l.cyan().to_string()).collect();
-        println!("  Labels:    {}", label_strs.join(", "));
+        fields.push(DetailField {
+            label: "Labels:".into(),
+            value: label_strs.join(", "),
+        });
     }
 
+    let mut sections = Vec::new();
     if !doc.references.is_empty() {
-        println!("\n{}", "References:".bold());
-        for r in &doc.references {
-            println!(
-                "  {} {} ({})",
-                r.ref_type.dimmed(),
-                r.target_id.cyan(),
-                r.target_type
-            );
-        }
+        let lines = doc
+            .references
+            .iter()
+            .map(|r| {
+                format!(
+                    "{} {} ({})",
+                    r.ref_type.dimmed(),
+                    r.target_id.cyan(),
+                    r.target_type
+                )
+            })
+            .collect();
+        sections.push(DetailSection {
+            header: "References:".into(),
+            lines,
+        });
     }
 
-    if !doc.content.is_empty() {
-        println!("\n{}", "Content:".bold());
-        println!("{}", "─".repeat(80));
-        print!("{}", renderer.render(&doc.content));
-    } else {
-        println!("\n{}", "(No content)".italic().dimmed());
-    }
+    let view = DetailView {
+        title: doc.title.clone(),
+        fields,
+        sections,
+        body: if doc.content.is_empty() {
+            None
+        } else {
+            Some(DetailBody {
+                header: "Content:".into(),
+                text: doc.content.clone(),
+                no_wrap: false,
+            })
+        },
+        empty_body_text: "(No content)".into(),
+        no_format,
+    };
 
-    println!("{}\n", "═".repeat(80));
+    view.render(indent);
 }
 
 /// Print namespaces as a tree showing parent-child relationships.
