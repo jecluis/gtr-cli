@@ -1699,6 +1699,35 @@ impl TaskCache {
         Ok(result)
     }
 
+    /// Count tasks per label across all projects.
+    pub fn count_tasks_by_label_all(&self) -> Result<Vec<(String, i64)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT labels FROM tasks \
+                 WHERE deleted IS NULL AND done IS NULL",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let label_jsons: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for json in &label_jsons {
+            let labels: Vec<String> = serde_json::from_str(json).unwrap_or_default();
+            for label in labels {
+                *counts.entry(label).or_insert(0) += 1;
+            }
+        }
+
+        let mut result: Vec<(String, i64)> = counts.into_iter().collect();
+        result.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        Ok(result)
+    }
+
     /// Determine whether to prompt for feels and what kind of prompt.
     pub fn should_prompt_feels(&self, today: &NaiveDate) -> Result<FeelsPrompt> {
         let row = self.get_today_feels(today)?;

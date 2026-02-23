@@ -265,7 +265,11 @@ pub async fn label_list_all(config: &Config) -> Result<()> {
         }
         any_labels = true;
 
-        let counts = cache.count_tasks_by_label(&project.id)?;
+        let counts = if project.id == meta_root_id {
+            cache.count_tasks_by_label_all()?
+        } else {
+            cache.count_tasks_by_label(&project.id)?
+        };
         let count_map: std::collections::HashMap<String, i64> = counts.into_iter().collect();
 
         let header = if project.id == meta_root_id {
