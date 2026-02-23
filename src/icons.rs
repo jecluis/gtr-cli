@@ -116,6 +116,10 @@ pub struct Icons {
     /// Label glyph (shown when --with-labels is active)
     pub label: String,
 
+    // -- Links --
+    /// Link glyph (namespace-project association)
+    pub link: String,
+
     // -- Informational --
     /// Non-blocking informational message
     pub info: String,
@@ -175,6 +179,9 @@ impl Icons {
             // Labels
             label: "\u{1f3f7}".into(), // 🏷
 
+            // Links
+            link: "\u{1f517}".into(), // 🔗
+
             // Informational
             info: "\u{2139}".into(),      // ℹ
             cancelled: "\u{2717}".into(), // ✗
@@ -215,6 +222,9 @@ impl Icons {
 
             // Labels
             label: format!("{}", "\u{f03b}".red()), // nf-fa-tags (red)
+
+            // Links
+            link: format!("{}", "\u{f0c1}".cyan()), // nf-fa-link (cyan)
 
             // Informational
             info: "\u{f05a}".into(),      // nf-fa-info_circle

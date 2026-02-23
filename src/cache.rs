@@ -1282,6 +1282,22 @@ impl TaskCache {
         Ok(())
     }
 
+    /// List all document IDs in the cache (for prefix resolution).
+    pub fn all_document_ids(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM documents")
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(ids)
+    }
+
     /// Get a document by ID.
     pub fn get_document(&self, id: &str) -> Result<Option<CachedDocument>> {
         self.conn

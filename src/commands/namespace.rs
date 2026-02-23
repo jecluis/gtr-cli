@@ -96,7 +96,27 @@ pub async fn list(config: &Config, all: bool) -> Result<()> {
             .collect()
     };
 
-    crate::output::print_namespaces(&filtered);
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    // Build namespace_id -> [project_path, ...] map
+    let mut links: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for ns in &filtered {
+        let proj_ids = cache.get_linked_projects(&ns.id)?;
+        if !proj_ids.is_empty() {
+            let names: Vec<String> = proj_ids
+                .iter()
+                .filter_map(|pid| cache.get_project_path(pid).map(|path| path.join("/")).ok())
+                .collect();
+            if !names.is_empty() {
+                links.insert(ns.id.clone(), names);
+            }
+        }
+    }
+
+    let icons = Icons::new(config.effective_icon_theme());
+    crate::output::print_namespaces_with_links(&filtered, Some(&links), Some(&icons));
     Ok(())
 }
 

@@ -23,6 +23,7 @@ use colored::Colorize;
 use dialoguer::Select;
 use jiff::{Span, Zoned};
 
+use crate::cache::{CachedNamespace, TaskCache};
 use crate::client::Client;
 use crate::icons::Icons;
 use crate::local::LocalContext;
@@ -126,6 +127,116 @@ pub fn pick_project(projects: &[Project]) -> Result<String> {
     };
 
     Ok(entries[idx].0.clone())
+}
+
+/// Build a breadcrumb string for a namespace (e.g., "work > clyso").
+fn namespace_breadcrumb(
+    ns_id: &str,
+    parent_map: &std::collections::HashMap<String, Option<String>>,
+    name_map: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut chain = vec![ns_id.to_string()];
+    let mut current = ns_id.to_string();
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(current.clone());
+
+    while let Some(Some(pid)) = parent_map.get(&current) {
+        if !seen.insert(pid.clone()) {
+            break;
+        }
+        chain.push(pid.clone());
+        current = pid.clone();
+    }
+
+    chain.reverse();
+
+    chain
+        .iter()
+        .map(|id| {
+            name_map
+                .get(id)
+                .map(|s| s.as_str())
+                .unwrap_or_else(|| id.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(" > ")
+}
+
+/// Interactive namespace picker with breadcrumb display.
+pub fn pick_namespace(namespaces: &[CachedNamespace]) -> Result<String> {
+    if namespaces.is_empty() {
+        return Err(Error::UserFacing(
+            "No namespaces to choose from.".to_string(),
+        ));
+    }
+
+    if namespaces.len() == 1 {
+        return Ok(namespaces[0].id.clone());
+    }
+
+    let parent_map: std::collections::HashMap<String, Option<String>> = namespaces
+        .iter()
+        .map(|ns| (ns.id.clone(), ns.parent_id.clone()))
+        .collect();
+    let name_map: std::collections::HashMap<String, String> = namespaces
+        .iter()
+        .map(|ns| (ns.id.clone(), ns.name.clone()))
+        .collect();
+
+    let mut entries: Vec<(String, String)> = namespaces
+        .iter()
+        .map(|ns| {
+            let breadcrumb = namespace_breadcrumb(&ns.id, &parent_map, &name_map);
+            (ns.id.clone(), breadcrumb)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.1.cmp(&b.1));
+
+    let items: Vec<String> = entries
+        .iter()
+        .map(|(_, breadcrumb)| breadcrumb.cyan().to_string())
+        .collect();
+
+    let selection = Select::new()
+        .with_prompt("Select namespace")
+        .items(&items)
+        .default(0)
+        .interact_opt()
+        .map_err(|e| Error::InvalidInput(format!("Failed to read selection: {e}")))?;
+
+    let Some(idx) = selection else {
+        return Err(Error::UserFacing("Selection cancelled".to_string()));
+    };
+
+    Ok(entries[idx].0.clone())
+}
+
+/// Resolve namespace: use provided, or auto-select if 1, or prompt picker.
+pub fn resolve_namespace_interactive(
+    cache: &TaskCache,
+    provided: Option<String>,
+) -> Result<String> {
+    if let Some(ns) = provided {
+        return crate::resolve::resolve_namespace(cache, &ns);
+    }
+
+    let namespaces = cache.list_namespaces()?;
+
+    if namespaces.is_empty() {
+        return Err(Error::UserFacing(
+            "No namespaces found. Create one with 'gtr namespace create <name>'".to_string(),
+        ));
+    }
+
+    if namespaces.len() == 1 {
+        return Ok(namespaces[0].id.clone());
+    }
+
+    println!(
+        "{}",
+        "Multiple namespaces found. Please select one:".yellow()
+    );
+    pick_namespace(&namespaces)
 }
 
 /// Resolve project ID: use provided, or auto-select if 1, or prompt.

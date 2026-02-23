@@ -25,7 +25,7 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
 use crate::models::{AddReferenceRequest, CreateDocumentRequest, Document, UpdateDocumentRequest};
-use crate::resolve;
+use crate::{output, resolve};
 
 /// Create a new document.
 pub async fn create(
@@ -42,27 +42,8 @@ pub async fn create(
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
 
-    // Resolve namespace
-    let ns_id = match namespace {
-        Some(ref ns) => resolve::resolve_namespace(&cache, ns)?,
-        None => {
-            // Use the first available namespace
-            let namespaces = cache.list_namespaces()?;
-            let active: Vec<_> = namespaces.iter().filter(|ns| !ns.is_deleted()).collect();
-            if active.is_empty() {
-                return Err(crate::Error::InvalidInput(
-                    "no namespaces available; create one first with `gtr namespace create`"
-                        .to_string(),
-                ));
-            }
-            if active.len() > 1 {
-                return Err(crate::Error::InvalidInput(
-                    "multiple namespaces exist; specify one with -N/--namespace".to_string(),
-                ));
-            }
-            active[0].id.clone()
-        }
-    };
+    // Resolve namespace (picker if not specified)
+    let ns_id = crate::utils::resolve_namespace_interactive(&cache, namespace)?;
 
     let title_str = title.join(" ");
 
@@ -97,19 +78,46 @@ pub async fn create(
     let doc = client.create_document(&ns_id, &req).await?;
     cache.upsert_document(&doc, false)?;
 
+    let all_ids = cache.all_document_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+
+    let ns_display = cache
+        .get_namespace_path(&doc.namespace_id)
+        .ok()
+        .map(|id_path| {
+            id_path
+                .iter()
+                .filter_map(|id| cache.get_namespace(id).ok().flatten().map(|ns| ns.name))
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default();
+
     println!(
         "{}",
         format!("{} Document created!", icons.success)
             .green()
             .bold()
     );
-    println!("  ID:        {}", doc.id.cyan());
+    println!(
+        "  ID:        {}",
+        output::format_full_id(&doc.id, prefix_len)
+    );
     println!("  Title:     {}", doc.title);
-    println!("  Namespace: {}", doc.namespace_id);
+    println!(
+        "  Namespace: {} {}",
+        ns_display.cyan().bold(),
+        doc.namespace_id.dimmed()
+    );
     if !doc.labels.is_empty() {
         let label_strs: Vec<String> = doc.labels.iter().map(|l| l.cyan().to_string()).collect();
         println!("  Labels:    {}", label_strs.join(", "));
     }
+
+    println!(
+        "\nView with: {}",
+        format!("gtr doc show {}", doc.id).dimmed()
+    );
 
     Ok(())
 }

@@ -251,6 +251,15 @@ fn format_project_cell(
 
 /// Print a list of projects as a tree showing parent-child relationships.
 pub fn print_projects(projects: &[Project]) {
+    print_projects_with_links(projects, None, None);
+}
+
+/// Print projects with optional namespace link info.
+pub fn print_projects_with_links(
+    projects: &[Project],
+    links: Option<&HashMap<String, Vec<String>>>,
+    icons: Option<&Icons>,
+) {
     if projects.is_empty() {
         println!("{}", "No projects found".yellow());
         return;
@@ -286,13 +295,13 @@ pub fn print_projects(projects: &[Project]) {
 
     for (i, root) in roots.iter().enumerate() {
         let is_last = i == roots.len() - 1 && orphans.is_empty();
-        print_project_node(root, "", is_last, true, &children_map);
+        print_project_node(root, "", is_last, true, &children_map, links, icons);
     }
 
     // Print orphans (parent not in list) at root level
     for (i, orphan) in orphans.iter().enumerate() {
         let is_last = i == orphans.len() - 1;
-        print_project_node(orphan, "", is_last, true, &children_map);
+        print_project_node(orphan, "", is_last, true, &children_map, links, icons);
     }
 
     println!("\n{} {}", "Total:".bold(), projects.len());
@@ -305,6 +314,8 @@ fn print_project_node(
     is_last: bool,
     is_root: bool,
     children_map: &HashMap<Option<&str>, Vec<&Project>>,
+    links: Option<&HashMap<String, Vec<String>>>,
+    icons: Option<&Icons>,
 ) {
     let connector = if is_root {
         ""
@@ -325,12 +336,21 @@ fn print_project_node(
     } else {
         &project.name
     };
+
+    let link_glyph = icons.map(|i| &i.link as &str).unwrap_or("\u{1f517}");
+    let link_tag = links
+        .and_then(|m| m.get(&project.id))
+        .filter(|names| !names.is_empty())
+        .map(|names| format!("  {} {}", link_glyph, names.join(", ").yellow()))
+        .unwrap_or_default();
+
     println!(
-        "{}{}{}{}",
+        "{}{}{}{}{}",
         prefix,
         connector,
         display_name.cyan().bold(),
-        desc
+        desc,
+        link_tag
     );
 
     // Recurse into children
@@ -349,7 +369,15 @@ fn print_project_node(
 
     for (i, child) in children.iter().enumerate() {
         let child_is_last = i == children.len() - 1;
-        print_project_node(child, &child_prefix, child_is_last, false, children_map);
+        print_project_node(
+            child,
+            &child_prefix,
+            child_is_last,
+            false,
+            children_map,
+            links,
+            icons,
+        );
     }
 }
 
@@ -1272,6 +1300,15 @@ pub fn print_document_detail(doc: &Document, icons: &Icons, no_format: bool) {
 ///
 /// Uses the same tree-connector style as `print_projects()`.
 pub fn print_namespaces(namespaces: &[Namespace]) {
+    print_namespaces_with_links(namespaces, None, None);
+}
+
+/// Print namespaces with optional project link info.
+pub fn print_namespaces_with_links(
+    namespaces: &[Namespace],
+    links: Option<&HashMap<String, Vec<String>>>,
+    icons: Option<&Icons>,
+) {
     if namespaces.is_empty() {
         println!("{}", "No namespaces found".yellow());
         return;
@@ -1308,12 +1345,12 @@ pub fn print_namespaces(namespaces: &[Namespace]) {
 
     for (i, root) in roots.iter().enumerate() {
         let is_last = i == roots.len() - 1 && orphans.is_empty();
-        print_namespace_tree_node(root, "", is_last, true, &children_map);
+        print_namespace_tree_node(root, "", is_last, true, &children_map, links, icons);
     }
 
     for (i, orphan) in orphans.iter().enumerate() {
         let is_last = i == orphans.len() - 1;
-        print_namespace_tree_node(orphan, "", is_last, true, &children_map);
+        print_namespace_tree_node(orphan, "", is_last, true, &children_map, links, icons);
     }
 
     println!("\n{} {}", "Total:".bold(), namespaces.len());
@@ -1326,6 +1363,8 @@ fn print_namespace_tree_node(
     is_last: bool,
     is_root: bool,
     children_map: &HashMap<Option<&str>, Vec<&Namespace>>,
+    links: Option<&HashMap<String, Vec<String>>>,
+    icons: Option<&Icons>,
 ) {
     let connector = if is_root {
         ""
@@ -1347,13 +1386,21 @@ fn print_namespace_tree_node(
         String::new()
     };
 
+    let link_glyph = icons.map(|i| &i.link as &str).unwrap_or("\u{1f517}");
+    let link_tag = links
+        .and_then(|m| m.get(&ns.id))
+        .filter(|names| !names.is_empty())
+        .map(|names| format!("  {} {}", link_glyph, names.join(", ").yellow()))
+        .unwrap_or_default();
+
     println!(
-        "{}{}{}{}{}",
+        "{}{}{}{}{}{}",
         prefix,
         connector,
         ns.name.cyan().bold(),
         desc,
-        deleted_tag
+        deleted_tag,
+        link_tag
     );
 
     let children = children_map
@@ -1371,7 +1418,15 @@ fn print_namespace_tree_node(
 
     for (i, child) in children.iter().enumerate() {
         let child_is_last = i == children.len() - 1;
-        print_namespace_tree_node(child, &child_prefix, child_is_last, false, children_map);
+        print_namespace_tree_node(
+            child,
+            &child_prefix,
+            child_is_last,
+            false,
+            children_map,
+            links,
+            icons,
+        );
     }
 }
 

@@ -230,7 +230,42 @@ pub async fn list(config: &Config, include_meta: bool) -> Result<()> {
     let client = Client::new(config)?;
     let projects = client.list_projects_all(include_meta).await?;
 
-    output::print_projects(&projects);
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+
+    // Build project_id -> [namespace_path, ...] map
+    let mut links: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for p in &projects {
+        let ns_ids = cache.get_linked_namespaces(&p.id)?;
+        if !ns_ids.is_empty() {
+            let names: Vec<String> = ns_ids
+                .iter()
+                .filter_map(|nid| {
+                    // Resolve namespace ID chain to names
+                    let id_path = cache.get_namespace_path(nid).ok()?;
+                    let name_path: Vec<String> = id_path
+                        .iter()
+                        .map(|id| {
+                            cache
+                                .get_namespace(id)
+                                .ok()
+                                .flatten()
+                                .map(|ns| ns.name)
+                                .unwrap_or_else(|| id.clone())
+                        })
+                        .collect();
+                    Some(name_path.join("/"))
+                })
+                .collect();
+            if !names.is_empty() {
+                links.insert(p.id.clone(), names);
+            }
+        }
+    }
+
+    let icons = Icons::new(config.effective_icon_theme());
+    output::print_projects_with_links(&projects, Some(&links), Some(&icons));
     Ok(())
 }
 
