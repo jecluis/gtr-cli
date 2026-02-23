@@ -341,21 +341,18 @@ pub async fn move_doc(config: &Config, doc_id: &str, namespace: &str) -> Result<
 }
 
 /// Add a reference from a document to another entity.
-pub async fn link(
-    config: &Config,
-    doc_id: &str,
-    target: &str,
-    target_type: &str,
-    ref_type: &str,
-) -> Result<()> {
+pub async fn link(config: &Config, doc_id: &str, target: &str, ref_type: &str) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
     let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
 
+    let (target_type, raw_id) = crate::utils::parse_typed_target(target, "document");
+    let target_id = crate::utils::resolve_target_id(&cache, raw_id, target_type)?;
+
     let req = AddReferenceRequest {
-        target_id: target.to_string(),
+        target_id: target_id.clone(),
         target_type: target_type.to_string(),
         ref_type: ref_type.to_string(),
     };
@@ -366,7 +363,7 @@ pub async fn link(
         "{}",
         format!(
             "{} Reference added: {} --[{}]--> {} ({})",
-            icons.success, doc_id, ref_type, target, target_type
+            icons.success, doc_id, ref_type, target_id, target_type
         )
         .green()
         .bold()
@@ -383,13 +380,18 @@ pub async fn unlink(config: &Config, doc_id: &str, target: &str) -> Result<()> {
     let cache = TaskCache::open(&cache_path)?;
     let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
 
-    client.remove_document_reference(&doc_id, target).await?;
+    let (target_type, raw_id) = crate::utils::parse_typed_target(target, "document");
+    let target_id = crate::utils::resolve_target_id(&cache, raw_id, target_type)?;
+
+    client
+        .remove_document_reference(&doc_id, &target_id)
+        .await?;
 
     println!(
         "{}",
         format!(
             "{} Reference removed: {} -/-> {}",
-            icons.success, doc_id, target
+            icons.success, doc_id, target_id
         )
         .green()
         .bold()

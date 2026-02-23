@@ -517,29 +517,24 @@ enum Commands {
         with_labels: bool,
     },
 
-    /// Add a reference from a task to another entity
+    /// Add or remove a reference from a task to another entity
     Ref {
         /// Task ID
         task_id: String,
-        /// Target entity ID
+        /// Target ID (type prefixes: task, doc, proj, ns; default: task)
+        #[arg(value_name = "[TYPE:]TARGET")]
         target: String,
-        /// Target type (task, document, project, namespace)
-        #[arg(short = 'T', long = "type", default_value = "task")]
-        target_type: String,
         /// Reference type (related, extends, blocks, etc.)
-        #[arg(short, long, default_value = "related")]
-        ref_type: String,
-        /// Skip sync
+        #[arg(
+            short = 't',
+            long = "type",
+            default_value = "related",
+            conflicts_with = "unset"
+        )]
+        r#type: String,
+        /// Remove the reference instead of adding it
         #[arg(long)]
-        no_sync: bool,
-    },
-
-    /// Remove a reference from a task
-    Unref {
-        /// Task ID
-        task_id: String,
-        /// Target entity ID to unlink
-        target: String,
+        unset: bool,
         /// Skip sync
         #[arg(long)]
         no_sync: bool,
@@ -742,25 +737,24 @@ enum DocCommands {
         /// Target namespace (name, path, or UUID)
         namespace: String,
     },
-    /// Add a reference to another entity
+    /// Add or remove a reference to another entity
     Link {
         /// Document ID
         doc_id: String,
-        /// Target entity ID
+        /// Target ID (type prefixes: doc, task, proj, ns; default: document)
+        #[arg(value_name = "[TYPE:]TARGET")]
         target: String,
-        /// Target entity type (task, document, project, namespace)
-        #[arg(short = 'T', long = "type", default_value = "document")]
-        target_type: String,
         /// Reference type (related, extends, etc.)
-        #[arg(short, long, default_value = "related")]
-        ref_type: String,
-    },
-    /// Remove a reference
-    Unlink {
-        /// Document ID
-        doc_id: String,
-        /// Target entity ID to unlink
-        target: String,
+        #[arg(
+            short = 't',
+            long = "type",
+            default_value = "related",
+            conflicts_with = "unset"
+        )]
+        r#type: String,
+        /// Remove the reference instead of adding it
+        #[arg(long)]
+        unset: bool,
     },
     /// Show back-links (what references this document)
     Backlinks {
@@ -1169,13 +1163,14 @@ async fn run() -> Result<()> {
             DocCommands::Link {
                 doc_id,
                 target,
-                target_type,
-                ref_type,
+                r#type,
+                unset,
             } => {
-                gtr::commands::pkms::link(&config, &doc_id, &target, &target_type, &ref_type).await
-            }
-            DocCommands::Unlink { doc_id, target } => {
-                gtr::commands::pkms::unlink(&config, &doc_id, &target).await
+                if unset {
+                    gtr::commands::pkms::unlink(&config, &doc_id, &target).await
+                } else {
+                    gtr::commands::pkms::link(&config, &doc_id, &target, &r#type).await
+                }
             }
             DocCommands::Backlinks { doc_id } => {
                 gtr::commands::pkms::backlinks(&config, &doc_id).await
@@ -1290,25 +1285,17 @@ async fn run() -> Result<()> {
         Commands::Ref {
             task_id,
             target,
-            target_type,
-            ref_type,
+            r#type,
+            unset,
             no_sync,
         } => {
-            gtr::commands::reference::add_ref(
-                &config,
-                &task_id,
-                &target,
-                &target_type,
-                &ref_type,
-                no_sync,
-            )
-            .await
+            if unset {
+                gtr::commands::reference::remove_ref(&config, &task_id, &target, no_sync).await
+            } else {
+                gtr::commands::reference::add_ref(&config, &task_id, &target, &r#type, no_sync)
+                    .await
+            }
         }
-        Commands::Unref {
-            task_id,
-            target,
-            no_sync,
-        } => gtr::commands::reference::remove_ref(&config, &task_id, &target, no_sync).await,
         Commands::Init { .. } => unreachable!(),
         Commands::Version => unreachable!(),
     }

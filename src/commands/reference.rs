@@ -20,36 +20,42 @@
 use colored::Colorize;
 
 use crate::Result;
+use crate::cache::TaskCache;
 use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
 use crate::models::AddReferenceRequest;
+use crate::utils;
 
 /// Add a reference from a task to another entity.
 pub async fn add_ref(
     config: &Config,
     task_id: &str,
     target: &str,
-    target_type: &str,
     ref_type: &str,
     _no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
+    let cache = TaskCache::open(&config.cache_dir.join("index.db"))?;
+
+    let task_id = utils::resolve_task_id_from_cache(&cache, task_id)?;
+    let (target_type, raw_id) = utils::parse_typed_target(target, "task");
+    let target_id = utils::resolve_target_id(&cache, raw_id, target_type)?;
 
     let req = AddReferenceRequest {
-        target_id: target.to_string(),
+        target_id: target_id.clone(),
         target_type: target_type.to_string(),
         ref_type: ref_type.to_string(),
     };
 
-    client.add_task_reference(task_id, &req).await?;
+    client.add_task_reference(&task_id, &req).await?;
 
     println!(
         "{}",
         format!(
             "{} Reference added: {} --[{}]--> {} ({})",
-            icons.success, task_id, ref_type, target, target_type
+            icons.success, task_id, ref_type, target_id, target_type
         )
         .green()
         .bold()
@@ -67,14 +73,19 @@ pub async fn remove_ref(
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
+    let cache = TaskCache::open(&config.cache_dir.join("index.db"))?;
 
-    client.remove_task_reference(task_id, target).await?;
+    let task_id = utils::resolve_task_id_from_cache(&cache, task_id)?;
+    let (target_type, raw_id) = utils::parse_typed_target(target, "task");
+    let target_id = utils::resolve_target_id(&cache, raw_id, target_type)?;
+
+    client.remove_task_reference(&task_id, &target_id).await?;
 
     println!(
         "{}",
         format!(
             "{} Reference removed: {} -/-> {}",
-            icons.success, task_id, target
+            icons.success, task_id, target_id
         )
         .green()
         .bold()

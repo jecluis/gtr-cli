@@ -354,6 +354,43 @@ pub fn resolve_document_id(cache: &crate::cache::TaskCache, short_id: &str) -> R
     resolve_short_id(&cache.all_document_ids()?, short_id, "document")
 }
 
+/// Parse a `[TYPE:]TARGET` string into (canonical_type, raw_id).
+///
+/// Recognised prefixes: `doc`/`document`, `task`, `proj`/`project`,
+/// `ns`/`namespace`. When no prefix is present, `default_type` is used.
+pub fn parse_typed_target<'a>(input: &'a str, default_type: &'a str) -> (&'a str, &'a str) {
+    match input.split_once(':') {
+        Some(("doc" | "document", id)) => ("document", id),
+        Some(("task", id)) => ("task", id),
+        Some(("proj" | "project", id)) => ("project", id),
+        Some(("ns" | "namespace", id)) => ("namespace", id),
+        _ => (default_type, input),
+    }
+}
+
+/// Resolve a target ID based on entity type, using the local cache.
+///
+/// Dispatches to the right resolver:
+/// - `"task"` -> prefix match against cached task IDs
+/// - `"document"` -> prefix match against cached document IDs
+/// - `"project"` -> name/path/UUID resolution
+/// - `"namespace"` -> name/path/UUID resolution
+pub fn resolve_target_id(
+    cache: &crate::cache::TaskCache,
+    raw_id: &str,
+    entity_type: &str,
+) -> Result<String> {
+    match entity_type {
+        "task" => resolve_task_id_from_cache(cache, raw_id),
+        "document" => resolve_document_id(cache, raw_id),
+        "project" => crate::resolve::resolve_project(cache, raw_id),
+        "namespace" => crate::resolve::resolve_namespace(cache, raw_id),
+        _ => Err(Error::InvalidInput(format!(
+            "unknown target type '{entity_type}'"
+        ))),
+    }
+}
+
 /// Normalize time-of-day expressions that chrono-english can't handle.
 ///
 /// chrono-english parses `8am`, `6pm` etc. but fails on `12pm`, `12am`,
