@@ -1182,46 +1182,410 @@ pub fn print_task_details(
 
 /// Print a list of documents in a compact format.
 ///
-/// Shows each document with short ID, title, modification time, and optionally
-/// labels. Deleted documents are tagged.
-pub fn print_documents(docs: &[Document], icons: &Icons, with_labels: bool) {
-    use chrono_humanize::{Accuracy, HumanTime, Tense};
+/// Shows each document with prefix-highlighted short ID, title, modification
+/// time, and optionally labels and namespace. If `show_namespace` is true,
+/// the namespace path is shown for each document. `ns_names` maps namespace
+/// UUIDs to display paths.
+/// Print documents grouped under their namespace hierarchy as a tree.
+///
+/// Used when listing documents across all namespaces (`gtr doc list`
+/// without `--namespace`). Namespaces form the top-level structure with
+/// documents nested inside. Child documents branch off their parents.
+pub fn print_document_tree(
+    namespaces: &[Namespace],
+    docs: &[Document],
+    icons: &Icons,
+    with_labels: bool,
+    prefix_len: usize,
+) {
+    if namespaces.is_empty() && docs.is_empty() {
+        println!("{}", format!("{} No documents found.", icons.info).dimmed());
+        return;
+    }
 
+    let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
+
+    // Build namespace parent -> children map
+    let mut ns_children_map: HashMap<Option<&str>, Vec<&Namespace>> = HashMap::new();
+    for ns in namespaces {
+        ns_children_map
+            .entry(ns.parent_id.as_deref())
+            .or_default()
+            .push(ns);
+    }
+    for group in ns_children_map.values_mut() {
+        group.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    // Build doc by namespace map
+    let mut doc_by_ns: HashMap<&str, Vec<&Document>> = HashMap::new();
+    for doc in docs {
+        doc_by_ns
+            .entry(doc.namespace_id.as_str())
+            .or_default()
+            .push(doc);
+    }
+
+    // Build doc parent -> children map
+    let doc_ids: HashSet<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+    let mut doc_children_map: HashMap<Option<&str>, Vec<&Document>> = HashMap::new();
+    for doc in docs {
+        let key = match doc.parent_id.as_deref() {
+            Some(pid) if doc_ids.contains(pid) => Some(pid),
+            _ => None,
+        };
+        doc_children_map.entry(key).or_default().push(doc);
+    }
+    for group in doc_children_map.values_mut() {
+        group.sort_by(|a, b| a.title.cmp(&b.title));
+    }
+
+    // Label color palette
+    let label_colors = build_doc_label_colors(docs, with_labels);
+
+    // Find roots and orphans
+    let roots = ns_children_map.get(&None).cloned().unwrap_or_default();
+    let known_ids: HashSet<&str> = namespaces.iter().map(|ns| ns.id.as_str()).collect();
+    let mut orphans: Vec<&Namespace> = Vec::new();
+    for ns in namespaces {
+        if let Some(ref pid) = ns.parent_id
+            && !known_ids.contains(pid.as_str())
+            && !roots.iter().any(|r| r.id == ns.id)
+        {
+            orphans.push(ns);
+        }
+    }
+
+    let total_top = roots.len() + orphans.len();
+    for (i, root) in roots.iter().enumerate() {
+        let is_last = i == roots.len() - 1 && orphans.is_empty();
+        print_ns_doc_tree_node(
+            root,
+            "",
+            is_last,
+            total_top == 1,
+            &ns_children_map,
+            &doc_by_ns,
+            &doc_children_map,
+            icons,
+            with_labels,
+            prefix_len,
+            colorize,
+            &label_colors,
+        );
+    }
+    for (i, orphan) in orphans.iter().enumerate() {
+        let is_last = i == orphans.len() - 1;
+        print_ns_doc_tree_node(
+            orphan,
+            "",
+            is_last,
+            total_top == 1,
+            &ns_children_map,
+            &doc_by_ns,
+            &doc_children_map,
+            icons,
+            with_labels,
+            prefix_len,
+            colorize,
+            &label_colors,
+        );
+    }
+
+    let ns_count = namespaces.iter().filter(|ns| !ns.is_deleted()).count();
+    println!(
+        "\n{} {} across {} {}",
+        "Total:".bold(),
+        docs.len(),
+        ns_count,
+        if ns_count == 1 {
+            "namespace"
+        } else {
+            "namespaces"
+        }
+    );
+}
+
+/// Recursively print a namespace node containing documents.
+#[allow(clippy::too_many_arguments)]
+fn print_ns_doc_tree_node(
+    ns: &Namespace,
+    prefix: &str,
+    is_last: bool,
+    is_root: bool,
+    ns_children_map: &HashMap<Option<&str>, Vec<&Namespace>>,
+    doc_by_ns: &HashMap<&str, Vec<&Document>>,
+    doc_children_map: &HashMap<Option<&str>, Vec<&Document>>,
+    icons: &Icons,
+    with_labels: bool,
+    prefix_len: usize,
+    colorize: bool,
+    label_colors: &HashMap<&str, colored::Color>,
+) {
+    let connector = if is_root {
+        ""
+    } else if is_last {
+        "└── "
+    } else {
+        "├── "
+    };
+
+    let deleted_tag = if ns.is_deleted() {
+        " [deleted]".red().to_string()
+    } else {
+        String::new()
+    };
+
+    println!(
+        "{}{}{}{}",
+        prefix,
+        connector,
+        ns.name.cyan().bold(),
+        deleted_tag
+    );
+
+    let child_prefix = if is_root {
+        "  ".to_string()
+    } else if is_last {
+        format!("{}    ", prefix)
+    } else {
+        format!("{}│   ", prefix)
+    };
+
+    // Root docs for this namespace (parent_id absent or orphaned within
+    // the filtered set)
+    let root_docs: Vec<&&Document> = doc_by_ns
+        .get(ns.id.as_str())
+        .map(|ds| {
+            ds.iter()
+                .filter(|d| {
+                    d.parent_id.is_none()
+                        || !doc_by_ns
+                            .get(ns.id.as_str())
+                            .map(|all| {
+                                all.iter()
+                                    .any(|o| Some(o.id.as_str()) == d.parent_id.as_deref())
+                            })
+                            .unwrap_or(false)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let child_nses = ns_children_map
+        .get(&Some(ns.id.as_str()))
+        .cloned()
+        .unwrap_or_default();
+
+    for (i, doc) in root_docs.iter().enumerate() {
+        let is_last_child = i == root_docs.len() - 1 && child_nses.is_empty();
+        print_doc_tree_node(
+            doc,
+            &child_prefix,
+            is_last_child,
+            false,
+            doc_children_map,
+            icons,
+            with_labels,
+            prefix_len,
+            colorize,
+            label_colors,
+        );
+    }
+
+    for (i, child_ns) in child_nses.iter().enumerate() {
+        let is_last_child = i == child_nses.len() - 1;
+        print_ns_doc_tree_node(
+            child_ns,
+            &child_prefix,
+            is_last_child,
+            false,
+            ns_children_map,
+            doc_by_ns,
+            doc_children_map,
+            icons,
+            with_labels,
+            prefix_len,
+            colorize,
+            label_colors,
+        );
+    }
+}
+
+/// Print documents as a flat-root tree (single namespace mode).
+///
+/// Used when `--namespace` is specified. Root documents are top-level
+/// entries with child documents branching off their parents.
+pub fn print_documents_as_tree(
+    docs: &[Document],
+    icons: &Icons,
+    with_labels: bool,
+    prefix_len: usize,
+) {
     if docs.is_empty() {
         println!("{}", format!("{} No documents found.", icons.info).dimmed());
         return;
     }
 
+    let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
+
+    let doc_ids: HashSet<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+    let mut doc_children_map: HashMap<Option<&str>, Vec<&Document>> = HashMap::new();
     for doc in docs {
-        let short_id = &doc.id[..8.min(doc.id.len())];
-        let modified_rel = chrono::DateTime::parse_from_rfc3339(&doc.modified)
-            .map(|dt| {
-                let ht = HumanTime::from(dt);
-                ht.to_text_en(Accuracy::Rough, Tense::Past)
-            })
-            .unwrap_or_else(|_| "-".to_string());
-
-        let deleted_tag = if doc.is_deleted() {
-            " [deleted]".red().to_string()
-        } else {
-            String::new()
+        let key = match doc.parent_id.as_deref() {
+            Some(pid) if doc_ids.contains(pid) => Some(pid),
+            _ => None,
         };
+        doc_children_map.entry(key).or_default().push(doc);
+    }
+    for group in doc_children_map.values_mut() {
+        group.sort_by(|a, b| a.title.cmp(&b.title));
+    }
 
-        println!(
-            "  {} {}{}  ({})",
-            short_id.cyan(),
-            doc.title,
-            deleted_tag,
-            modified_rel.dimmed()
+    let label_colors = build_doc_label_colors(docs, with_labels);
+
+    let roots = doc_children_map.get(&None).cloned().unwrap_or_default();
+    for (i, doc) in roots.iter().enumerate() {
+        let is_last = i == roots.len() - 1;
+        print_doc_tree_node(
+            doc,
+            "",
+            is_last,
+            true,
+            &doc_children_map,
+            icons,
+            with_labels,
+            prefix_len,
+            colorize,
+            &label_colors,
         );
-
-        if with_labels && !doc.labels.is_empty() {
-            let label_strs: Vec<String> = doc.labels.iter().map(|l| l.cyan().to_string()).collect();
-            println!("    {} {}", icons.label, label_strs.join(", "));
-        }
     }
 
     println!("\n{} {}", "Total:".bold(), docs.len());
+}
+
+/// Recursively print a document node with tree connectors.
+#[allow(clippy::too_many_arguments)]
+fn print_doc_tree_node(
+    doc: &Document,
+    prefix: &str,
+    is_last: bool,
+    is_root: bool,
+    doc_children_map: &HashMap<Option<&str>, Vec<&Document>>,
+    icons: &Icons,
+    with_labels: bool,
+    prefix_len: usize,
+    colorize: bool,
+    label_colors: &HashMap<&str, colored::Color>,
+) {
+    let connector = if is_root {
+        ""
+    } else if is_last {
+        "└── "
+    } else {
+        "├── "
+    };
+
+    let short_id = format_task_id(&doc.id, prefix_len, colorize);
+    let modified_rel = chrono::DateTime::parse_from_rfc3339(&doc.modified)
+        .map(|dt| {
+            let ht = HumanTime::from(dt);
+            ht.to_text_en(Accuracy::Rough, Tense::Past)
+        })
+        .unwrap_or_else(|_| "-".to_string());
+
+    let deleted_tag = if doc.is_deleted() {
+        " [deleted]".red().to_string()
+    } else {
+        String::new()
+    };
+
+    let label_tag = if with_labels && !doc.labels.is_empty() {
+        let label_strs: Vec<String> = doc
+            .labels
+            .iter()
+            .map(|l| {
+                if let Some(&color) = label_colors.get(l.as_str()) {
+                    l.color(color).to_string()
+                } else {
+                    l.cyan().to_string()
+                }
+            })
+            .collect();
+        format!("  {} {}", icons.label, label_strs.join(", "))
+    } else {
+        String::new()
+    };
+
+    println!(
+        "{}{}{} {}{}  ({}){}",
+        prefix,
+        connector,
+        short_id,
+        doc.title,
+        deleted_tag,
+        modified_rel.dimmed(),
+        label_tag,
+    );
+
+    let child_prefix = if is_root {
+        format!("{}  ", prefix)
+    } else if is_last {
+        format!("{}    ", prefix)
+    } else {
+        format!("{}│   ", prefix)
+    };
+
+    let children = doc_children_map
+        .get(&Some(doc.id.as_str()))
+        .cloned()
+        .unwrap_or_default();
+
+    for (i, child) in children.iter().enumerate() {
+        let child_is_last = i == children.len() - 1;
+        print_doc_tree_node(
+            child,
+            &child_prefix,
+            child_is_last,
+            false,
+            doc_children_map,
+            icons,
+            with_labels,
+            prefix_len,
+            colorize,
+            label_colors,
+        );
+    }
+}
+
+/// Build label -> color mapping for documents.
+fn build_doc_label_colors(docs: &[Document], with_labels: bool) -> HashMap<&str, colored::Color> {
+    let label_palette = [
+        colored::Color::Cyan,
+        colored::Color::Yellow,
+        colored::Color::Green,
+        colored::Color::Magenta,
+        colored::Color::Blue,
+        colored::Color::Red,
+        colored::Color::BrightCyan,
+        colored::Color::BrightYellow,
+        colored::Color::BrightGreen,
+        colored::Color::BrightMagenta,
+        colored::Color::BrightBlue,
+        colored::Color::BrightRed,
+    ];
+    let mut map = HashMap::new();
+    if with_labels {
+        for doc in docs {
+            for label in &doc.labels {
+                if !map.contains_key(label.as_str()) {
+                    let idx = map.len();
+                    map.insert(label.as_str(), label_palette[idx % label_palette.len()]);
+                }
+            }
+        }
+    }
+    map
 }
 
 /// Print full details for a single document.

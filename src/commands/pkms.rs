@@ -142,14 +142,12 @@ pub async fn list(
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
 
-    // If namespace specified, list from that namespace; otherwise list from all
-    let docs: Vec<Document> = match namespace {
+    let (namespaces_list, docs) = match namespace {
         Some(ref ns) => {
             let ns_id = resolve::resolve_namespace(&cache, ns)?;
-            client.list_documents(&ns_id, all).await?
+            (Vec::new(), client.list_documents(&ns_id, all).await?)
         }
         None => {
-            // List from all namespaces
             let namespaces = client.list_namespaces().await?;
             let mut all_docs = Vec::new();
             for ns in &namespaces {
@@ -157,11 +155,11 @@ pub async fn list(
                     continue;
                 }
                 match client.list_documents(&ns.id, all).await {
-                    Ok(docs) => all_docs.extend(docs),
+                    Ok(d) => all_docs.extend(d),
                     Err(_) => continue,
                 }
             }
-            all_docs
+            (namespaces, all_docs)
         }
     };
 
@@ -174,7 +172,14 @@ pub async fn list(
             .collect()
     };
 
-    crate::output::print_documents(&filtered, &icons, with_labels);
+    let all_ids = cache.all_document_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+
+    if namespace.is_some() {
+        output::print_documents_as_tree(&filtered, &icons, with_labels, prefix_len);
+    } else {
+        output::print_document_tree(&namespaces_list, &filtered, &icons, with_labels, prefix_len);
+    }
     Ok(())
 }
 
