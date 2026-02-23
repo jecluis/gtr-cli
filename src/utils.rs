@@ -314,32 +314,44 @@ pub async fn resolve_task_id(client: &Client, short_id: &str) -> Result<String> 
 /// Resolve a potentially shortened task ID from the local cache.
 ///
 /// Unlike `resolve_task_id`, this works offline using the SQLite cache.
-pub fn resolve_task_id_from_cache(
-    cache: &crate::cache::TaskCache,
-    short_id: &str,
-) -> Result<String> {
-    // Full UUID: return as-is
+/// Resolve a potentially shortened UUID from a list of known IDs.
+///
+/// If `short_id` is a full UUID (36 chars with 4 dashes), returns it as-is.
+/// Otherwise prefix-matches against `all_ids`. `entity_name` is used in
+/// error messages (e.g., "task", "document").
+fn resolve_short_id(all_ids: &[String], short_id: &str, entity_name: &str) -> Result<String> {
     if short_id.len() == 36 && short_id.chars().filter(|&c| c == '-').count() == 4 {
         return Ok(short_id.to_string());
     }
 
-    // Search cache for prefix match
-    let all_ids = cache.all_task_ids()?;
     let matches: Vec<&String> = all_ids
         .iter()
         .filter(|id| id.starts_with(short_id))
         .collect();
 
     match matches.len() {
-        0 => Err(Error::TaskNotFound(format!(
-            "No task found with ID prefix '{short_id}'"
+        0 => Err(Error::UserFacing(format!(
+            "No {entity_name} found with ID prefix '{short_id}'"
         ))),
         1 => Ok(matches[0].clone()),
         _ => Err(Error::UserFacing(format!(
-            "Ambiguous ID prefix '{short_id}' matches {} tasks. Please provide more characters.",
+            "Ambiguous ID prefix '{short_id}' matches {} {entity_name}s. \
+             Please provide more characters.",
             matches.len()
         ))),
     }
+}
+
+pub fn resolve_task_id_from_cache(
+    cache: &crate::cache::TaskCache,
+    short_id: &str,
+) -> Result<String> {
+    resolve_short_id(&cache.all_task_ids()?, short_id, "task")
+}
+
+/// Resolve a potentially shortened document ID from the local cache.
+pub fn resolve_document_id(cache: &crate::cache::TaskCache, short_id: &str) -> Result<String> {
+    resolve_short_id(&cache.all_document_ids()?, short_id, "document")
 }
 
 /// Normalize time-of-day expressions that chrono-english can't handle.

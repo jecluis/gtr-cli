@@ -64,10 +64,16 @@ pub async fn create(
         String::new()
     };
 
+    // Resolve parent document if provided
+    let resolved_parent = match parent {
+        Some(ref p) => Some(crate::utils::resolve_document_id(&cache, p)?),
+        None => None,
+    };
+
     let req = CreateDocumentRequest {
         title: title_str,
         content,
-        parent_id: parent,
+        parent_id: resolved_parent,
         labels: if labels.is_empty() {
             None
         } else {
@@ -176,7 +182,10 @@ pub async fn list(
 pub async fn show(config: &Config, doc_id: &str, _no_sync: bool, no_format: bool) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let doc = client.get_document(doc_id).await?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
+    let doc = client.get_document(&doc_id).await?;
 
     crate::output::print_document_detail(&doc, &icons, no_format);
     Ok(())
@@ -198,9 +207,10 @@ pub async fn update(
     let client = Client::new(config)?;
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
+    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
 
     // Get current document for label merging and body editing
-    let current = client.get_document(doc_id).await?;
+    let current = client.get_document(&doc_id).await?;
 
     // Handle body editing
     let new_content = if body {
@@ -236,7 +246,8 @@ pub async fn update(
     // Handle parent: empty string means unparent
     let parent_id = match parent {
         Some(ref p) if p.is_empty() => Some(String::new()),
-        other => other,
+        Some(p) => Some(crate::utils::resolve_document_id(&cache, &p)?),
+        None => None,
     };
 
     let req = UpdateDocumentRequest {
@@ -246,7 +257,7 @@ pub async fn update(
         labels: merged_labels,
     };
 
-    let doc = client.update_document(doc_id, &req).await?;
+    let doc = client.update_document(&doc_id, &req).await?;
     cache.upsert_document(&doc, false)?;
 
     println!(
@@ -265,6 +276,9 @@ pub async fn update(
 pub async fn delete(config: &Config, doc_id: &str, _recursive: bool) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+    let doc_id = &crate::utils::resolve_document_id(&cache, doc_id)?;
 
     client.delete_document(doc_id).await?;
 
@@ -284,8 +298,9 @@ pub async fn restore(config: &Config, doc_id: &str) -> Result<()> {
     let client = Client::new(config)?;
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
+    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
 
-    let doc = client.restore_document(doc_id).await?;
+    let doc = client.restore_document(&doc_id).await?;
     cache.upsert_document(&doc, false)?;
 
     println!(
@@ -305,8 +320,9 @@ pub async fn move_doc(config: &Config, doc_id: &str, namespace: &str) -> Result<
     let cache_path = config.cache_dir.join("index.db");
     let cache = TaskCache::open(&cache_path)?;
 
+    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
     let ns_id = resolve::resolve_namespace(&cache, namespace)?;
-    let doc = client.move_document(doc_id, &ns_id).await?;
+    let doc = client.move_document(&doc_id, &ns_id).await?;
     cache.upsert_document(&doc, false)?;
 
     println!(
@@ -329,6 +345,9 @@ pub async fn link(
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
 
     let req = AddReferenceRequest {
         target_id: target.to_string(),
@@ -336,7 +355,7 @@ pub async fn link(
         ref_type: ref_type.to_string(),
     };
 
-    client.add_document_reference(doc_id, &req).await?;
+    client.add_document_reference(&doc_id, &req).await?;
 
     println!(
         "{}",
@@ -355,8 +374,11 @@ pub async fn link(
 pub async fn unlink(config: &Config, doc_id: &str, target: &str) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
 
-    client.remove_document_reference(doc_id, target).await?;
+    client.remove_document_reference(&doc_id, target).await?;
 
     println!(
         "{}",
@@ -375,8 +397,11 @@ pub async fn unlink(config: &Config, doc_id: &str, target: &str) -> Result<()> {
 pub async fn backlinks(config: &Config, doc_id: &str) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
+    let cache_path = config.cache_dir.join("index.db");
+    let cache = TaskCache::open(&cache_path)?;
+    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
 
-    let refs = client.get_references(doc_id, "document").await?;
+    let refs = client.get_references(&doc_id, "document").await?;
 
     if refs.forward.is_empty() && refs.back.is_empty() {
         println!(
