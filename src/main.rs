@@ -699,6 +699,9 @@ enum DocCommands {
         /// Disable markdown formatting
         #[arg(long)]
         no_format: bool,
+        /// Disable line wrapping (preserves long URLs)
+        #[arg(long)]
+        no_wrap: bool,
         /// Recursively show child documents
         #[arg(short = 'r', long)]
         recursive: bool,
@@ -1153,8 +1156,12 @@ async fn run() -> Result<()> {
                 doc_ids,
                 no_sync,
                 no_format,
+                no_wrap,
                 recursive,
-            } => gtr::commands::pkms::show(&config, &doc_ids, no_sync, no_format, recursive).await,
+            } => {
+                gtr::commands::pkms::show(&config, &doc_ids, no_sync, no_format, no_wrap, recursive)
+                    .await
+            }
             DocCommands::Update {
                 doc_id,
                 title,

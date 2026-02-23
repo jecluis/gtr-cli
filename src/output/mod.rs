@@ -1758,18 +1758,30 @@ fn build_doc_label_colors(docs: &[Document], with_labels: bool) -> HashMap<&str,
 /// Shows title as header, metadata block, references, and content with
 /// optional markdown rendering. If `no_format` is true, content is shown
 /// as plain text. `indent` is prepended to every output line.
-pub fn print_document_detail(doc: &Document, icons: &Icons, no_format: bool, indent: &str) {
+pub fn print_document_detail(
+    doc: &Document,
+    icons: &Icons,
+    no_format: bool,
+    no_wrap: bool,
+    prefix_len: usize,
+    ns_display: &str,
+    indent: &str,
+) {
     let _ = icons; // reserved for future glyph use
 
     let mut fields = Vec::new();
 
     fields.push(DetailField {
         label: "ID:".into(),
-        value: doc.id.cyan().to_string(),
+        value: format_full_id(&doc.id, prefix_len),
     });
     fields.push(DetailField {
         label: "Namespace:".into(),
-        value: doc.namespace_id.clone(),
+        value: format!(
+            "{} {}",
+            ns_display.cyan().bold(),
+            format_task_id(&doc.namespace_id, prefix_len, true).dimmed()
+        ),
     });
 
     if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&doc.created) {
@@ -1802,7 +1814,7 @@ pub fn print_document_detail(doc: &Document, icons: &Icons, no_format: bool, ind
     if let Some(ref pid) = doc.parent_id {
         fields.push(DetailField {
             label: "Parent:".into(),
-            value: pid.clone(),
+            value: format_full_id(pid, prefix_len),
         });
     }
     fields.push(DetailField {
@@ -1847,7 +1859,7 @@ pub fn print_document_detail(doc: &Document, icons: &Icons, no_format: bool, ind
             Some(DetailBody {
                 header: "Content:".into(),
                 text: doc.content.clone(),
-                no_wrap: false,
+                no_wrap,
             })
         },
         empty_body_text: "(No content)".into(),

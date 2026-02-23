@@ -189,6 +189,7 @@ pub async fn show(
     doc_ids: &[String],
     _no_sync: bool,
     no_format: bool,
+    no_wrap: bool,
     recursive: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
@@ -203,7 +204,7 @@ pub async fn show(
     for (i, raw_id) in doc_ids.iter().enumerate() {
         let resolved = crate::utils::resolve_document_id(&cache, raw_id)?;
         show_one_document(
-            &client, &cache, &icons, no_format, recursive, &resolved, prefix_len, 0, "",
+            &client, &cache, &icons, no_format, no_wrap, recursive, &resolved, prefix_len, 0, "",
         )
         .await?;
 
@@ -225,6 +226,7 @@ async fn show_one_document(
     cache: &TaskCache,
     icons: &Icons,
     no_format: bool,
+    no_wrap: bool,
     recursive: bool,
     doc_id: &str,
     prefix_len: usize,
@@ -238,7 +240,28 @@ async fn show_one_document(
     };
 
     let doc = client.get_document(doc_id).await?;
-    output::print_document_detail(&doc, icons, no_format, &indent_str);
+
+    let ns_display = cache
+        .get_namespace_path(&doc.namespace_id)
+        .ok()
+        .map(|id_path| {
+            id_path
+                .iter()
+                .filter_map(|id| cache.get_namespace(id).ok().flatten().map(|ns| ns.name))
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default();
+
+    output::print_document_detail(
+        &doc,
+        icons,
+        no_format,
+        no_wrap,
+        prefix_len,
+        &ns_display,
+        &indent_str,
+    );
 
     // Children: either recurse into them or show inline summary
     if recursive {
@@ -261,6 +284,7 @@ async fn show_one_document(
                 cache,
                 icons,
                 no_format,
+                no_wrap,
                 recursive,
                 &child.id,
                 prefix_len,
