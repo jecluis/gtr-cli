@@ -24,6 +24,7 @@ use crate::Result;
 use crate::cache::{ActiveTask, FeelsState, TaskCache};
 use crate::commands::feels::{energy_description, focus_description};
 use crate::config::Config;
+use crate::output;
 
 /// Show a quick status dashboard.
 pub async fn run(config: &Config, with_labels: bool) -> Result<()> {
@@ -36,7 +37,9 @@ pub async fn run(config: &Config, with_labels: bool) -> Result<()> {
 
     // -- Active work --
     let active = cache.get_active_work_tasks()?;
-    print_active_tasks(&active);
+    let all_ids = cache.all_task_ids()?;
+    let prefix_len = output::compute_min_prefix_len(&all_ids);
+    print_active_tasks(&active, prefix_len);
 
     // -- Counts --
     let overdue = cache.count_overdue()?;
@@ -83,12 +86,13 @@ fn print_feels(cache: &TaskCache, today: &chrono::NaiveDate) {
     }
 }
 
-fn print_active_tasks(tasks: &[ActiveTask]) {
+fn print_active_tasks(tasks: &[ActiveTask], prefix_len: usize) {
     if tasks.is_empty() {
         println!("\n{}", "No tasks in progress.".dimmed());
         return;
     }
 
+    let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
     println!("\n{}", "Working on:".bold());
     for task in tasks {
         let state_badge = match task.work_state.as_str() {
@@ -96,18 +100,10 @@ fn print_active_tasks(tasks: &[ActiveTask]) {
             "stopped" => "stopped".yellow().to_string(),
             other => other.to_string(),
         };
-        let short_id = if task.id.len() > 8 {
-            &task.id[..8]
-        } else {
-            &task.id
-        };
+        let short_id = output::format_task_id(&task.id, prefix_len, colorize);
         println!(
             "  {} {} {} [{}, {}]",
-            state_badge,
-            short_id.dimmed(),
-            task.title,
-            task.priority,
-            task.size,
+            state_badge, short_id, task.title, task.priority, task.size,
         );
     }
 }
