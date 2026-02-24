@@ -767,6 +767,23 @@ impl Client {
         self.get(&url).await
     }
 
+    /// Get a document by slug (with optional namespace_id filter).
+    pub async fn get_document_by_slug(
+        &self,
+        slug: &str,
+        namespace_id: Option<&str>,
+    ) -> Result<Document> {
+        let mut url = format!(
+            "{}/api/documents/by-slug/{}",
+            self.base_url,
+            encode_path(slug)
+        );
+        if let Some(ns) = namespace_id {
+            url.push_str(&format!("?namespace_id={}", encode_path(ns)));
+        }
+        self.get(&url).await
+    }
+
     /// Create a new document.
     pub async fn create_document(
         &self,
