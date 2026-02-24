@@ -461,6 +461,8 @@ pub struct CreateDocumentRequest {
     pub parent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug_prefix: Option<String>,
 }
 
 /// Request to update a document.
@@ -474,6 +476,8 @@ pub struct UpdateDocumentRequest {
     pub parent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug_prefix: Option<String>,
 }
 
 /// Request to move a document to a different namespace.

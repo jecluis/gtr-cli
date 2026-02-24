@@ -1682,12 +1682,19 @@ fn print_doc_tree_node(
         String::new()
     };
 
+    let slug_tag = if !doc.slug.is_empty() {
+        format!("  {}", doc.slug.dimmed())
+    } else {
+        String::new()
+    };
+
     println!(
-        "{}{}{} {}{}  ({}){}",
+        "{}{}{} {}{}{}  ({}){}",
         prefix,
         connector,
         short_id,
         doc.title,
+        slug_tag,
         deleted_tag,
         modified_rel.dimmed(),
         label_tag,
@@ -1775,6 +1782,18 @@ pub fn print_document_detail(
         label: "ID:".into(),
         value: format_full_id(&doc.id, prefix_len),
     });
+    if !doc.slug.is_empty() {
+        fields.push(DetailField {
+            label: "Slug:".into(),
+            value: doc.slug.cyan().to_string(),
+        });
+    }
+    if !doc.slug_aliases.is_empty() {
+        fields.push(DetailField {
+            label: "Aliases:".into(),
+            value: doc.slug_aliases.join(", ").dimmed().to_string(),
+        });
+    }
     fields.push(DetailField {
         label: "Namespace:".into(),
         value: format!(

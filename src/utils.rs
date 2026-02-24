@@ -350,7 +350,28 @@ pub fn resolve_task_id_from_cache(
 }
 
 /// Resolve a potentially shortened document ID from the local cache.
+///
+/// If `short_id` looks like a slug (ends with `-{8 hex chars}`), slug
+/// resolution is attempted first.  Falls back to UUID prefix matching.
 pub fn resolve_document_id(cache: &crate::cache::TaskCache, short_id: &str) -> Result<String> {
+    // If it looks like a slug (has -{hex8} suffix), try slug resolution first
+    if crate::slug::extract_hex_suffix(short_id).is_some() {
+        let slugs = cache.all_document_slugs()?;
+        let matches: Vec<&(String, String)> =
+            slugs.iter().filter(|(slug, _)| slug == short_id).collect();
+        match matches.len() {
+            1 => return Ok(matches[0].1.clone()),
+            n if n > 1 => {
+                return Err(crate::Error::UserFacing(format!(
+                    "Ambiguous slug '{short_id}' matches {n} documents. \
+                     Please use a UUID instead."
+                )));
+            }
+            _ => {} // 0 matches — fall through to UUID prefix resolution
+        }
+    }
+
+    // Fall back to UUID prefix resolution
     resolve_short_id(&cache.all_document_ids()?, short_id, "document")
 }
 

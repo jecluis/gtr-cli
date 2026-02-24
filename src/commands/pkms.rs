@@ -28,6 +28,7 @@ use crate::models::{AddReferenceRequest, CreateDocumentRequest, Document, Update
 use crate::{output, resolve};
 
 /// Create a new document.
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     config: &Config,
     namespace: Option<String>,
@@ -35,6 +36,7 @@ pub async fn create(
     body: bool,
     labels: Vec<String>,
     parent: Option<String>,
+    slug_prefix: Option<String>,
     _no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
@@ -79,6 +81,7 @@ pub async fn create(
         } else {
             Some(labels)
         },
+        slug_prefix,
     };
 
     let doc = client.create_document(&ns_id, &req).await?;
@@ -110,6 +113,9 @@ pub async fn create(
         output::format_full_id(&doc.id, prefix_len)
     );
     println!("  Title:     {}", doc.title);
+    if !doc.slug.is_empty() {
+        println!("  Slug:      {}", doc.slug.cyan());
+    }
     println!(
         "  Namespace: {} {}",
         ns_display.cyan().bold(),
@@ -312,6 +318,7 @@ pub async fn update(
     labels: Vec<String>,
     unlabels: Vec<String>,
     parent: Option<String>,
+    slug_prefix: Option<String>,
     _no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
@@ -366,6 +373,7 @@ pub async fn update(
         content: new_content,
         parent_id,
         labels: merged_labels,
+        slug_prefix,
     };
 
     let doc = client.update_document(&doc_id, &req).await?;
@@ -379,6 +387,9 @@ pub async fn update(
     );
     println!("  ID:    {}", doc.id.cyan());
     println!("  Title: {}", doc.title);
+    if !doc.slug.is_empty() {
+        println!("  Slug:  {}", doc.slug.cyan());
+    }
 
     Ok(())
 }

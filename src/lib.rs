@@ -34,6 +34,7 @@ pub mod models;
 pub mod output;
 pub mod promotion;
 pub mod resolve;
+pub mod slug;
 pub mod storage;
 pub mod sync;
 pub mod threshold_cache;

@@ -666,6 +666,9 @@ enum DocCommands {
         /// Parent document ID
         #[arg(long = "for", value_name = "PARENT_ID")]
         parent: Option<String>,
+        /// Override the slug prefix (kebab part)
+        #[arg(long = "slug-prefix")]
+        slug_prefix: Option<String>,
         /// Skip sync
         #[arg(long)]
         no_sync: bool,
@@ -725,6 +728,9 @@ enum DocCommands {
         /// Parent document ID
         #[arg(long = "for", value_name = "PARENT_ID", num_args = 0..=1, default_missing_value = "")]
         parent: Option<String>,
+        /// Override the slug prefix (kebab part)
+        #[arg(long = "slug-prefix")]
+        slug_prefix: Option<String>,
         /// Skip sync
         #[arg(long)]
         no_sync: bool,
@@ -1135,10 +1141,18 @@ async fn run() -> Result<()> {
                 body,
                 labels,
                 parent,
+                slug_prefix,
                 no_sync,
             } => {
                 gtr::commands::pkms::create(
-                    &config, namespace, title, body, labels, parent, no_sync,
+                    &config,
+                    namespace,
+                    title,
+                    body,
+                    labels,
+                    parent,
+                    slug_prefix,
+                    no_sync,
                 )
                 .await
             }
@@ -1169,10 +1183,19 @@ async fn run() -> Result<()> {
                 labels,
                 unlabels,
                 parent,
+                slug_prefix,
                 no_sync,
             } => {
                 gtr::commands::pkms::update(
-                    &config, &doc_id, title, body, labels, unlabels, parent, no_sync,
+                    &config,
+                    &doc_id,
+                    title,
+                    body,
+                    labels,
+                    unlabels,
+                    parent,
+                    slug_prefix,
+                    no_sync,
                 )
                 .await
             }
