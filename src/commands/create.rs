@@ -99,20 +99,23 @@ pub async fn run(
         .map(|c| c.body_markdown.clone())
         .unwrap_or_default();
 
-    let body = if edit_body {
-        match crate::editor::edit_text(config, &fetched_body) {
-            Ok(content) => content,
-            Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
+    let (final_title, body) = if edit_body {
+        match crate::editor::edit_body(config, &final_title, &fetched_body)? {
+            crate::editor::EditorResult::Changed {
+                title: new_title,
+                body: new_body,
+            } => (new_title.unwrap_or(final_title), new_body),
+            crate::editor::EditorResult::Unchanged => (final_title, fetched_body),
+            crate::editor::EditorResult::Cancelled => {
                 println!(
                     "{}",
                     format!("{} Operation cancelled", icons.cancelled).yellow()
                 );
                 return Ok(());
             }
-            Err(e) => return Err(e),
         }
     } else {
-        fetched_body
+        (final_title, fetched_body)
     };
 
     // Build custom field (include source_url if from URL, is_bookmark flag)

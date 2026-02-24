@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! External editor integration for task body editing.
+//! External editor integration for body editing.
 
 use std::fs;
 use std::io::{self, Write};
@@ -95,28 +95,61 @@ fn confirm(prompt: &str) -> Result<bool> {
     Ok(input.trim().to_lowercase() == "y")
 }
 
-/// Edit task body with title as markdown H1 header.
+/// Result of editing content in an external editor.
+pub enum EditorResult {
+    /// Content was modified (title and/or body changed).
+    Changed {
+        /// New title if it was changed in the editor, None if unchanged.
+        title: Option<String>,
+        /// The new body content.
+        body: String,
+    },
+    /// No changes were made to the content.
+    Unchanged,
+    /// User cancelled the operation.
+    Cancelled,
+}
+
+/// Edit body with title as markdown H1 header.
 ///
-/// Opens editor with `# {title}\n\n{body}` format. If user changes the
-/// title line, returns the new title. If user removes the title line,
-/// original title is preserved.
-///
-/// Returns: `(new_title_if_changed, new_body)`
-pub fn edit_task_body(
+/// Opens editor with `# {title}\n\n{body}` format. Returns an
+/// [`EditorResult`] indicating whether content changed, was unchanged,
+/// or was cancelled.
+pub fn edit_body(
     config: &Config,
     original_title: &str,
     original_body: &str,
-) -> Result<(Option<String>, String)> {
-    // Format content with title as H1 header
+) -> Result<EditorResult> {
     let content = format!("# {}\n\n{}", original_title, original_body);
 
-    // Open editor
-    let edited = edit_text(config, &content)?;
+    let edited = match edit_text(config, &content) {
+        Ok(text) => text,
+        Err(Error::InvalidInput(ref msg)) if msg.contains("cancelled") => {
+            return Ok(EditorResult::Cancelled);
+        }
+        Err(e) => return Err(e),
+    };
 
-    // Parse result to extract title and body
     let (new_title, new_body) = parse_markdown_with_title(&edited, original_title);
 
-    Ok((new_title, new_body))
+    // Trim trailing whitespace — editors may add/remove trailing newlines
+    let new_body = new_body.trim_end().to_string();
+    let original_trimmed = original_body.trim_end();
+
+    // Nothing changed
+    if new_title.is_none() && new_body == original_trimmed {
+        return Ok(EditorResult::Unchanged);
+    }
+
+    // Body was emptied — confirm with user
+    if is_empty_content(&new_body) && !confirm("Body is empty. Save empty body? (y/N):")? {
+        return Ok(EditorResult::Cancelled);
+    }
+
+    Ok(EditorResult::Changed {
+        title: new_title,
+        body: new_body,
+    })
 }
 
 /// Parse edited markdown content, extracting title from H1 header if present.
@@ -154,11 +187,9 @@ fn parse_markdown_with_title(content: &str, original_title: &str) -> (Option<Str
 
 /// Open an external editor to edit text.
 ///
-/// - Creates a temporary .md file
-/// - Pre-populates with initial_content
-/// - Spawns the editor process
-/// - Handles empty result with confirmation
-/// - Returns edited content or error
+/// Low-level function that creates a temporary `.md` file, opens it in
+/// the user's editor, and returns the content after saving.  Prefer
+/// [`edit_body`] for body editing with title support and validation.
 pub fn edit_text(config: &Config, initial_content: &str) -> Result<String> {
     let editor_cmd = get_editor(config)?;
     validate_editor(&editor_cmd)?;
@@ -199,11 +230,6 @@ pub fn edit_text(config: &Config, initial_content: &str) -> Result<String> {
 
     // Clean up temp file
     let _ = fs::remove_file(&md_path);
-
-    // Check if content is empty and confirm
-    if is_empty_content(&content) && !confirm("Body is empty. Save empty body? (y/N):")? {
-        return Err(Error::InvalidInput("Operation cancelled".to_string()));
-    }
 
     Ok(content)
 }

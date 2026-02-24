@@ -24,6 +24,7 @@ use tracing::{debug, info};
 
 use crate::client::Client;
 use crate::config::Config;
+use crate::editor::EditorResult;
 use crate::hierarchy;
 use crate::icons::Icons;
 use crate::local::LocalContext;
@@ -125,8 +126,11 @@ pub async fn run(
     // Edit body if requested (includes title as H1 header)
     let now = Utc::now();
     if edit_body {
-        match crate::editor::edit_task_body(config, &task.title, &task.body) {
-            Ok((new_title, new_body)) => {
+        match crate::editor::edit_body(config, &task.title, &task.body)? {
+            EditorResult::Changed {
+                title: new_title,
+                body: new_body,
+            } => {
                 if task.body != new_body {
                     task.log.push(LogEntry {
                         timestamp: now,
@@ -135,7 +139,6 @@ pub async fn run(
                     });
                     task.body = new_body;
                 }
-                // Update title if it changed in editor
                 if let Some(title_from_editor) = new_title
                     && task.title != title_from_editor
                 {
@@ -150,14 +153,14 @@ pub async fn run(
                     task.title = title_from_editor;
                 }
             }
-            Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
+            EditorResult::Unchanged => {}
+            EditorResult::Cancelled => {
                 println!(
                     "{}",
                     format!("{} Operation cancelled", icons.cancelled).yellow()
                 );
                 return Ok(());
             }
-            Err(e) => return Err(e),
         }
     }
 
@@ -451,6 +454,17 @@ pub async fn run(
         }
 
         task.project_id = new_project.clone();
+    }
+
+    // Detect whether anything actually changed before bumping version
+    let has_changes = task.log.len() != old_task.log.len()
+        || task.parent_id != old_task.parent_id
+        || task.project_id != old_task.project_id
+        || task.labels != old_task.labels;
+
+    if !has_changes {
+        println!("{}", format!("{} No changes to save.", icons.info).yellow());
+        return Ok(());
     }
 
     // Update metadata

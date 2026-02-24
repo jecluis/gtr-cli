@@ -49,21 +49,24 @@ pub async fn create(
 
     let title_str = title.join(" ");
 
-    // Optionally edit body in editor
-    let content = if body {
-        match crate::editor::edit_text(config, "") {
-            Ok(text) => text,
-            Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
+    // Optionally edit body in editor (with title as H1 header)
+    let (title_str, content) = if body {
+        match crate::editor::edit_body(config, &title_str, "")? {
+            crate::editor::EditorResult::Changed {
+                title: new_title,
+                body: new_body,
+            } => (new_title.unwrap_or(title_str), new_body),
+            crate::editor::EditorResult::Unchanged => (title_str, String::new()),
+            crate::editor::EditorResult::Cancelled => {
                 println!(
                     "{}",
                     format!("{} Operation cancelled", icons.cancelled).yellow()
                 );
                 return Ok(());
             }
-            Err(e) => return Err(e),
         }
     } else {
-        String::new()
+        (title_str, String::new())
     };
 
     // Resolve parent document if provided
@@ -330,21 +333,24 @@ pub async fn update(
     // Get current document for label merging and body editing
     let current = client.get_document(&doc_id).await?;
 
-    // Handle body editing
-    let new_content = if body {
-        match crate::editor::edit_text(config, &current.content) {
-            Ok(text) => Some(text),
-            Err(crate::Error::InvalidInput(ref msg)) if msg == "Operation cancelled" => {
+    // Handle body editing (with title as H1 header)
+    let (editor_title, new_content) = if body {
+        match crate::editor::edit_body(config, &current.title, &current.content)? {
+            crate::editor::EditorResult::Changed {
+                title,
+                body: new_body,
+            } => (title, Some(new_body)),
+            crate::editor::EditorResult::Unchanged => (None, None),
+            crate::editor::EditorResult::Cancelled => {
                 println!(
                     "{}",
                     format!("{} Operation cancelled", icons.cancelled).yellow()
                 );
                 return Ok(());
             }
-            Err(e) => return Err(e),
         }
     } else {
-        None
+        (None, None)
     };
 
     // Merge labels: add new, remove unlabels
@@ -368,13 +374,27 @@ pub async fn update(
         None => None,
     };
 
+    // --title flag takes precedence over title changed in editor
+    let effective_title = title.or(editor_title);
+
     let req = UpdateDocumentRequest {
-        title,
+        title: effective_title,
         content: new_content,
         parent_id,
         labels: merged_labels,
         slug_prefix,
     };
+
+    // Skip server call if nothing actually changed
+    if req.title.is_none()
+        && req.content.is_none()
+        && req.parent_id.is_none()
+        && req.labels.is_none()
+        && req.slug_prefix.is_none()
+    {
+        println!("{}", format!("{} No changes to save.", icons.info).yellow());
+        return Ok(());
+    }
 
     let doc = client.update_document(&doc_id, &req).await?;
     cache.upsert_document(&doc, false)?;
