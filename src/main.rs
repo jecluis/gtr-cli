@@ -709,6 +709,14 @@ enum DocCommands {
         #[arg(short = 'r', long)]
         recursive: bool,
     },
+    /// Edit a document's body in external editor
+    Edit {
+        /// Document ID
+        doc_id: String,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
+    },
     /// Update a document
     Update {
         /// Document ID
@@ -1175,6 +1183,20 @@ async fn run() -> Result<()> {
             } => {
                 gtr::commands::pkms::show(&config, &doc_ids, no_sync, no_format, no_wrap, recursive)
                     .await
+            }
+            DocCommands::Edit { doc_id, no_sync } => {
+                gtr::commands::pkms::update(
+                    &config,
+                    &doc_id,
+                    None,
+                    true,
+                    vec![],
+                    vec![],
+                    None,
+                    None,
+                    no_sync,
+                )
+                .await
             }
             DocCommands::Update {
                 doc_id,
