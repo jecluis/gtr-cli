@@ -72,6 +72,12 @@ impl PkmsDocument {
             tx.put(ROOT, "content", document.content.as_str())?;
             tx.put(ROOT, "namespace_id", document.namespace_id.as_str())?;
 
+            // Slug fields at root level
+            tx.put(ROOT, "slug", document.slug.as_str())?;
+            let slug_aliases_json =
+                serde_json::to_string(&document.slug_aliases).unwrap_or_else(|_| "[]".to_string());
+            tx.put(ROOT, "slug_aliases", slug_aliases_json.as_str())?;
+
             Ok(())
         })
         .map_err(|e| Error::Storage(format!("failed to create PKMS document: {e:?}")))?;
@@ -150,6 +156,13 @@ impl PkmsDocument {
             deleted,
             version,
             parent_id,
+            slug: self.try_get_str(&ROOT, "slug")?.unwrap_or_default(),
+            slug_aliases: self
+                .try_get_str(&ROOT, "slug_aliases")?
+                .map(|s| serde_json::from_str(&s))
+                .transpose()
+                .map_err(|e| Error::Storage(format!("invalid slug_aliases JSON: {e}")))?
+                .unwrap_or_default(),
             labels,
             references,
             custom,
@@ -240,6 +253,15 @@ impl PkmsDocument {
                 }
                 if document.namespace_id != current.namespace_id {
                     tx.put(ROOT, "namespace_id", document.namespace_id.as_str())?;
+                }
+
+                if document.slug != current.slug {
+                    tx.put(ROOT, "slug", document.slug.as_str())?;
+                }
+                if document.slug_aliases != current.slug_aliases {
+                    let aliases_json = serde_json::to_string(&document.slug_aliases)
+                        .unwrap_or_else(|_| "[]".to_string());
+                    tx.put(ROOT, "slug_aliases", aliases_json.as_str())?;
                 }
 
                 Ok(())

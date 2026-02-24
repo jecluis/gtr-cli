@@ -211,7 +211,9 @@ impl TaskCache {
                 last_synced TEXT,
                 sync_state BLOB,
                 parent_id TEXT,
-                labels TEXT NOT NULL DEFAULT '[]'
+                labels TEXT NOT NULL DEFAULT '[]',
+                slug TEXT NOT NULL DEFAULT '',
+                slug_aliases TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS idx_documents_ns
                 ON documents(namespace_id);
@@ -220,6 +222,16 @@ impl TaskCache {
             "#,
             )
             .map_err(|e| Error::Database(format!("documents schema init failed: {e}")))?;
+
+        // Migrate existing caches: add slug columns to documents if missing
+        let _ = self.conn.execute(
+            "ALTER TABLE documents ADD COLUMN slug TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE documents ADD COLUMN slug_aliases TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
 
         // Namespace-project link table
         self.conn
@@ -1227,10 +1239,13 @@ impl TaskCache {
 
     /// Parse a CachedDocument from a row with columns:
     /// id, namespace_id, title, created, modified, deleted, version,
-    /// needs_push, last_synced, parent_id, labels
+    /// needs_push, last_synced, parent_id, labels, slug, slug_aliases
     fn row_to_cached_document(row: &rusqlite::Row) -> rusqlite::Result<CachedDocument> {
         let labels_json: String = row.get(10)?;
         let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        let slug_aliases_json: String = row.get(12)?;
+        let slug_aliases: Vec<String> =
+            serde_json::from_str(&slug_aliases_json).unwrap_or_default();
         Ok(CachedDocument {
             id: row.get(0)?,
             namespace_id: row.get(1)?,
@@ -1242,6 +1257,8 @@ impl TaskCache {
             needs_push: row.get::<_, i64>(7)? != 0,
             last_synced: row.get(8)?,
             parent_id: row.get(9)?,
+            slug: row.get(11)?,
+            slug_aliases,
             labels,
         })
     }
@@ -1253,8 +1270,9 @@ impl TaskCache {
                 r#"
             INSERT INTO documents (
                 id, namespace_id, title, created, modified,
-                deleted, version, needs_push, parent_id, labels
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                deleted, version, needs_push, parent_id, labels,
+                slug, slug_aliases
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(id) DO UPDATE SET
                 namespace_id = excluded.namespace_id,
                 title = excluded.title,
@@ -1263,7 +1281,9 @@ impl TaskCache {
                 version = excluded.version,
                 needs_push = excluded.needs_push OR needs_push,
                 parent_id = excluded.parent_id,
-                labels = excluded.labels
+                labels = excluded.labels,
+                slug = excluded.slug,
+                slug_aliases = excluded.slug_aliases
             "#,
                 params![
                     doc.id,
@@ -1276,6 +1296,8 @@ impl TaskCache {
                     needs_push as i64,
                     doc.parent_id,
                     serde_json::to_string(&doc.labels).unwrap_or_else(|_| "[]".to_string()),
+                    doc.slug,
+                    serde_json::to_string(&doc.slug_aliases).unwrap_or_else(|_| "[]".to_string()),
                 ],
             )
             .map_err(|e| Error::Database(format!("upsert document failed: {e}")))?;
@@ -1298,12 +1320,56 @@ impl TaskCache {
         Ok(ids)
     }
 
+    /// Find a document by slug in a namespace.
+    pub fn find_document_by_slug(
+        &self,
+        namespace_id: &str,
+        slug: &str,
+    ) -> Result<Option<CachedDocument>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, namespace_id, title, created, modified, deleted, \
+                        version, needs_push, last_synced, parent_id, labels, \
+                        slug, slug_aliases \
+                 FROM documents \
+                 WHERE namespace_id = ?1 AND slug = ?2 AND deleted IS NULL",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let doc = stmt
+            .query_row(params![namespace_id, slug], Self::row_to_cached_document)
+            .optional()
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?;
+
+        Ok(doc)
+    }
+
+    /// Get all document slugs for resolution (slug, id pairs).
+    pub fn all_document_slugs(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT slug, id FROM documents WHERE slug != '' AND deleted IS NULL")
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let pairs = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(pairs)
+    }
+
     /// Get a document by ID.
     pub fn get_document(&self, id: &str) -> Result<Option<CachedDocument>> {
         self.conn
             .query_row(
                 "SELECT id, namespace_id, title, created, modified, deleted, \
-                        version, needs_push, last_synced, parent_id, labels \
+                        version, needs_push, last_synced, parent_id, labels, \
+                        slug, slug_aliases \
                  FROM documents WHERE id = ?1",
                 params![id],
                 Self::row_to_cached_document,
@@ -1320,11 +1386,13 @@ impl TaskCache {
     ) -> Result<Vec<CachedDocument>> {
         let sql = if include_deleted {
             "SELECT id, namespace_id, title, created, modified, deleted, \
-                    version, needs_push, last_synced, parent_id, labels \
+                    version, needs_push, last_synced, parent_id, labels, \
+                    slug, slug_aliases \
              FROM documents WHERE namespace_id = ?1 ORDER BY modified DESC"
         } else {
             "SELECT id, namespace_id, title, created, modified, deleted, \
-                    version, needs_push, last_synced, parent_id, labels \
+                    version, needs_push, last_synced, parent_id, labels, \
+                    slug, slug_aliases \
              FROM documents WHERE namespace_id = ?1 AND deleted IS NULL \
              ORDER BY modified DESC"
         };
@@ -1349,7 +1417,8 @@ impl TaskCache {
             .conn
             .prepare(
                 "SELECT id, namespace_id, title, created, modified, deleted, \
-                        version, needs_push, last_synced, parent_id, labels \
+                        version, needs_push, last_synced, parent_id, labels, \
+                        slug, slug_aliases \
                  FROM documents \
                  WHERE parent_id = ?1 AND deleted IS NULL \
                  ORDER BY modified DESC",
@@ -1895,5 +1964,7 @@ pub struct CachedDocument {
     pub needs_push: bool,
     pub last_synced: Option<String>,
     pub parent_id: Option<String>,
+    pub slug: String,
+    pub slug_aliases: Vec<String>,
     pub labels: Vec<String>,
 }

@@ -389,6 +389,11 @@ pub struct Document {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
     #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub slug_aliases: Vec<String>,
+    #[serde(default)]
     pub labels: Vec<String>,
     #[serde(default)]
     pub references: Vec<Reference>,
