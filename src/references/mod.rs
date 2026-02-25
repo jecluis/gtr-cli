@@ -15,32 +15,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Getting Things Rusty CLI client library.
+//! Reference parsing and resolution for cross-entity links.
 
-pub mod cache;
-pub mod client;
-pub mod commands;
-pub mod config;
-pub mod crdt;
-pub mod editor;
-pub mod error;
-pub mod hierarchy;
-pub mod icons;
-pub mod labels;
-pub mod local;
-pub mod logging;
-pub mod markdown;
-pub mod models;
-pub mod output;
-pub mod promotion;
-pub mod references;
-pub mod resolve;
-pub mod slug;
-pub mod storage;
-pub mod sync;
-pub mod threshold_cache;
-pub mod url_fetch;
-pub mod utils;
+pub mod parser;
+pub mod resolver;
 
-pub use client::Client;
-pub use error::{Error, Result};
+pub use resolver::build_refs_for_document;
