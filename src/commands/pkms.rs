@@ -19,15 +19,19 @@
 
 use colored::Colorize;
 
+use chrono::Utc;
+use uuid::Uuid;
+
 use crate::Result;
-use crate::cache::TaskCache;
+use crate::cache::CachedDocument;
 use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
-use crate::models::{AddReferenceRequest, CreateDocumentRequest, Document, UpdateDocumentRequest};
+use crate::local::LocalContext;
+use crate::models::{Document, Namespace, Reference};
 use crate::{output, resolve};
 
-/// Create a new document.
+/// Create a new document (local-first with optional sync).
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
     config: &Config,
@@ -36,16 +40,14 @@ pub async fn create(
     body: bool,
     labels: Vec<String>,
     parent: Option<String>,
-    slug_prefix: Option<String>,
-    _no_sync: bool,
+    _slug_prefix: Option<String>,
+    no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
-    let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
 
     // Resolve namespace (picker if not specified)
-    let ns_id = crate::utils::resolve_namespace_interactive(&cache, namespace)?;
+    let ns_id = crate::utils::resolve_namespace_interactive(&ctx.cache, namespace)?;
 
     let title_str = title.join(" ");
 
@@ -71,35 +73,43 @@ pub async fn create(
 
     // Resolve parent document if provided
     let resolved_parent = match parent {
-        Some(ref p) => Some(crate::utils::resolve_document_id(&cache, p)?),
+        Some(ref p) => Some(crate::utils::resolve_document_id(&ctx.cache, p)?),
         None => None,
     };
 
-    let req = CreateDocumentRequest {
+    let now = Utc::now().to_rfc3339();
+    let doc = Document {
+        id: Uuid::new_v4().to_string(),
+        namespace_id: ns_id.clone(),
         title: title_str,
         content,
+        created: now.clone(),
+        modified: now,
+        deleted: None,
+        version: 1,
         parent_id: resolved_parent,
-        labels: if labels.is_empty() {
-            None
-        } else {
-            Some(labels)
-        },
-        slug_prefix,
+        slug: String::new(),
+        slug_aliases: vec![],
+        labels,
+        references: vec![],
+        custom: serde_json::Value::Object(Default::default()),
     };
 
-    let doc = client.create_document(&ns_id, &req).await?;
-    cache.upsert_document(&doc, false)?;
+    // Save locally
+    ctx.storage.create_document(&doc)?;
+    ctx.cache.upsert_document(&doc, true)?;
 
-    let all_ids = cache.all_document_ids()?;
+    let all_ids = ctx.cache.all_document_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
 
-    let ns_display = cache
+    let ns_display = ctx
+        .cache
         .get_namespace_path(&doc.namespace_id)
         .ok()
         .map(|id_path| {
             id_path
                 .iter()
-                .filter_map(|id| cache.get_namespace(id).ok().flatten().map(|ns| ns.name))
+                .filter_map(|id| ctx.cache.get_namespace(id).ok().flatten().map(|ns| ns.name))
                 .collect::<Vec<_>>()
                 .join("/")
         })
@@ -107,7 +117,7 @@ pub async fn create(
 
     println!(
         "{}",
-        format!("{} Document created!", icons.success)
+        format!("{} Document created locally!", icons.success)
             .green()
             .bold()
     );
@@ -116,9 +126,6 @@ pub async fn create(
         output::format_full_id(&doc.id, prefix_len)
     );
     println!("  Title:     {}", doc.title);
-    if !doc.slug.is_empty() {
-        println!("  Slug:      {}", doc.slug.cyan());
-    }
     println!(
         "  Namespace: {} {}",
         ns_display.cyan().bold(),
@@ -129,6 +136,21 @@ pub async fn create(
         println!("  Labels:    {}", label_strs.join(", "));
     }
 
+    // Attempt sync if enabled
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
+        } else {
+            println!(
+                "{}",
+                format!("  {} Queued for sync (server unreachable)", icons.queued).yellow()
+            );
+        }
+    }
+
     println!(
         "\nView with: {}",
         format!("gtr doc show {}", doc.id).dimmed()
@@ -137,7 +159,7 @@ pub async fn create(
     Ok(())
 }
 
-/// List documents.
+/// List documents (local-first from cache).
 pub async fn list(
     config: &Config,
     namespace: Option<String>,
@@ -147,24 +169,28 @@ pub async fn list(
     _no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
-    let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
+    let ctx = LocalContext::new(config, true)?;
 
     let (namespaces_list, docs) = match namespace {
         Some(ref ns) => {
-            let ns_id = resolve::resolve_namespace(&cache, ns)?;
-            (Vec::new(), client.list_documents(&ns_id, all).await?)
+            let ns_id = resolve::resolve_namespace(&ctx.cache, ns)?;
+            let cached_docs = ctx.cache.list_documents(&ns_id, all)?;
+            (
+                Vec::new(),
+                cached_docs.into_iter().map(cached_to_document).collect(),
+            )
         }
         None => {
-            let namespaces = client.list_namespaces().await?;
+            let cached_namespaces = ctx.cache.list_namespaces()?;
+            let namespaces: Vec<Namespace> =
+                cached_namespaces.iter().map(cached_to_namespace).collect();
             let mut all_docs = Vec::new();
-            for ns in &namespaces {
-                if !all && ns.is_deleted() {
+            for ns in &cached_namespaces {
+                if !all && ns.deleted.is_some() {
                     continue;
                 }
-                match client.list_documents(&ns.id, all).await {
-                    Ok(d) => all_docs.extend(d),
+                match ctx.cache.list_documents(&ns.id, all) {
+                    Ok(d) => all_docs.extend(d.into_iter().map(cached_to_document)),
                     Err(_) => continue,
                 }
             }
@@ -181,7 +207,7 @@ pub async fn list(
             .collect()
     };
 
-    let all_ids = cache.all_document_ids()?;
+    let all_ids = ctx.cache.all_document_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
 
     if namespace.is_some() {
@@ -192,28 +218,27 @@ pub async fn list(
     Ok(())
 }
 
-/// Show one or more documents.
+/// Show one or more documents (local-first with optional refresh).
 pub async fn show(
     config: &Config,
     doc_ids: &[String],
-    _no_sync: bool,
+    no_sync: bool,
     no_format: bool,
     no_wrap: bool,
     recursive: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
 
-    let all_ids = cache.all_document_ids()?;
+    let all_ids = ctx.cache.all_document_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
 
     let count = doc_ids.len();
     for (i, raw_id) in doc_ids.iter().enumerate() {
-        let resolved = crate::utils::resolve_document_id(&cache, raw_id)?;
+        let resolved = crate::utils::resolve_document_id(&ctx.cache, raw_id)?;
         show_one_document(
-            &client, &cache, &icons, no_format, no_wrap, recursive, &resolved, prefix_len, 0, "",
+            &client, &ctx, &icons, no_format, no_wrap, recursive, &resolved, prefix_len, 0, "",
         )
         .await?;
 
@@ -232,7 +257,7 @@ pub async fn show(
 #[allow(clippy::too_many_arguments)]
 async fn show_one_document(
     client: &Client,
-    cache: &TaskCache,
+    ctx: &LocalContext,
     icons: &Icons,
     no_format: bool,
     no_wrap: bool,
@@ -248,15 +273,16 @@ async fn show_one_document(
         String::new()
     };
 
-    let doc = client.get_document(doc_id).await?;
+    let doc = ctx.load_document(client, doc_id).await?;
 
-    let ns_display = cache
+    let ns_display = ctx
+        .cache
         .get_namespace_path(&doc.namespace_id)
         .ok()
         .map(|id_path| {
             id_path
                 .iter()
-                .filter_map(|id| cache.get_namespace(id).ok().flatten().map(|ns| ns.name))
+                .filter_map(|id| ctx.cache.get_namespace(id).ok().flatten().map(|ns| ns.name))
                 .collect::<Vec<_>>()
                 .join("/")
         })
@@ -274,7 +300,7 @@ async fn show_one_document(
 
     // Children: either recurse into them or show inline summary
     if recursive {
-        let children = cache.get_document_children(doc_id)?;
+        let children = ctx.cache.get_document_children(doc_id)?;
         for (i, child) in children.iter().enumerate() {
             let is_last = i == children.len() - 1;
             let connector = if is_last { "└─" } else { "├─" };
@@ -290,7 +316,7 @@ async fn show_one_document(
             let child_tree = format!("{}{}", tree_prefix, continuation);
             Box::pin(show_one_document(
                 client,
-                cache,
+                ctx,
                 icons,
                 no_format,
                 no_wrap,
@@ -311,7 +337,7 @@ async fn show_one_document(
     Ok(())
 }
 
-/// Update a document.
+/// Update a document (local-first with optional sync).
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
     config: &Config,
@@ -321,21 +347,20 @@ pub async fn update(
     labels: Vec<String>,
     unlabels: Vec<String>,
     parent: Option<String>,
-    slug_prefix: Option<String>,
-    _no_sync: bool,
+    _slug_prefix: Option<String>,
+    no_sync: bool,
 ) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
-    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
+    let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
-    // Get current document for label merging and body editing
-    let current = client.get_document(&doc_id).await?;
+    // Load current document from local storage (or fetch from server)
+    let mut doc = ctx.load_document(&client, &doc_id).await?;
 
     // Handle body editing (with title as H1 header)
     let (editor_title, new_content) = if body {
-        match crate::editor::edit_body(config, &current.title, &current.content)? {
+        match crate::editor::edit_body(config, &doc.title, &doc.content)? {
             crate::editor::EditorResult::Changed {
                 title,
                 body: new_body,
@@ -355,7 +380,7 @@ pub async fn update(
 
     // Merge labels: add new, remove unlabels
     let merged_labels = if !labels.is_empty() || !unlabels.is_empty() {
-        let mut current_labels = current.labels.clone();
+        let mut current_labels = doc.labels.clone();
         for l in &labels {
             if !current_labels.contains(l) {
                 current_labels.push(l.clone());
@@ -370,38 +395,52 @@ pub async fn update(
     // Handle parent: empty string means unparent
     let parent_id = match parent {
         Some(ref p) if p.is_empty() => Some(String::new()),
-        Some(p) => Some(crate::utils::resolve_document_id(&cache, &p)?),
+        Some(p) => Some(crate::utils::resolve_document_id(&ctx.cache, &p)?),
         None => None,
     };
 
     // --title flag takes precedence over title changed in editor
     let effective_title = title.or(editor_title);
 
-    let req = UpdateDocumentRequest {
-        title: effective_title,
-        content: new_content,
-        parent_id,
-        labels: merged_labels,
-        slug_prefix,
-    };
+    // Detect whether anything actually changed
+    let has_changes = effective_title.is_some()
+        || new_content.is_some()
+        || parent_id.is_some()
+        || merged_labels.is_some();
 
-    // Skip server call if nothing actually changed
-    if req.title.is_none()
-        && req.content.is_none()
-        && req.parent_id.is_none()
-        && req.labels.is_none()
-        && req.slug_prefix.is_none()
-    {
+    if !has_changes {
         println!("{}", format!("{} No changes to save.", icons.info).yellow());
         return Ok(());
     }
 
-    let doc = client.update_document(&doc_id, &req).await?;
-    cache.upsert_document(&doc, false)?;
+    // Apply changes to the document
+    if let Some(ref t) = effective_title {
+        doc.title = t.clone();
+    }
+    if let Some(ref c) = new_content {
+        doc.content = c.clone();
+    }
+    if let Some(ref pid) = parent_id {
+        if pid.is_empty() {
+            doc.parent_id = None;
+        } else {
+            doc.parent_id = Some(pid.clone());
+        }
+    }
+    if let Some(lbls) = merged_labels {
+        doc.labels = lbls;
+    }
+
+    doc.modified = Utc::now().to_rfc3339();
+    doc.version += 1;
+
+    // Save locally
+    ctx.storage.update_document(&doc)?;
+    ctx.cache.upsert_document(&doc, true)?;
 
     println!(
         "{}",
-        format!("{} Document updated!", icons.success)
+        format!("{} Document updated locally!", icons.success)
             .green()
             .bold()
     );
@@ -411,90 +450,169 @@ pub async fn update(
         println!("  Slug:  {}", doc.slug.cyan());
     }
 
+    // Attempt sync if enabled
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
+        } else {
+            println!(
+                "{}",
+                format!("  {} Queued for sync (server unreachable)", icons.queued).yellow()
+            );
+        }
+    }
+
     Ok(())
 }
 
-/// Delete (soft-delete) a document.
-pub async fn delete(config: &Config, doc_id: &str, _recursive: bool) -> Result<()> {
+/// Delete (soft-delete) a document (local-first with optional sync).
+pub async fn delete(config: &Config, doc_id: &str, _recursive: bool, no_sync: bool) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
-    let doc_id = &crate::utils::resolve_document_id(&cache, doc_id)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
+    let doc_id = &crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
-    client.delete_document(doc_id).await?;
+    let mut doc = ctx.load_document(&client, doc_id).await?;
+    doc.deleted = Some(Utc::now().to_rfc3339());
+    doc.modified = Utc::now().to_rfc3339();
+    doc.version += 1;
+
+    ctx.storage.update_document(&doc)?;
+    ctx.cache.upsert_document(&doc, true)?;
 
     println!(
         "{}",
-        format!("{} Document '{}' deleted.", icons.success, doc_id)
+        format!("{} Document '{}' deleted locally.", icons.success, doc_id)
             .green()
             .bold()
     );
 
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
+        } else {
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
+        }
+    }
+
     Ok(())
 }
 
-/// Restore a deleted document.
-pub async fn restore(config: &Config, doc_id: &str) -> Result<()> {
+/// Restore a deleted document (local-first with optional sync).
+pub async fn restore(config: &Config, doc_id: &str, no_sync: bool) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
-    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
+    let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
-    let doc = client.restore_document(&doc_id).await?;
-    cache.upsert_document(&doc, false)?;
+    let mut doc = ctx.load_document(&client, &doc_id).await?;
+    doc.deleted = None;
+    doc.modified = Utc::now().to_rfc3339();
+    doc.version += 1;
+
+    ctx.storage.update_document(&doc)?;
+    ctx.cache.upsert_document(&doc, true)?;
 
     println!(
         "{}",
-        format!("{} Document '{}' restored.", icons.success, doc.id)
+        format!("{} Document '{}' restored locally.", icons.success, doc.id)
             .green()
             .bold()
     );
 
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
+        } else {
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
+        }
+    }
+
     Ok(())
 }
 
-/// Move a document to a different namespace.
-pub async fn move_doc(config: &Config, doc_id: &str, namespace: &str) -> Result<()> {
+/// Move a document to a different namespace (local-first with optional sync).
+pub async fn move_doc(config: &Config, doc_id: &str, namespace: &str, no_sync: bool) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
 
-    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
-    let ns_id = resolve::resolve_namespace(&cache, namespace)?;
-    let doc = client.move_document(&doc_id, &ns_id).await?;
-    cache.upsert_document(&doc, false)?;
+    let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
+    let ns_id = resolve::resolve_namespace(&ctx.cache, namespace)?;
+
+    let mut doc = ctx.load_document(&client, &doc_id).await?;
+    doc.namespace_id = ns_id.clone();
+    doc.modified = Utc::now().to_rfc3339();
+    doc.version += 1;
+
+    ctx.storage.update_document(&doc)?;
+    ctx.cache.upsert_document(&doc, true)?;
 
     println!(
         "{}",
-        format!("{} Document moved to namespace '{}'.", icons.success, ns_id)
-            .green()
-            .bold()
+        format!(
+            "{} Document moved to namespace '{}' locally.",
+            icons.success, ns_id
+        )
+        .green()
+        .bold()
     );
+
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
+        } else {
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
+        }
+    }
 
     Ok(())
 }
 
-/// Add a reference from a document to another entity.
-pub async fn link(config: &Config, doc_id: &str, target: &str, ref_type: &str) -> Result<()> {
+/// Add a reference from a document to another entity (local-first with optional sync).
+pub async fn link(
+    config: &Config,
+    doc_id: &str,
+    target: &str,
+    ref_type: &str,
+    no_sync: bool,
+) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
-    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
+    let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
     let (target_type, raw_id) = crate::utils::parse_typed_target(target, "document");
-    let target_id = crate::utils::resolve_target_id(&cache, raw_id, target_type)?;
+    let target_id = crate::utils::resolve_target_id(&ctx.cache, raw_id, target_type)?;
 
-    let req = AddReferenceRequest {
+    let mut doc = ctx.load_document(&client, &doc_id).await?;
+
+    // Add reference if not already present
+    let new_ref = Reference {
         target_id: target_id.clone(),
         target_type: target_type.to_string(),
         ref_type: ref_type.to_string(),
     };
+    if !doc.references.contains(&new_ref) {
+        doc.references.push(new_ref);
+        doc.modified = Utc::now().to_rfc3339();
+        doc.version += 1;
 
-    client.add_document_reference(&doc_id, &req).await?;
+        ctx.storage.update_document(&doc)?;
+        ctx.cache.upsert_document(&doc, true)?;
+    }
 
     println!(
         "{}",
@@ -506,23 +624,43 @@ pub async fn link(config: &Config, doc_id: &str, target: &str, ref_type: &str) -
         .bold()
     );
 
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
+        } else {
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
+        }
+    }
+
     Ok(())
 }
 
-/// Remove a reference from a document.
-pub async fn unlink(config: &Config, doc_id: &str, target: &str) -> Result<()> {
+/// Remove a reference from a document (local-first with optional sync).
+pub async fn unlink(config: &Config, doc_id: &str, target: &str, no_sync: bool) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
-    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
+    let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
     let (target_type, raw_id) = crate::utils::parse_typed_target(target, "document");
-    let target_id = crate::utils::resolve_target_id(&cache, raw_id, target_type)?;
+    let target_id = crate::utils::resolve_target_id(&ctx.cache, raw_id, target_type)?;
 
-    client
-        .remove_document_reference(&doc_id, &target_id)
-        .await?;
+    let mut doc = ctx.load_document(&client, &doc_id).await?;
+
+    // Remove matching references
+    let before_len = doc.references.len();
+    doc.references.retain(|r| r.target_id != target_id);
+
+    if doc.references.len() < before_len {
+        doc.modified = Utc::now().to_rfc3339();
+        doc.version += 1;
+
+        ctx.storage.update_document(&doc)?;
+        ctx.cache.upsert_document(&doc, true)?;
+    }
 
     println!(
         "{}",
@@ -534,20 +672,64 @@ pub async fn unlink(config: &Config, doc_id: &str, target: &str) -> Result<()> {
         .bold()
     );
 
+    if !no_sync {
+        if ctx.try_sync().await {
+            println!(
+                "{}",
+                format!("  {} Synced with server", icons.success).green()
+            );
+        } else {
+            println!("{}", format!("  {} Queued for sync", icons.queued).yellow());
+        }
+    }
+
     Ok(())
 }
 
 /// Show back-links (what references this document).
-pub async fn backlinks(config: &Config, doc_id: &str) -> Result<()> {
+///
+/// Forward references come from the local CRDT. Back-links are an
+/// ephemeral server-side index, so we try the server with a 2s timeout
+/// and gracefully degrade if unreachable.
+pub async fn backlinks(config: &Config, doc_id: &str, no_sync: bool) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
-    let cache_path = config.cache_dir.join("index.db");
-    let cache = TaskCache::open(&cache_path)?;
-    let doc_id = crate::utils::resolve_document_id(&cache, doc_id)?;
+    let ctx = LocalContext::new(config, !no_sync)?;
+    let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
-    let refs = client.get_references(&doc_id, "document").await?;
+    // Forward refs from local CRDT
+    let doc = ctx.load_document(&client, &doc_id).await?;
+    let has_forward = !doc.references.is_empty();
 
-    if refs.forward.is_empty() && refs.back.is_empty() {
+    if has_forward {
+        println!("{}", "Forward references:".bold());
+        for r in &doc.references {
+            println!(
+                "  {} {} ({}) [{}]",
+                r.ref_type.dimmed(),
+                r.target_id.cyan(),
+                r.target_type,
+                "explicit".dimmed()
+            );
+        }
+    }
+
+    // Back-links from server (best-effort with timeout)
+    let back_refs = if !no_sync {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.get_references(&doc_id, "document"),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+    } else {
+        None
+    };
+
+    let has_back = back_refs.as_ref().is_some_and(|refs| !refs.back.is_empty());
+
+    if !has_forward && !has_back {
         println!(
             "{}",
             format!("{} No references found.", icons.info).dimmed()
@@ -555,21 +737,10 @@ pub async fn backlinks(config: &Config, doc_id: &str) -> Result<()> {
         return Ok(());
     }
 
-    if !refs.forward.is_empty() {
-        println!("{}", "Forward references:".bold());
-        for r in &refs.forward {
-            println!(
-                "  {} {} ({}) [{}]",
-                r.ref_type.dimmed(),
-                r.target_id.cyan(),
-                r.target_type,
-                r.origin.dimmed()
-            );
-        }
-    }
-
-    if !refs.back.is_empty() {
-        if !refs.forward.is_empty() {
+    if let Some(refs) = back_refs
+        && !refs.back.is_empty()
+    {
+        if has_forward {
             println!();
         }
         println!("{}", "Back-links:".bold());
@@ -585,4 +756,39 @@ pub async fn backlinks(config: &Config, doc_id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Convert a CachedDocument to a Document for output functions.
+///
+/// Content, references, and custom default to empty since they are not
+/// stored in the SQLite cache (full data lives in the CRDT files).
+fn cached_to_document(c: CachedDocument) -> Document {
+    Document {
+        id: c.id,
+        namespace_id: c.namespace_id,
+        title: c.title,
+        content: String::new(),
+        created: c.created,
+        modified: c.modified,
+        deleted: c.deleted,
+        version: c.version,
+        parent_id: c.parent_id,
+        slug: c.slug,
+        slug_aliases: c.slug_aliases,
+        labels: c.labels,
+        references: Vec::new(),
+        custom: serde_json::Value::Object(Default::default()),
+    }
+}
+
+/// Convert a CachedNamespace to a Namespace for output functions.
+fn cached_to_namespace(c: &crate::cache::CachedNamespace) -> Namespace {
+    Namespace {
+        id: c.id.clone(),
+        name: c.name.clone(),
+        description: None,
+        parent_id: c.parent_id.clone(),
+        labels: c.labels.clone(),
+        deleted: c.deleted.clone(),
+    }
 }

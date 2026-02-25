@@ -750,11 +750,17 @@ enum DocCommands {
         /// Also delete child documents
         #[arg(long)]
         recursive: bool,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
     },
     /// Restore a deleted document
     Restore {
         /// Document ID
         doc_id: String,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
     },
     /// Move document to a different namespace
     Move {
@@ -762,6 +768,9 @@ enum DocCommands {
         doc_id: String,
         /// Target namespace (name, path, or UUID)
         namespace: String,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
     },
     /// Add or remove a reference to another entity
     Link {
@@ -781,11 +790,17 @@ enum DocCommands {
         /// Remove the reference instead of adding it
         #[arg(long)]
         unset: bool,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
     },
     /// Show back-links (what references this document)
     Backlinks {
         /// Document ID
         doc_id: String,
+        /// Skip sync
+        #[arg(long)]
+        no_sync: bool,
     },
 }
 
@@ -1221,27 +1236,34 @@ async fn run() -> Result<()> {
                 )
                 .await
             }
-            DocCommands::Delete { doc_id, recursive } => {
-                gtr::commands::pkms::delete(&config, &doc_id, recursive).await
+            DocCommands::Delete {
+                doc_id,
+                recursive,
+                no_sync,
+            } => gtr::commands::pkms::delete(&config, &doc_id, recursive, no_sync).await,
+            DocCommands::Restore { doc_id, no_sync } => {
+                gtr::commands::pkms::restore(&config, &doc_id, no_sync).await
             }
-            DocCommands::Restore { doc_id } => gtr::commands::pkms::restore(&config, &doc_id).await,
-            DocCommands::Move { doc_id, namespace } => {
-                gtr::commands::pkms::move_doc(&config, &doc_id, &namespace).await
-            }
+            DocCommands::Move {
+                doc_id,
+                namespace,
+                no_sync,
+            } => gtr::commands::pkms::move_doc(&config, &doc_id, &namespace, no_sync).await,
             DocCommands::Link {
                 doc_id,
                 target,
                 r#type,
                 unset,
+                no_sync,
             } => {
                 if unset {
-                    gtr::commands::pkms::unlink(&config, &doc_id, &target).await
+                    gtr::commands::pkms::unlink(&config, &doc_id, &target, no_sync).await
                 } else {
-                    gtr::commands::pkms::link(&config, &doc_id, &target, &r#type).await
+                    gtr::commands::pkms::link(&config, &doc_id, &target, &r#type, no_sync).await
                 }
             }
-            DocCommands::Backlinks { doc_id } => {
-                gtr::commands::pkms::backlinks(&config, &doc_id).await
+            DocCommands::Backlinks { doc_id, no_sync } => {
+                gtr::commands::pkms::backlinks(&config, &doc_id, no_sync).await
             }
         },
         Commands::Namespace { command } => match command {

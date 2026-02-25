@@ -24,7 +24,7 @@ use crate::Result;
 use crate::cache::TaskCache;
 use crate::client::Client;
 use crate::config::Config;
-use crate::models::Task;
+use crate::models::{Document, Task};
 use crate::storage::{StorageConfig, TaskStorage};
 use crate::sync::SyncManager;
 
@@ -104,6 +104,41 @@ impl LocalContext {
             "fetched task CRDT from server"
         );
         Ok(task)
+    }
+
+    /// Load a document from local storage, falling back to server CRDT fetch.
+    ///
+    /// Mirrors `load_task()`: tries local storage first, then fetches raw
+    /// CRDT bytes from the server to preserve document history.
+    pub async fn load_document(&self, client: &Client, doc_id: &str) -> Result<Document> {
+        // Try loading from local storage
+        if self.cache.get_document(doc_id)?.is_some() {
+            match self.storage.load_document(doc_id) {
+                Ok(doc) => {
+                    debug!(doc_id, "loaded document from local storage");
+                    return Ok(doc);
+                }
+                Err(e) => {
+                    warn!(
+                        doc_id,
+                        "document in cache but missing from storage, fetching from server: {e}"
+                    );
+                }
+            }
+        } else {
+            debug!(doc_id, "document not in local cache, fetching from server");
+        }
+
+        // Fetch CRDT bytes from server to preserve document history.
+        let remote_bytes = client.fetch_document_sync(doc_id).await?;
+        let crdt = crate::crdt::PkmsDocument::load(&remote_bytes)?;
+        let doc = crdt.to_document()?;
+
+        self.storage.save_document_bytes(doc_id, &remote_bytes)?;
+        self.cache.upsert_document(&doc, false)?;
+
+        info!(doc_id, "fetched document CRDT from server");
+        Ok(doc)
     }
 
     /// Attempt sync with timeout if enabled.
