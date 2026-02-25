@@ -68,11 +68,13 @@ impl SyncManager {
     /// and fetches the merged state, but doesn't pull all tasks to avoid
     /// unnecessary network traffic.
     pub async fn sync_all(&self) -> Result<()> {
-        // Push local changes (push_task now fetches merged CRDT back)
-        self.push_pending().await?;
+        // Push local changes — attempt both even if one fails
+        let task_result = self.push_pending().await;
+        let doc_result = self.push_pending_documents().await;
 
-        // Push pending documents
-        self.push_pending_documents().await?;
+        // Propagate first error so try_sync() returns false
+        task_result?;
+        doc_result?;
 
         Ok(())
     }
@@ -209,13 +211,18 @@ impl SyncManager {
         let pending_ids = self.cache.get_pending_tasks()?;
         debug!(pending_count = pending_ids.len(), "pushing pending tasks");
 
+        let mut last_error = None;
         for task_id in pending_ids {
             if let Err(e) = self.push_task(&task_id).await {
                 warn!(task_id = %task_id, "failed to push task: {e}");
+                last_error = Some(e);
             }
         }
 
-        Ok(())
+        match last_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Push a single task to server using Automerge sync protocol.
@@ -378,13 +385,18 @@ impl SyncManager {
             "pushing pending documents"
         );
 
+        let mut last_error = None;
         for doc_id in pending_ids {
             if let Err(e) = self.push_document(&doc_id).await {
                 warn!(doc_id = %doc_id, "failed to push document: {e}");
+                last_error = Some(e);
             }
         }
 
-        Ok(())
+        match last_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Push a single document to server using full-document sync.
