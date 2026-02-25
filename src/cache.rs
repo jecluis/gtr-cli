@@ -58,6 +58,17 @@ pub struct FeelsRow {
     pub defer_until: Option<String>,
 }
 
+/// A row in the entity_references table.
+#[derive(Debug, Clone)]
+pub struct ReferenceRow {
+    pub source_id: String,
+    pub source_type: String,
+    pub target_id: String,
+    pub target_type: String,
+    pub ref_type: String,
+    pub origin: String,
+}
+
 /// Local cache for task metadata and sync tracking.
 pub struct TaskCache {
     conn: Connection,
@@ -245,6 +256,26 @@ impl TaskCache {
             "#,
             )
             .map_err(|e| Error::Database(format!("links schema init failed: {e}")))?;
+
+        // Entity references table: inline + explicit cross-entity links
+        self.conn
+            .execute_batch(
+                r#"
+            CREATE TABLE IF NOT EXISTS entity_references (
+                source_id   TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                target_id   TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                ref_type    TEXT NOT NULL,
+                origin      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_refs_source
+                ON entity_references(source_id, source_type);
+            CREATE INDEX IF NOT EXISTS idx_refs_target
+                ON entity_references(target_id, target_type);
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("entity_references schema init failed: {e}")))?;
 
         // Feels table: one row per calendar day tracking energy/focus state
         self.conn
@@ -1870,6 +1901,209 @@ impl TaskCache {
                 Ok(FeelsPrompt::No)
             }
         }
+    }
+
+    // -- Entity reference operations --
+
+    /// Replace all references for a given source entity (transactional).
+    pub fn replace_refs_for_source(
+        &self,
+        source_id: &str,
+        source_type: &str,
+        refs: &[ReferenceRow],
+    ) -> Result<()> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::Database(format!("begin transaction failed: {e}")))?;
+
+        tx.execute(
+            "DELETE FROM entity_references WHERE source_id = ?1 AND source_type = ?2",
+            params![source_id, source_type],
+        )
+        .map_err(|e| Error::Database(format!("delete refs failed: {e}")))?;
+
+        for r in refs {
+            tx.execute(
+                "INSERT INTO entity_references \
+                 (source_id, source_type, target_id, target_type, ref_type, origin) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    r.source_id,
+                    r.source_type,
+                    r.target_id,
+                    r.target_type,
+                    r.ref_type,
+                    r.origin,
+                ],
+            )
+            .map_err(|e| Error::Database(format!("insert ref failed: {e}")))?;
+        }
+
+        tx.commit()
+            .map_err(|e| Error::Database(format!("commit refs failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Get forward references from a source entity.
+    pub fn get_forward_refs(&self, id: &str, entity_type: &str) -> Result<Vec<ReferenceRow>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT source_id, source_type, target_id, target_type, ref_type, origin \
+                 FROM entity_references \
+                 WHERE source_id = ?1 AND source_type = ?2",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![id, entity_type], |row| {
+                Ok(ReferenceRow {
+                    source_id: row.get(0)?,
+                    source_type: row.get(1)?,
+                    target_id: row.get(2)?,
+                    target_type: row.get(3)?,
+                    ref_type: row.get(4)?,
+                    origin: row.get(5)?,
+                })
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(rows)
+    }
+
+    /// Get back-links pointing at a target entity.
+    pub fn get_back_refs(&self, id: &str, entity_type: &str) -> Result<Vec<ReferenceRow>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT source_id, source_type, target_id, target_type, ref_type, origin \
+                 FROM entity_references \
+                 WHERE target_id = ?1 AND target_type = ?2",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![id, entity_type], |row| {
+                Ok(ReferenceRow {
+                    source_id: row.get(0)?,
+                    source_type: row.get(1)?,
+                    target_id: row.get(2)?,
+                    target_type: row.get(3)?,
+                    ref_type: row.get(4)?,
+                    origin: row.get(5)?,
+                })
+            })
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(rows)
+    }
+
+    /// Find a document by title within a namespace (case-insensitive).
+    pub fn find_document_by_title(
+        &self,
+        namespace_id: &str,
+        title: &str,
+    ) -> Result<Option<CachedDocument>> {
+        self.conn
+            .query_row(
+                "SELECT id, namespace_id, title, created, modified, deleted, \
+                        version, needs_push, last_synced, parent_id, labels, \
+                        slug, slug_aliases \
+                 FROM documents \
+                 WHERE namespace_id = ?1 AND title = ?2 COLLATE NOCASE \
+                       AND deleted IS NULL",
+                params![namespace_id, title],
+                Self::row_to_cached_document,
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("find document by title failed: {e}")))
+    }
+
+    /// Find a document by title across all namespaces (case-insensitive).
+    pub fn find_document_by_title_any_namespace(
+        &self,
+        title: &str,
+    ) -> Result<Option<CachedDocument>> {
+        self.conn
+            .query_row(
+                "SELECT id, namespace_id, title, created, modified, deleted, \
+                        version, needs_push, last_synced, parent_id, labels, \
+                        slug, slug_aliases \
+                 FROM documents \
+                 WHERE title = ?1 COLLATE NOCASE AND deleted IS NULL \
+                 LIMIT 1",
+                params![title],
+                Self::row_to_cached_document,
+            )
+            .optional()
+            .map_err(|e| {
+                Error::Database(format!("find document by title any namespace failed: {e}"))
+            })
+    }
+
+    /// Find a namespace by name (case-insensitive).
+    pub fn find_namespace_by_name(&self, name: &str) -> Result<Option<CachedNamespace>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, parent_id, deleted, last_synced, labels \
+                 FROM namespaces \
+                 WHERE name = ?1 COLLATE NOCASE AND deleted IS NULL \
+                 LIMIT 1",
+                params![name],
+                Self::row_to_namespace,
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("find namespace by name failed: {e}")))
+    }
+
+    /// Find a document by slug alias within a namespace.
+    pub fn find_document_by_slug_alias(
+        &self,
+        namespace_id: &str,
+        slug: &str,
+    ) -> Result<Option<CachedDocument>> {
+        let pattern = format!("%\"{}\"%", slug);
+        self.conn
+            .query_row(
+                "SELECT id, namespace_id, title, created, modified, deleted, \
+                        version, needs_push, last_synced, parent_id, labels, \
+                        slug, slug_aliases \
+                 FROM documents \
+                 WHERE namespace_id = ?1 AND slug_aliases LIKE ?2 \
+                       AND deleted IS NULL",
+                params![namespace_id, pattern],
+                Self::row_to_cached_document,
+            )
+            .optional()
+            .map_err(|e| Error::Database(format!("find document by slug alias failed: {e}")))
+    }
+
+    /// Find documents whose ID ends with the given hex suffix.
+    pub fn find_documents_by_hex_suffix(&self, hex: &str) -> Result<Vec<CachedDocument>> {
+        let pattern = format!("%{hex}");
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, namespace_id, title, created, modified, deleted, \
+                        version, needs_push, last_synced, parent_id, labels, \
+                        slug, slug_aliases \
+                 FROM documents \
+                 WHERE id LIKE ?1 AND deleted IS NULL",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let docs = stmt
+            .query_map(params![pattern], Self::row_to_cached_document)
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(docs)
     }
 }
 
