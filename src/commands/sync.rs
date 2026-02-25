@@ -45,11 +45,63 @@ pub async fn now(config: &Config) -> Result<()> {
     println!("{}", "Syncing with server...".dimmed());
 
     match sync.sync_full().await {
-        Ok(()) => {
+        Ok(report) => {
+            let pushed = report.pushed_tasks + report.pushed_documents;
+            let pulled = report.pulled_tasks + report.pulled_documents;
+
             println!(
                 "{}",
                 format!("{} Sync completed successfully", icons.success).green()
             );
+
+            if pushed > 0 {
+                let mut parts = Vec::new();
+                if report.pushed_tasks > 0 {
+                    parts.push(format!(
+                        "{} task{}",
+                        report.pushed_tasks,
+                        if report.pushed_tasks == 1 { "" } else { "s" }
+                    ));
+                }
+                if report.pushed_documents > 0 {
+                    parts.push(format!(
+                        "{} document{}",
+                        report.pushed_documents,
+                        if report.pushed_documents == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ));
+                }
+                println!("  {} pushed {}", "↑".green(), parts.join(", "));
+            }
+            if pulled > 0 {
+                let mut parts = Vec::new();
+                if report.pulled_tasks > 0 {
+                    parts.push(format!(
+                        "{} task{}",
+                        report.pulled_tasks,
+                        if report.pulled_tasks == 1 { "" } else { "s" }
+                    ));
+                }
+                if report.pulled_documents > 0 {
+                    parts.push(format!(
+                        "{} document{}",
+                        report.pulled_documents,
+                        if report.pulled_documents == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ));
+                }
+                println!("  {} pulled {}", "↓".green(), parts.join(", "));
+            }
+            if pushed == 0 && pulled == 0 {
+                println!("  {}", "Already up to date".dimmed());
+            }
+
             Ok(())
         }
         Err(e) => {

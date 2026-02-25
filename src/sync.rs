@@ -84,22 +84,27 @@ impl SyncManager {
     /// This is used for manual sync commands. It pushes local changes and
     /// then pulls updates from the server for all tasks, ensuring we have
     /// the latest state from other devices.
-    pub async fn sync_full(&self) -> Result<()> {
+    pub async fn sync_full(&self) -> Result<SyncReport> {
         // Push local changes first
-        self.push_pending().await?;
-        self.push_pending_documents().await?;
+        let pushed_tasks = self.push_pending().await?;
+        let pushed_documents = self.push_pending_documents().await?;
 
         // Pull remote changes for all tasks
-        self.pull_updates().await?;
+        let pulled_tasks = self.pull_updates().await?;
 
         // Sync namespaces and links
         self.sync_namespaces().await?;
         self.sync_namespace_links().await?;
 
         // Pull all documents
-        self.pull_all_documents().await?;
+        let pulled_documents = self.pull_all_documents().await?;
 
-        Ok(())
+        Ok(SyncReport {
+            pushed_tasks,
+            pushed_documents,
+            pulled_tasks,
+            pulled_documents,
+        })
     }
 
     /// Sync projects from server into local cache.
@@ -124,13 +129,15 @@ impl SyncManager {
     }
 
     /// Pull updates from server for all projects.
-    async fn pull_updates(&self) -> Result<()> {
+    /// Returns the number of tasks pulled.
+    async fn pull_updates(&self) -> Result<usize> {
         // Sync project list first
         self.sync_projects().await?;
 
         // Get all projects
         let projects = self.client.list_projects().await?;
 
+        let mut pulled = 0;
         for project in projects {
             // Get all tasks for this project
             let tasks = self
@@ -143,14 +150,16 @@ impl SyncManager {
                 // Pass project_id from the API response so the cache uses the
                 // server's canonical UUID, even if the CRDT file still stores
                 // an old string project name.
-                if let Err(e) = self.pull_task(&task.id, &task.project_id).await {
-                    warn!(task_id = %task.id, "failed to pull task: {e}");
-                    // Continue with other tasks
+                match self.pull_task(&task.id, &task.project_id).await {
+                    Ok(()) => pulled += 1,
+                    Err(e) => {
+                        warn!(task_id = %task.id, "failed to pull task: {e}");
+                    }
                 }
             }
         }
 
-        Ok(())
+        Ok(pulled)
     }
 
     /// Pull a single task from server and merge with local version.
@@ -207,21 +216,26 @@ impl SyncManager {
     }
 
     /// Push all locally modified tasks to server.
-    async fn push_pending(&self) -> Result<()> {
+    /// Returns the number of tasks successfully pushed.
+    async fn push_pending(&self) -> Result<usize> {
         let pending_ids = self.cache.get_pending_tasks()?;
         debug!(pending_count = pending_ids.len(), "pushing pending tasks");
 
+        let mut pushed = 0;
         let mut last_error = None;
         for task_id in pending_ids {
-            if let Err(e) = self.push_task(&task_id).await {
-                warn!(task_id = %task_id, "failed to push task: {e}");
-                last_error = Some(e);
+            match self.push_task(&task_id).await {
+                Ok(()) => pushed += 1,
+                Err(e) => {
+                    warn!(task_id = %task_id, "failed to push task: {e}");
+                    last_error = Some(e);
+                }
             }
         }
 
         match last_error {
             Some(e) => Err(e),
-            None => Ok(()),
+            None => Ok(pushed),
         }
     }
 
@@ -378,24 +392,29 @@ impl SyncManager {
     // -- Document sync --
 
     /// Push all locally modified documents to server.
-    async fn push_pending_documents(&self) -> Result<()> {
+    /// Returns the number of documents successfully pushed.
+    async fn push_pending_documents(&self) -> Result<usize> {
         let pending_ids = self.cache.get_pending_documents()?;
         debug!(
             pending_count = pending_ids.len(),
             "pushing pending documents"
         );
 
+        let mut pushed = 0;
         let mut last_error = None;
         for doc_id in pending_ids {
-            if let Err(e) = self.push_document(&doc_id).await {
-                warn!(doc_id = %doc_id, "failed to push document: {e}");
-                last_error = Some(e);
+            match self.push_document(&doc_id).await {
+                Ok(()) => pushed += 1,
+                Err(e) => {
+                    warn!(doc_id = %doc_id, "failed to push document: {e}");
+                    last_error = Some(e);
+                }
             }
         }
 
         match last_error {
             Some(e) => Err(e),
-            None => Ok(()),
+            None => Ok(pushed),
         }
     }
 
@@ -465,15 +484,20 @@ impl SyncManager {
     }
 
     /// Pull all documents from server across all namespaces.
-    async fn pull_all_documents(&self) -> Result<()> {
+    /// Returns the number of documents pulled.
+    async fn pull_all_documents(&self) -> Result<usize> {
         let namespaces = self.cache.list_namespaces()?;
 
+        let mut pulled = 0;
         for ns in &namespaces {
             match self.client.list_documents(&ns.id, true).await {
                 Ok(docs) => {
                     for doc in &docs {
-                        if let Err(e) = self.pull_document(&doc.id).await {
-                            warn!(doc_id = %doc.id, "failed to pull document: {e}");
+                        match self.pull_document(&doc.id).await {
+                            Ok(()) => pulled += 1,
+                            Err(e) => {
+                                warn!(doc_id = %doc.id, "failed to pull document: {e}");
+                            }
                         }
                     }
                     debug!(namespace_id = %ns.id, count = docs.len(), "pulled documents for namespace");
@@ -484,7 +508,7 @@ impl SyncManager {
             }
         }
 
-        Ok(())
+        Ok(pulled)
     }
 
     /// Get sync status summary.
@@ -511,4 +535,13 @@ pub struct SyncStatus {
     pub pending_tasks: usize,
     pub pending_documents: usize,
     pub server_reachable: bool,
+}
+
+/// Summary of what a full sync accomplished.
+#[derive(Debug, Default)]
+pub struct SyncReport {
+    pub pushed_tasks: usize,
+    pub pushed_documents: usize,
+    pub pulled_tasks: usize,
+    pub pulled_documents: usize,
 }
