@@ -16,6 +16,11 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 //! Automerge CRDT document wrapper for PKMS documents.
+//!
+//! Field layout must match the server's `PkmsDocument`:
+//! - `base` map: id, title, created, modified, version, deleted, labels,
+//!   references, log, custom
+//! - ROOT level: content, namespace_id, parent_id, slug, slug_aliases
 
 use automerge::{Automerge, ObjType, ROOT, ReadDoc, transaction::Transactable};
 
@@ -59,18 +64,18 @@ impl PkmsDocument {
                 tx.put(&base, "deleted", deleted.as_str())?;
             }
 
-            if let Some(ref parent_id) = document.parent_id {
-                tx.put(&base, "parent_id", parent_id.as_str())?;
-            }
-
             // Labels, references, custom (stored as JSON strings)
             tx.put(&base, "labels", labels_json.as_str())?;
             tx.put(&base, "references", references_json.as_str())?;
             tx.put(&base, "custom", custom_json.as_str())?;
 
-            // Content and namespace_id at root level
+            // Document-specific fields at root level
             tx.put(ROOT, "content", document.content.as_str())?;
             tx.put(ROOT, "namespace_id", document.namespace_id.as_str())?;
+
+            if let Some(ref parent_id) = document.parent_id {
+                tx.put(ROOT, "parent_id", parent_id.as_str())?;
+            }
 
             // Slug fields at root level
             tx.put(ROOT, "slug", document.slug.as_str())?;
@@ -120,7 +125,11 @@ impl PkmsDocument {
         let version = self.get_i64(&base_id, "version")? as u64;
 
         let deleted = self.try_get_str(&base_id, "deleted")?;
-        let parent_id = self.try_get_str(&base_id, "parent_id")?;
+        // parent_id lives at ROOT (matching server layout).
+        // Fall back to base map for CRDTs created before the fix.
+        let parent_id = self
+            .try_get_str(&ROOT, "parent_id")?
+            .or(self.try_get_str(&base_id, "parent_id")?);
 
         // Parse labels
         let labels: Vec<String> = self
@@ -229,10 +238,12 @@ impl PkmsDocument {
 
                 if document.parent_id != current.parent_id {
                     if let Some(ref pid) = document.parent_id {
-                        tx.put(&base, "parent_id", pid.as_str())?;
+                        tx.put(ROOT, "parent_id", pid.as_str())?;
                     } else {
-                        let _ = tx.delete(&base, "parent_id");
+                        let _ = tx.delete(ROOT, "parent_id");
                     }
+                    // Clean up legacy location in base map
+                    let _ = tx.delete(&base, "parent_id");
                 }
 
                 if let Some(ref lj) = labels_json {
@@ -341,11 +352,13 @@ mod tests {
     /// Verify the CRDT field layout matches the server's convention.
     ///
     /// The server (via base_helpers) puts title inside the base map and
-    /// namespace_id at ROOT.  The CLI must match so that CRDT merges
-    /// between server and CLI produce a document both sides can read.
+    /// namespace_id, parent_id, content, slug, slug_aliases at ROOT.
+    /// The CLI must match so that CRDT merges between server and CLI
+    /// produce a document both sides can read.
     #[test]
     fn crdt_layout_matches_server() {
-        let doc = sample_document();
+        let mut doc = sample_document();
+        doc.parent_id = Some("ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb".to_string());
         let crdt = PkmsDocument::new(&doc).unwrap();
 
         let base_id = match crdt.doc.get(ROOT, "base").unwrap() {
@@ -371,6 +384,16 @@ mod tests {
         assert!(
             crdt.doc.get(&base_id, "namespace_id").unwrap().is_none(),
             "namespace_id should NOT be inside base"
+        );
+
+        // parent_id must be at ROOT (not in base map)
+        assert!(
+            crdt.doc.get(ROOT, "parent_id").unwrap().is_some(),
+            "parent_id should be at ROOT"
+        );
+        assert!(
+            crdt.doc.get(&base_id, "parent_id").unwrap().is_none(),
+            "parent_id should NOT be inside base"
         );
     }
 
