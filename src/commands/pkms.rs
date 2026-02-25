@@ -99,6 +99,17 @@ pub async fn create(
     ctx.storage.create_document(&doc)?;
     ctx.cache.upsert_document(&doc, true)?;
 
+    // Rebuild inline references from content
+    let refs = crate::references::build_refs_for_document(
+        &ctx.cache,
+        &doc.id,
+        &doc.namespace_id,
+        &doc.references,
+        &doc.content,
+    )?;
+    ctx.cache
+        .replace_refs_for_source(&doc.id, "document", &refs)?;
+
     let all_ids = ctx.cache.all_document_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
 
@@ -438,6 +449,17 @@ pub async fn update(
     ctx.storage.update_document(&doc)?;
     ctx.cache.upsert_document(&doc, true)?;
 
+    // Rebuild inline references from content
+    let refs = crate::references::build_refs_for_document(
+        &ctx.cache,
+        &doc.id,
+        &doc.namespace_id,
+        &doc.references,
+        &doc.content,
+    )?;
+    ctx.cache
+        .replace_refs_for_source(&doc.id, "document", &refs)?;
+
     println!(
         "{}",
         format!("{} Document updated locally!", icons.success)
@@ -557,6 +579,17 @@ pub async fn move_doc(config: &Config, doc_id: &str, namespace: &str, no_sync: b
     ctx.storage.update_document(&doc)?;
     ctx.cache.upsert_document(&doc, true)?;
 
+    // Rebuild references (namespace changed, re-resolve scoped links)
+    let refs = crate::references::build_refs_for_document(
+        &ctx.cache,
+        &doc.id,
+        &doc.namespace_id,
+        &doc.references,
+        &doc.content,
+    )?;
+    ctx.cache
+        .replace_refs_for_source(&doc.id, "document", &refs)?;
+
     println!(
         "{}",
         format!(
@@ -612,6 +645,17 @@ pub async fn link(
 
         ctx.storage.update_document(&doc)?;
         ctx.cache.upsert_document(&doc, true)?;
+
+        // Rebuild references (explicit changed)
+        let refs = crate::references::build_refs_for_document(
+            &ctx.cache,
+            &doc.id,
+            &doc.namespace_id,
+            &doc.references,
+            &doc.content,
+        )?;
+        ctx.cache
+            .replace_refs_for_source(&doc.id, "document", &refs)?;
     }
 
     println!(
@@ -660,6 +704,17 @@ pub async fn unlink(config: &Config, doc_id: &str, target: &str, no_sync: bool) 
 
         ctx.storage.update_document(&doc)?;
         ctx.cache.upsert_document(&doc, true)?;
+
+        // Rebuild references (explicit changed)
+        let refs = crate::references::build_refs_for_document(
+            &ctx.cache,
+            &doc.id,
+            &doc.namespace_id,
+            &doc.references,
+            &doc.content,
+        )?;
+        ctx.cache
+            .replace_refs_for_source(&doc.id, "document", &refs)?;
     }
 
     println!(
@@ -688,20 +743,25 @@ pub async fn unlink(config: &Config, doc_id: &str, target: &str, no_sync: bool) 
 
 /// Show back-links (what references this document).
 ///
-/// Forward references come from the local CRDT. Back-links are an
-/// ephemeral server-side index, so we try the server with a 2s timeout
-/// and gracefully degrade if unreachable.
+/// Forward references combine CRDT explicit refs with locally-indexed
+/// inline refs. Back-links come from the local index first, then
+/// optionally enriched from the server (for cross-entity refs from
+/// entities not yet synced locally).
 pub async fn backlinks(config: &Config, doc_id: &str, no_sync: bool) -> Result<()> {
     let icons = Icons::new(config.effective_icon_theme());
     let client = Client::new(config)?;
     let ctx = LocalContext::new(config, !no_sync)?;
     let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
-    // Forward refs from local CRDT
+    // Forward refs: combine CRDT explicit + local inline index
     let doc = ctx.load_document(&client, &doc_id).await?;
-    let has_forward = !doc.references.is_empty();
+    let local_forward = ctx.cache.get_forward_refs(&doc_id, "document")?;
 
-    if has_forward {
+    // Show explicit CRDT references
+    let has_explicit = !doc.references.is_empty();
+    let has_inline_forward = !local_forward.iter().all(|r| r.origin == "explicit");
+
+    if has_explicit || !local_forward.is_empty() {
         println!("{}", "Forward references:".bold());
         for r in &doc.references {
             println!(
@@ -712,10 +772,26 @@ pub async fn backlinks(config: &Config, doc_id: &str, no_sync: bool) -> Result<(
                 "explicit".dimmed()
             );
         }
+        // Show inline-only refs (not already shown as explicit)
+        for r in &local_forward {
+            if r.origin == "inline" {
+                println!(
+                    "  {} {} ({}) [{}]",
+                    r.ref_type.dimmed(),
+                    r.target_id.cyan(),
+                    r.target_type,
+                    "inline".dimmed()
+                );
+            }
+        }
     }
 
-    // Back-links from server (best-effort with timeout)
-    let back_refs = if !no_sync {
+    // Back-links: local index first (always available offline)
+    let local_back = ctx.cache.get_back_refs(&doc_id, "document")?;
+
+    // Optionally enrich from server (2s timeout, for refs from entities
+    // not yet synced locally)
+    let server_back = if !no_sync {
         tokio::time::timeout(
             std::time::Duration::from_secs(2),
             client.get_references(&doc_id, "document"),
@@ -727,7 +803,35 @@ pub async fn backlinks(config: &Config, doc_id: &str, no_sync: bool) -> Result<(
         None
     };
 
-    let has_back = back_refs.as_ref().is_some_and(|refs| !refs.back.is_empty());
+    // Merge server back-links with local (deduplicate by source_id)
+    let mut seen_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut all_back: Vec<(String, String, String, String)> = Vec::new();
+
+    for r in &local_back {
+        if seen_sources.insert(format!("{}:{}", r.source_id, r.ref_type)) {
+            all_back.push((
+                r.ref_type.clone(),
+                r.source_id.clone(),
+                r.source_type.clone(),
+                r.origin.clone(),
+            ));
+        }
+    }
+    if let Some(refs) = &server_back {
+        for r in &refs.back {
+            if seen_sources.insert(format!("{}:{}", r.source_id, r.ref_type)) {
+                all_back.push((
+                    r.ref_type.clone(),
+                    r.source_id.clone(),
+                    r.source_type.clone(),
+                    r.origin.clone(),
+                ));
+            }
+        }
+    }
+
+    let has_forward = has_explicit || has_inline_forward;
+    let has_back = !all_back.is_empty();
 
     if !has_forward && !has_back {
         println!(
@@ -737,20 +841,18 @@ pub async fn backlinks(config: &Config, doc_id: &str, no_sync: bool) -> Result<(
         return Ok(());
     }
 
-    if let Some(refs) = back_refs
-        && !refs.back.is_empty()
-    {
+    if has_back {
         if has_forward {
             println!();
         }
         println!("{}", "Back-links:".bold());
-        for r in &refs.back {
+        for (ref_type, source_id, source_type, origin) in &all_back {
             println!(
                 "  {} {} ({}) [{}]",
-                r.ref_type.dimmed(),
-                r.source_id.cyan(),
-                r.source_type,
-                r.origin.dimmed()
+                ref_type.dimmed(),
+                source_id.cyan(),
+                source_type,
+                origin.dimmed()
             );
         }
     }

@@ -446,6 +446,17 @@ impl SyncManager {
         self.cache.upsert_document(&merged_doc, false)?;
         self.cache.mark_document_synced(doc_id)?;
 
+        // Rebuild inline references from merged content
+        let refs = crate::references::build_refs_for_document(
+            &self.cache,
+            doc_id,
+            &merged_doc.namespace_id,
+            &merged_doc.references,
+            &merged_doc.content,
+        )?;
+        self.cache
+            .replace_refs_for_source(doc_id, "document", &refs)?;
+
         debug!(
             doc_id,
             version = merged_doc.version,
@@ -479,6 +490,17 @@ impl SyncManager {
         let crdt = crate::crdt::PkmsDocument::load(&merged_bytes)?;
         let doc = crdt.to_document()?;
         self.cache.upsert_document(&doc, false)?;
+
+        // Rebuild inline references from pulled content
+        let refs = crate::references::build_refs_for_document(
+            &self.cache,
+            doc_id,
+            &doc.namespace_id,
+            &doc.references,
+            &doc.content,
+        )?;
+        self.cache
+            .replace_refs_for_source(doc_id, "document", &refs)?;
 
         Ok(())
     }
