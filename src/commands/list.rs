@@ -250,11 +250,6 @@ pub async fn tasks(
         other_tasks.reverse();
     }
 
-    // Apply deadline urgency icons/color to task titles
-    let icons = Icons::new(config.effective_icon_theme());
-    let doing_tasks = apply_deadline_urgency(doing_tasks, &cached, &icons);
-    let other_tasks = apply_deadline_urgency(other_tasks, &cached, &icons);
-
     // Calculate prefix length based on ALL tasks (not just displayed ones)
     let prefix_len = crate::output::compute_min_prefix_len(&all_task_ids);
 
@@ -352,67 +347,6 @@ fn sort_tasks(mut tasks: Vec<Task>, thresholds: &CachedThresholds) -> Vec<Task> 
         // Finally by creation time (ascending: new arrivals at bottom)
         a.created.cmp(&b.created)
     });
-
-    tasks
-}
-
-/// Apply deadline urgency indicators to task titles.
-///
-/// - Overdue: prepend boom emoji (no color change)
-/// - Within 25% of threshold remaining: prepend warning emoji + amber title
-///
-/// Thresholds are scaled by the task's impact multiplier.
-fn apply_deadline_urgency(
-    mut tasks: Vec<Task>,
-    cached: &CachedThresholds,
-    icons: &Icons,
-) -> Vec<Task> {
-    let now = Utc::now();
-
-    for task in &mut tasks {
-        // Skip done/deleted tasks
-        if task.done.is_some() || task.deleted.is_some() {
-            continue;
-        }
-
-        let Some(ref deadline_str) = task.deadline else {
-            continue;
-        };
-        let Ok(deadline) = DateTime::parse_from_rfc3339(deadline_str) else {
-            continue;
-        };
-
-        let deadline_utc = deadline.with_timezone(&Utc);
-
-        if deadline_utc < now {
-            // Overdue — urgency icon, no colorization
-            task.title = format!("{}{}", icons.overdue, task.title);
-        } else {
-            // Check if within 25% of threshold time remaining
-            let threshold_str = cached.deadline.get(&task.size);
-            let base_secs = threshold_str
-                .and_then(|s| utils::parse_threshold_secs(s))
-                .unwrap_or(86400); // fallback: 24h
-
-            // Scale by impact multiplier
-            let multiplier = cached
-                .impact_multipliers
-                .get(&task.impact.to_string())
-                .copied()
-                .unwrap_or(1.0);
-            let effective_secs = (base_secs as f64 * multiplier) as i64;
-
-            let warning_secs = effective_secs / 4;
-            let remaining = (deadline_utc - now).num_seconds();
-
-            if remaining <= warning_secs {
-                // Warning — deadline icon + amber title
-                task.title = format!("{}{}", icons.deadline_warning, task.title)
-                    .yellow()
-                    .to_string();
-            }
-        }
-    }
 
     tasks
 }

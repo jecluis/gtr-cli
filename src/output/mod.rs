@@ -197,46 +197,27 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
 /// - Otherwise: show relative time using chrono-humanize
 /// - Color red if overdue
 fn format_deadline(deadline_str: Option<&str>, absolute_dates: bool) -> String {
-    let Some(deadline_str) = deadline_str else {
+    let Some(ds) = deadline_str else {
         return "-".to_string();
     };
 
-    let Ok(deadline) = DateTime::parse_from_rfc3339(deadline_str) else {
-        return "-".to_string();
-    };
-
-    let deadline_time = deadline.with_timezone(&Local);
-    let now = Utc::now();
-    let is_overdue = deadline < now;
-
-    // Calculate days difference for threshold check
-    let duration = if deadline > now {
-        deadline.signed_duration_since(now)
-    } else {
-        now.signed_duration_since(deadline)
-    };
-    let days = duration.num_days();
-
-    // Determine display format
-    let formatted = if absolute_dates || days > 30 {
-        // Show absolute date
-        deadline_time.format("%Y-%m-%d").to_string()
-    } else {
-        // Show relative time
-        let ht = HumanTime::from(deadline);
-        let tense = if is_overdue {
-            Tense::Past
-        } else {
-            Tense::Future
+    if absolute_dates {
+        // Force absolute date regardless of distance
+        let Ok(deadline) = DateTime::parse_from_rfc3339(ds) else {
+            return "-".to_string();
         };
-        ht.to_text_en(Accuracy::Rough, tense)
-    };
+        let local = deadline.with_timezone(&Local);
+        let formatted = local.format("%Y-%m-%d").to_string();
+        if deadline < Utc::now() {
+            return formatted.red().to_string();
+        }
+        return formatted;
+    }
 
-    // Color red if overdue
-    if is_overdue {
-        formatted.red().to_string()
-    } else {
-        formatted
+    match crate::display::format_deadline_relative(deadline_str) {
+        Some(d) if d.is_overdue => d.text.red().to_string(),
+        Some(d) => d.text,
+        None => "-".to_string(),
     }
 }
 
@@ -245,14 +226,12 @@ fn format_deadline(deadline_str: Option<&str>, absolute_dates: bool) -> String {
 /// When `colorize` is true, formats as: `prefix|suffix` where prefix is cyan
 /// and suffix is dimmed. Otherwise returns plain shortened ID.
 pub fn format_task_id(id: &str, prefix_len: usize, colorize: bool) -> String {
-    let id_short = &id[..8];
+    let (prefix, suffix) = crate::display::split_id(id, prefix_len);
 
     if colorize {
-        let prefix = &id_short[..prefix_len];
-        let suffix = &id_short[prefix_len..];
         format!("{}|{}", prefix.cyan(), suffix.dimmed())
     } else {
-        id_short.to_string()
+        format!("{prefix}{suffix}")
     }
 }
 
@@ -595,31 +574,25 @@ fn print_task_table(
     }
 
     // Build label color mapping (order of first appearance across tasks)
-    let label_colors = if with_labels {
-        let label_palette = [
-            colored::Color::Cyan,
-            colored::Color::Yellow,
-            colored::Color::Green,
-            colored::Color::Magenta,
-            colored::Color::Blue,
-            colored::Color::Red,
-            colored::Color::BrightCyan,
-            colored::Color::BrightYellow,
-            colored::Color::BrightGreen,
-            colored::Color::BrightMagenta,
-            colored::Color::BrightBlue,
-            colored::Color::BrightRed,
-        ];
-        let mut map = HashMap::new();
-        for task in tasks {
-            for label in &task.labels {
-                if !map.contains_key(label.as_str()) {
-                    let idx = map.len();
-                    map.insert(label.as_str(), label_palette[idx % label_palette.len()]);
-                }
-            }
-        }
-        map
+    let label_palette = [
+        colored::Color::Cyan,
+        colored::Color::Yellow,
+        colored::Color::Green,
+        colored::Color::Magenta,
+        colored::Color::Blue,
+        colored::Color::Red,
+        colored::Color::BrightCyan,
+        colored::Color::BrightYellow,
+        colored::Color::BrightGreen,
+        colored::Color::BrightMagenta,
+        colored::Color::BrightBlue,
+        colored::Color::BrightRed,
+    ];
+    let label_colors: HashMap<&str, colored::Color> = if with_labels {
+        crate::display::assign_label_colors(tasks.iter().map(|t| t.labels.as_slice()))
+            .into_iter()
+            .map(|(label, idx)| (label, label_palette[idx]))
+            .collect()
     } else {
         HashMap::new()
     };
@@ -692,19 +665,11 @@ fn build_task_row(
         .with_timezone(&Local);
     let modified_str = modified.format("%Y-%m-%d %H:%M").to_string();
 
-    // Joy icon prefix for task title
-    let je = icons.joy_icon(task.joy);
-    let joy_prefix = if je.is_empty() {
-        String::new()
-    } else {
-        format!("{je} ")
-    };
-
     // Impact icon prefix: spacing depends on theme
-    let impact_prefix = match task.impact {
-        1 => &icons.impact_critical,
-        2 => &icons.impact_significant,
-        _ => &icons.impact_none,
+    let impact_prefix = match crate::display::impact_level(task.impact) {
+        crate::display::ImpactLevel::Critical => &icons.impact_critical,
+        crate::display::ImpactLevel::Significant => &icons.impact_significant,
+        crate::display::ImpactLevel::Normal => &icons.impact_none,
     };
     let eff_priority = promotion::effective_priority(task, thresholds);
     let priority_colored = match eff_priority {
@@ -728,13 +693,54 @@ fn build_task_row(
         "pending".green().to_string()
     };
 
+    // Build title with correct order: [urgency][joy][bookmark]title
+    let urgency = if task.done.is_none() && task.deleted.is_none() {
+        crate::display::deadline_urgency(
+            task.deadline.as_deref(),
+            &task.size,
+            task.impact,
+            thresholds,
+        )
+    } else {
+        crate::display::DeadlineUrgency::None
+    };
+
+    let mut title_prefix = String::new();
+
+    // Urgency glyph first
+    match urgency {
+        crate::display::DeadlineUrgency::Overdue => {
+            title_prefix.push_str(&icons.overdue);
+        }
+        crate::display::DeadlineUrgency::Warning => {
+            title_prefix.push_str(&icons.deadline_warning);
+        }
+        crate::display::DeadlineUrgency::None => {}
+    }
+
+    // Joy icon
+    let je = icons.joy_icon(task.joy);
+    if !je.is_empty() {
+        title_prefix.push_str(&format!("{je} "));
+    }
+
+    // Bookmark + title (via display_title)
+    let display = task.display_title(icons);
+
     // Build hierarchy subtitle line (below the title)
     let subtitle = build_hierarchy_subtitle(task, prefix_len, colorize, icons, subtask_counts);
-    let display = task.display_title(icons);
+
+    let title_line = format!("{title_prefix}{display}");
+    // Apply warning colorization to the entire title line
+    let title_line = match urgency {
+        crate::display::DeadlineUrgency::Warning => title_line.yellow().to_string(),
+        _ => title_line,
+    };
+
     let title = if subtitle.is_empty() {
-        format!("{}{}", joy_prefix, display)
+        title_line
     } else {
-        format!("{}{}\n{}", joy_prefix, display, subtitle)
+        format!("{title_line}\n{subtitle}")
     };
 
     TaskRowData {
