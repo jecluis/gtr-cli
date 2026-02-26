@@ -27,8 +27,10 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget};
 
+use crate::cache::TaskCache;
 use crate::config::Config;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
+use crate::tui::sidebar::SidebarState;
 use crate::tui::theme::Theme;
 
 /// Application-wide state visible to all callbacks.
@@ -65,10 +67,14 @@ impl From<Event> for AppEvent {
 pub struct AppState {
     pub keymap: Keymap,
     pub theme: Theme,
+    pub sidebar: SidebarState,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
 pub fn run(config: Config) -> crate::Result<()> {
+    let cache = TaskCache::open(&config.cache_dir.join("index.db"))?;
+    let sidebar = SidebarState::from_cache(&cache)?;
+
     let mut global = Global {
         ctx: SalsaAppContext::default(),
         config,
@@ -76,6 +82,7 @@ pub fn run(config: Config) -> crate::Result<()> {
     let mut state = AppState {
         keymap: keymap::default_keymap(),
         theme: Theme::default(),
+        sidebar,
     };
 
     run_tui(
@@ -100,8 +107,13 @@ fn render(
     _ctx: &mut Global,
 ) -> Result<(), crate::Error> {
     let layout = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(area);
+    let columns =
+        Layout::horizontal([Constraint::Length(28), Constraint::Fill(1)]).split(layout[0]);
 
     let theme = &state.theme;
+
+    // Sidebar
+    state.sidebar.render(theme, true, columns[0], buf);
 
     // Main area — placeholder
     let greeting = Paragraph::new(vec![
@@ -114,7 +126,7 @@ fn render(
         Span::from("  TUI is loading...").style(theme.muted).into(),
     ])
     .block(Block::bordered().title(" gtr "));
-    greeting.render(layout[0], buf);
+    greeting.render(columns[1], buf);
 
     // Status bar
     Line::from_iter([
@@ -129,7 +141,7 @@ fn render(
 
     // Which-key popup when a prefix key is pending
     if let Some(node) = state.keymap.pending_node() {
-        keymap::render_which_key(node, theme, layout[0], buf);
+        keymap::render_which_key(node, theme, area, buf);
     }
 
     Ok(())

@@ -23,6 +23,7 @@
 
 mod app;
 pub mod keymap;
+pub mod sidebar;
 pub mod theme;
 
 /// Launch the TUI, taking over the terminal until the user quits.
