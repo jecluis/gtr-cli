@@ -18,7 +18,7 @@
 //! rat-salsa application skeleton: Global state, event types, and the
 //! four callback functions (init, render, event, error).
 
-use crossterm::event::{Event, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use rat_salsa::poll::PollCrossterm;
 use rat_salsa::{Control, RunConfig, SalsaAppContext, SalsaContext, run_tui};
 use ratatui::buffer::Buffer;
@@ -63,11 +63,19 @@ impl From<Event> for AppEvent {
     }
 }
 
+/// Which panel currently has keyboard focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusPanel {
+    Sidebar,
+    Main,
+}
+
 /// UI widget state tree.
 pub struct AppState {
     pub keymap: Keymap,
     pub theme: Theme,
     pub sidebar: SidebarState,
+    pub focus: FocusPanel,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
@@ -83,6 +91,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         keymap: keymap::default_keymap(),
         theme: Theme::default(),
         sidebar,
+        focus: FocusPanel::Sidebar,
     };
 
     run_tui(
@@ -111,11 +120,19 @@ fn render(
         Layout::horizontal([Constraint::Length(28), Constraint::Fill(1)]).split(layout[0]);
 
     let theme = &state.theme;
+    let sidebar_focused = state.focus == FocusPanel::Sidebar;
 
     // Sidebar
-    state.sidebar.render(theme, true, columns[0], buf);
+    state
+        .sidebar
+        .render(theme, sidebar_focused, columns[0], buf);
 
-    // Main area — placeholder
+    // Main area — dashboard placeholder
+    let main_border = if sidebar_focused {
+        theme.border_unfocused
+    } else {
+        theme.border_focused
+    };
     let greeting = Paragraph::new(vec![
         Line::default(),
         Line::from_iter([
@@ -123,21 +140,19 @@ fn render(
             Span::from(" — Getting Things Rusty"),
         ]),
         Line::default(),
-        Span::from("  TUI is loading...").style(theme.muted).into(),
+        Span::from("  Dashboard coming soon...")
+            .style(theme.muted)
+            .into(),
     ])
-    .block(Block::bordered().title(" gtr "));
+    .block(
+        Block::bordered()
+            .title(" dashboard ")
+            .border_style(main_border),
+    );
     greeting.render(columns[1], buf);
 
     // Status bar
-    Line::from_iter([
-        Span::from(" q").style(theme.status_key),
-        Span::from(" quit").style(theme.status_desc),
-        Span::from("  g").style(theme.status_key),
-        Span::from(" goto").style(theme.status_desc),
-        Span::from("  ?").style(theme.status_key),
-        Span::from(" help").style(theme.status_desc),
-    ])
-    .render(layout[1], buf);
+    render_status_bar(state, layout[1], buf);
 
     // Which-key popup when a prefix key is pending
     if let Some(node) = state.keymap.pending_node() {
@@ -152,20 +167,80 @@ fn handle_event(
     state: &mut AppState,
     _ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
-    match event {
-        AppEvent::Event(Event::Key(key)) if key.kind == KeyEventKind::Press => {
-            match state.keymap.process(*key) {
-                KeymapResult::Matched(Action::Quit) => Ok(Control::Quit),
-                KeymapResult::Matched(_action) => {
-                    // Other actions will be handled in later commits.
-                    Ok(Control::Changed)
-                }
-                KeymapResult::Pending(_) => Ok(Control::Changed),
-                KeymapResult::Cancelled | KeymapResult::NotFound => Ok(Control::Changed),
-            }
-        }
-        _ => Ok(Control::Continue),
+    let AppEvent::Event(Event::Key(key)) = event else {
+        return Ok(Control::Continue);
+    };
+    if key.kind != KeyEventKind::Press {
+        return Ok(Control::Continue);
     }
+
+    // Ctrl-c always quits regardless of keymap state.
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Ok(Control::Quit);
+    }
+
+    // Tab toggles focus between sidebar and main panel.
+    if key.code == KeyCode::Tab {
+        state.focus = match state.focus {
+            FocusPanel::Sidebar => FocusPanel::Main,
+            FocusPanel::Main => FocusPanel::Sidebar,
+        };
+        return Ok(Control::Changed);
+    }
+
+    // Sidebar-local navigation when sidebar is focused.
+    if state.focus == FocusPanel::Sidebar && !state.keymap.is_pending() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.sidebar.select_prev();
+                return Ok(Control::Changed);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.sidebar.select_next();
+                return Ok(Control::Changed);
+            }
+            _ => {}
+        }
+    }
+
+    // Global keymap (chords, actions).
+    match state.keymap.process(*key) {
+        KeymapResult::Matched(Action::Quit) => Ok(Control::Quit),
+        KeymapResult::Matched(_action) => {
+            // Other actions will be handled in later commits.
+            Ok(Control::Changed)
+        }
+        KeymapResult::Pending(_) => Ok(Control::Changed),
+        KeymapResult::Cancelled | KeymapResult::NotFound => Ok(Control::Changed),
+    }
+}
+
+/// Render the status bar with context-aware key hints.
+fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
+    let theme = &state.theme;
+
+    let mut hints: Vec<Span<'_>> = vec![
+        Span::styled(" q", theme.status_key),
+        Span::styled(" quit", theme.status_desc),
+        Span::styled("  Tab", theme.status_key),
+        Span::styled(" focus", theme.status_desc),
+        Span::styled("  g", theme.status_key),
+        Span::styled(" goto", theme.status_desc),
+    ];
+
+    if state.focus == FocusPanel::Sidebar {
+        hints.extend([
+            Span::styled("  j/k", theme.status_key),
+            Span::styled(" nav", theme.status_desc),
+        ]);
+    }
+
+    hints.extend([
+        Span::styled("  ?", theme.status_key),
+        Span::styled(" help", theme.status_desc),
+    ]);
+
+    Line::from(hints).style(theme.status_bar).render(area, buf);
 }
 
 fn handle_error(
