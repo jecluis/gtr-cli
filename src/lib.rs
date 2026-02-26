@@ -22,6 +22,7 @@ pub mod client;
 pub mod commands;
 pub mod config;
 pub mod crdt;
+pub mod display;
 pub mod editor;
 pub mod error;
 pub mod hierarchy;
