@@ -23,6 +23,7 @@
 
 mod app;
 pub mod keymap;
+pub mod theme;
 
 /// Launch the TUI, taking over the terminal until the user quits.
 pub fn run(config: crate::config::Config) -> crate::Result<()> {

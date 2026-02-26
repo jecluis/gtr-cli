@@ -23,12 +23,13 @@ use rat_salsa::poll::PollCrossterm;
 use rat_salsa::{Control, RunConfig, SalsaAppContext, SalsaContext, run_tui};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Stylize;
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget};
 
 use crate::config::Config;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
+use crate::tui::theme::Theme;
 
 /// Application-wide state visible to all callbacks.
 #[allow(dead_code)]
@@ -63,6 +64,7 @@ impl From<Event> for AppEvent {
 /// UI widget state tree.
 pub struct AppState {
     pub keymap: Keymap,
+    pub theme: Theme,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
@@ -73,6 +75,7 @@ pub fn run(config: Config) -> crate::Result<()> {
     };
     let mut state = AppState {
         keymap: keymap::default_keymap(),
+        theme: Theme::default(),
     };
 
     run_tui(
@@ -98,33 +101,35 @@ fn render(
 ) -> Result<(), crate::Error> {
     let layout = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(area);
 
+    let theme = &state.theme;
+
     // Main area — placeholder
     let greeting = Paragraph::new(vec![
         Line::default(),
         Line::from_iter([
-            Span::from("  gtr").cyan().bold(),
+            Span::from("  gtr").style(theme.accent.add_modifier(Modifier::BOLD)),
             Span::from(" — Getting Things Rusty"),
         ]),
         Line::default(),
-        Line::from("  TUI is loading...").dim(),
+        Span::from("  TUI is loading...").style(theme.muted).into(),
     ])
     .block(Block::bordered().title(" gtr "));
     greeting.render(layout[0], buf);
 
     // Status bar
     Line::from_iter([
-        Span::from(" q").cyan().bold(),
-        Span::from(" quit").dim(),
-        Span::from("  g").cyan().bold(),
-        Span::from(" goto").dim(),
-        Span::from("  ?").cyan().bold(),
-        Span::from(" help").dim(),
+        Span::from(" q").style(theme.status_key),
+        Span::from(" quit").style(theme.status_desc),
+        Span::from("  g").style(theme.status_key),
+        Span::from(" goto").style(theme.status_desc),
+        Span::from("  ?").style(theme.status_key),
+        Span::from(" help").style(theme.status_desc),
     ])
     .render(layout[1], buf);
 
     // Which-key popup when a prefix key is pending
     if let Some(node) = state.keymap.pending_node() {
-        keymap::render_which_key(node, layout[0], buf);
+        keymap::render_which_key(node, theme, layout[0], buf);
     }
 
     Ok(())

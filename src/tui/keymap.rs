@@ -25,9 +25,11 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::Stylize;
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Padding, Widget};
+
+use super::theme::Theme;
 
 /// Actions the TUI can perform in response to key bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,7 +209,7 @@ fn entry_label(entry: &KeyTrie) -> &str {
 }
 
 /// Render the which-key hint popup centred at the bottom of the given area.
-pub fn render_which_key(node: &KeyTrieNode, area: Rect, buf: &mut Buffer) {
+pub fn render_which_key(node: &KeyTrieNode, theme: &Theme, area: Rect, buf: &mut Buffer) {
     let hints: Vec<(String, &str)> = node
         .entries()
         .map(|(k, v)| (format_key(k), entry_label(v)))
@@ -221,7 +223,7 @@ pub fn render_which_key(node: &KeyTrieNode, area: Rect, buf: &mut Buffer) {
         .iter()
         .map(|(k, desc)| {
             Line::from_iter([
-                Span::from(format!("  {k}")).cyan().bold(),
+                Span::from(format!("  {k}")).style(theme.accent.add_modifier(Modifier::BOLD)),
                 Span::from(format!("  {desc}")),
             ])
         })
