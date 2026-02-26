@@ -412,7 +412,8 @@ impl TaskCache {
 
     /// Parse a TaskSummary from a row with columns:
     /// id, project_id, title, priority, size, created, modified,
-    /// done, deleted, deadline, needs_push, is_bookmark, labels
+    /// done, deleted, deadline, needs_push, is_bookmark, labels,
+    /// impact, joy, parent_id
     fn row_to_summary(row: &rusqlite::Row) -> rusqlite::Result<TaskSummary> {
         let labels_json: String = row.get(12)?;
         let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
@@ -430,6 +431,9 @@ impl TaskCache {
             needs_push: row.get::<_, i64>(10)? != 0,
             is_bookmark: row.get::<_, i64>(11).unwrap_or(0) != 0,
             labels,
+            impact: row.get::<_, i64>(13).unwrap_or(5) as u8,
+            joy: row.get::<_, i64>(14).unwrap_or(5) as u8,
+            parent_id: row.get(15)?,
         })
     }
 
@@ -535,7 +539,8 @@ impl TaskCache {
             .query_row(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push, is_bookmark, labels
+                   done, deleted, deadline, needs_push, is_bookmark, labels,
+                   impact, joy, parent_id
             FROM tasks WHERE id = ?1
             "#,
                 params![task_id],
@@ -552,7 +557,8 @@ impl TaskCache {
             .prepare(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push, is_bookmark, labels
+                   done, deleted, deadline, needs_push, is_bookmark, labels,
+                   impact, joy, parent_id
             FROM tasks
             WHERE project_id = ?1
             ORDER BY modified DESC
@@ -755,7 +761,8 @@ impl TaskCache {
             .prepare(
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
-                   done, deleted, deadline, needs_push, is_bookmark, labels
+                   done, deleted, deadline, needs_push, is_bookmark, labels,
+                   impact, joy, parent_id
             FROM tasks
             WHERE parent_id = ?1 AND deleted IS NULL
             ORDER BY modified DESC
@@ -2136,6 +2143,9 @@ pub struct TaskSummary {
     pub needs_push: bool,
     pub is_bookmark: bool,
     pub labels: Vec<String>,
+    pub impact: u8,
+    pub joy: u8,
+    pub parent_id: Option<String>,
 }
 
 impl TaskSummary {

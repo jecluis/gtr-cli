@@ -62,6 +62,101 @@ impl std::str::FromStr for IconTheme {
     }
 }
 
+/// Raw glyph codepoints without ANSI color codes or trailing spaces.
+///
+/// Unlike [`Icons`], which contains pre-formatted strings with ANSI color
+/// escapes for CLI output, `Glyphs` holds bare codepoints suitable for
+/// contexts that handle styling separately (e.g. ratatui TUI).
+pub struct Glyphs {
+    pub impact_critical: &'static str,
+    pub impact_significant: &'static str,
+    /// Theme-dependent padding width: 3 spaces (unicode) or 2 (nerd).
+    pub impact_pad: &'static str,
+    pub overdue: &'static str,
+    pub deadline_warning: &'static str,
+    pub joy_high: &'static str,
+    pub joy_low: &'static str,
+    pub priority_now: &'static str,
+    pub success: &'static str,
+    pub failure: &'static str,
+    pub queued: &'static str,
+    pub hierarchy_parent: &'static str,
+    pub hierarchy_subtasks: &'static str,
+    pub hierarchy_separator: &'static str,
+    pub bookmark: &'static str,
+    pub label: &'static str,
+    pub link: &'static str,
+    pub info: &'static str,
+    pub cancelled: &'static str,
+}
+
+impl Glyphs {
+    /// Build a glyph set for the given theme.
+    pub fn new(theme: IconTheme) -> Self {
+        match theme {
+            IconTheme::Unicode => Self::unicode(),
+            IconTheme::Nerd => Self::nerd(),
+        }
+    }
+
+    /// Return the joy glyph for a given joy value, or empty string for neutral.
+    pub fn joy_icon(&self, joy: u8) -> &str {
+        match joy {
+            8..=10 => self.joy_high,
+            0..=4 => self.joy_low,
+            _ => "",
+        }
+    }
+
+    const fn unicode() -> Self {
+        Self {
+            impact_critical: "\u{1f525}",    // 🔥
+            impact_significant: "\u{26a1}",  // ⚡
+            impact_pad: "   ",               // 3 spaces (emoji 2-cell + space)
+            overdue: "\u{1f4a5}",            // 💥
+            deadline_warning: "\u{26a0}",    // ⚠
+            joy_high: "\u{1f31f}",           // 🌟
+            joy_low: "\u{1f4a4}",            // 💤
+            priority_now: "\u{1f534}",       // 🔴
+            success: "\u{2713}",             // ✓
+            failure: "\u{2717}",             // ✗
+            queued: "\u{2299}",              // ⊙
+            hierarchy_parent: "\u{21b3}",    // ↳
+            hierarchy_subtasks: "\u{25b6}",  // ▶
+            hierarchy_separator: "\u{00b7}", // ·
+            bookmark: "\u{1f516}",           // 🔖
+            label: "\u{1f3f7}",              // 🏷
+            link: "\u{1f517}",               // 🔗
+            info: "\u{2139}",                // ℹ
+            cancelled: "\u{2717}",           // ✗
+        }
+    }
+
+    const fn nerd() -> Self {
+        Self {
+            impact_critical: "\u{f0238}",    // 󰈸 nf-md-fire
+            impact_significant: "\u{f0e7}",  // nf-fa-bolt
+            impact_pad: "  ",                // 2 spaces (NF 1-cell + space)
+            overdue: "\u{f1e2}",             // nf-fa-bomb
+            deadline_warning: "\u{f253}",    // nf-fa-hourglass_half
+            joy_high: "\u{f005}",            // nf-fa-star
+            joy_low: "\u{f0904}",            // 󰤄 nf-md-sleep
+            priority_now: "\u{f0238}",       // 󰈸 nf-md-fire
+            success: "\u{f00c}",             // nf-fa-check
+            failure: "\u{f00d}",             // nf-fa-close
+            queued: "\u{f110}",              // nf-fa-spinner
+            hierarchy_parent: "\u{f0da3}",   // 󰶣
+            hierarchy_subtasks: "\u{ef81}",  //
+            hierarchy_separator: "\u{f444}", //
+            bookmark: "\u{f00c0}",           // 󰃀 nf-md-bookmark
+            label: "\u{f03b}",               // nf-fa-tags
+            link: "\u{f0c1}",                // nf-fa-link
+            info: "\u{f05a}",                // nf-fa-info_circle
+            cancelled: "\u{f00d}",           // nf-fa-close
+        }
+    }
+}
+
 /// Complete set of icons used throughout the CLI.
 ///
 /// Each field is a `String` containing the glyph(s) ready for direct
@@ -139,96 +234,50 @@ impl Icons {
 
     /// Build an icon set for the given theme.
     pub fn new(theme: IconTheme) -> Self {
+        let g = Glyphs::new(theme);
         match theme {
-            IconTheme::Unicode => Self::unicode(),
-            IconTheme::Nerd => Self::nerd(),
-        }
-    }
-
-    fn unicode() -> Self {
-        Self {
-            // Impact: emoji are 2 cells each, + 1 space = 3-cell prefix
-            impact_critical: "\u{1f525} ".into(),   // 🔥 + space
-            impact_significant: "\u{26a1} ".into(), // ⚡ + space
-            impact_none: "   ".into(),              // 3 spaces
-
-            // Deadline urgency
-            overdue: "\u{1f4a5} ".into(),         // 💥 + space
-            deadline_warning: "\u{26a0} ".into(), // ⚠ + space
-
-            // Joy
-            joy_high: "\u{1f31f}".into(), // 🌟
-            joy_low: "\u{1f4a4}".into(),  // 💤
-
-            // Next picker
-            priority_now: "\u{1f534}".into(), // 🔴
-
-            // Sync status
-            success: "\u{2713}".into(), // ✓
-            failure: "\u{2717}".into(), // ✗
-            queued: "\u{2299}".into(),  // ⊙
-
-            // Hierarchy
-            hierarchy_parent: "\u{21b3}".into(),    // ↳
-            hierarchy_subtasks: "\u{25b6}".into(),  // ▶
-            hierarchy_separator: "\u{00b7}".into(), // ·
-
-            // Bookmark
-            bookmark: "\u{1f516} ".into(), // 🔖 + space
-
-            // Labels
-            label: "\u{1f3f7}".into(), // 🏷
-
-            // Links
-            link: "\u{1f517}".into(), // 🔗
-
-            // Informational
-            info: "\u{2139}".into(),      // ℹ
-            cancelled: "\u{2717}".into(), // ✗
-        }
-    }
-
-    fn nerd() -> Self {
-        Self {
-            // Impact: NF glyphs are 1 cell each, + 1 space = 2-cell prefix
-            // Colors make monochrome glyphs visually distinguishable
-            impact_critical: format!("{} ", "\u{f0238}".red()), // 󰈸 nf-md-fire (red)
-            impact_significant: format!("{} ", "\u{f0e7}".blue()), // nf-fa-bolt (blue)
-            impact_none: "  ".into(),                           // 2 spaces
-
-            // Deadline urgency
-            overdue: format!("{} ", "\u{f1e2}".red()), // nf-fa-bomb (red)
-            deadline_warning: format!("{} ", "\u{f253}".yellow()), // nf-fa-hourglass_half (yellow)
-
-            // Joy
-            joy_high: format!("{}", "\u{f005}".yellow()), // nf-fa-star (yellow)
-            joy_low: format!("{}", "\u{f0904}".blue()),   // 󰤄 nf-md-sleep (blue)
-
-            // Next picker
-            priority_now: format!("{}", "\u{f0238}".red()), // 󰈸 nf-md-fire (red)
-
-            // Sync status
-            success: "\u{f00c}".into(), // nf-fa-check
-            failure: "\u{f00d}".into(), // nf-fa-close
-            queued: "\u{f110}".into(),  // nf-fa-spinner
-
-            // Hierarchy
-            hierarchy_parent: "\u{f0da3}".into(), // 󰶣 nf-md (up-arrow)
-            hierarchy_subtasks: "\u{ef81}".into(), // nf (folder tree)
-            hierarchy_separator: "\u{f444}".into(), // nf-oct-dot_fill
-
-            // Bookmark
-            bookmark: format!("{} ", "\u{f00c0}".cyan()), // 󰃀 nf-md-bookmark (cyan)
-
-            // Labels
-            label: format!("{}", "\u{f03b}".red()), // nf-fa-tags (red)
-
-            // Links
-            link: format!("{}", "\u{f0c1}".cyan()), // nf-fa-link (cyan)
-
-            // Informational
-            info: "\u{f05a}".into(),      // nf-fa-info_circle
-            cancelled: "\u{f00d}".into(), // nf-fa-close
+            IconTheme::Unicode => Self {
+                impact_critical: format!("{} ", g.impact_critical),
+                impact_significant: format!("{} ", g.impact_significant),
+                impact_none: g.impact_pad.into(),
+                overdue: format!("{} ", g.overdue),
+                deadline_warning: format!("{} ", g.deadline_warning),
+                joy_high: g.joy_high.into(),
+                joy_low: g.joy_low.into(),
+                priority_now: g.priority_now.into(),
+                success: g.success.into(),
+                failure: g.failure.into(),
+                queued: g.queued.into(),
+                hierarchy_parent: g.hierarchy_parent.into(),
+                hierarchy_subtasks: g.hierarchy_subtasks.into(),
+                hierarchy_separator: g.hierarchy_separator.into(),
+                bookmark: format!("{} ", g.bookmark),
+                label: g.label.into(),
+                link: g.link.into(),
+                info: g.info.into(),
+                cancelled: g.cancelled.into(),
+            },
+            IconTheme::Nerd => Self {
+                impact_critical: format!("{} ", g.impact_critical.red()),
+                impact_significant: format!("{} ", g.impact_significant.blue()),
+                impact_none: g.impact_pad.into(),
+                overdue: format!("{} ", g.overdue.red()),
+                deadline_warning: format!("{} ", g.deadline_warning.yellow()),
+                joy_high: format!("{}", g.joy_high.yellow()),
+                joy_low: format!("{}", g.joy_low.blue()),
+                priority_now: format!("{}", g.priority_now.red()),
+                success: g.success.into(),
+                failure: g.failure.into(),
+                queued: g.queued.into(),
+                hierarchy_parent: g.hierarchy_parent.into(),
+                hierarchy_subtasks: g.hierarchy_subtasks.into(),
+                hierarchy_separator: g.hierarchy_separator.into(),
+                bookmark: format!("{} ", g.bookmark.cyan()),
+                label: format!("{}", g.label.red()),
+                link: format!("{}", g.link.cyan()),
+                info: g.info.into(),
+                cancelled: g.cancelled.into(),
+            },
         }
     }
 }
@@ -294,5 +343,42 @@ mod tests {
         assert_eq!(json, "\"nerd\"");
         let parsed: IconTheme = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, IconTheme::Nerd);
+    }
+
+    #[test]
+    fn unicode_glyphs_are_non_empty() {
+        let g = Glyphs::new(IconTheme::Unicode);
+        assert!(!g.impact_critical.is_empty());
+        assert!(!g.impact_significant.is_empty());
+        assert!(!g.overdue.is_empty());
+        assert!(!g.joy_high.is_empty());
+        assert!(!g.joy_low.is_empty());
+        assert!(!g.bookmark.is_empty());
+        assert!(!g.label.is_empty());
+        assert!(!g.hierarchy_parent.is_empty());
+    }
+
+    #[test]
+    fn nerd_glyphs_are_non_empty() {
+        let g = Glyphs::new(IconTheme::Nerd);
+        assert!(!g.impact_critical.is_empty());
+        assert!(!g.impact_significant.is_empty());
+        assert!(!g.overdue.is_empty());
+        assert!(!g.joy_high.is_empty());
+        assert!(!g.joy_low.is_empty());
+        assert!(!g.bookmark.is_empty());
+        assert!(!g.label.is_empty());
+        assert!(!g.hierarchy_parent.is_empty());
+    }
+
+    #[test]
+    fn glyphs_joy_icon_ranges() {
+        let g = Glyphs::new(IconTheme::Unicode);
+        assert_eq!(g.joy_icon(10), g.joy_high);
+        assert_eq!(g.joy_icon(8), g.joy_high);
+        assert_eq!(g.joy_icon(4), g.joy_low);
+        assert_eq!(g.joy_icon(0), g.joy_low);
+        assert_eq!(g.joy_icon(5), "");
+        assert_eq!(g.joy_icon(7), "");
     }
 }

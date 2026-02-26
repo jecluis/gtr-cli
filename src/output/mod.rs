@@ -664,16 +664,15 @@ fn print_task_table(
     }
 }
 
-/// Compute subtask counts from a task list.
+/// Compute subtask counts from an iterator of optional parent IDs.
 ///
-/// Returns a map from task ID to the number of direct children present
-/// in the given slice.
-fn compute_subtask_counts(tasks: &[Task]) -> HashMap<String, usize> {
+/// Returns a map from parent task ID to the number of direct children.
+pub fn compute_subtask_counts<'a>(
+    parent_ids: impl Iterator<Item = Option<&'a str>>,
+) -> HashMap<String, usize> {
     let mut counts: HashMap<String, usize> = HashMap::new();
-    for task in tasks {
-        if let Some(ref parent_id) = task.parent_id {
-            *counts.entry(parent_id.clone()).or_default() += 1;
-        }
+    for parent_id in parent_ids.flatten() {
+        *counts.entry(parent_id.to_string()).or_default() += 1;
     }
     counts
 }
@@ -858,7 +857,7 @@ fn render_task_table(
 
     // Build rows based on column configuration
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
-    let subtask_counts = compute_subtask_counts(tasks);
+    let subtask_counts = compute_subtask_counts(tasks.iter().map(|t| t.parent_id.as_deref()));
     for task in tasks {
         let row = build_task_row(
             task,
@@ -985,7 +984,7 @@ fn render_simplified_table(
     label_colors: &HashMap<&str, colored::Color>,
 ) {
     let colorize = colored::control::SHOULD_COLORIZE.should_colorize();
-    let subtask_counts = compute_subtask_counts(tasks);
+    let subtask_counts = compute_subtask_counts(tasks.iter().map(|t| t.parent_id.as_deref()));
     for (idx, task) in tasks.iter().enumerate() {
         let row = build_task_row(
             task,

@@ -29,8 +29,10 @@ use ratatui::widgets::{Block, Paragraph, Widget};
 
 use crate::cache::TaskCache;
 use crate::config::Config;
+use crate::storage::{StorageConfig, TaskStorage};
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
-use crate::tui::sidebar::SidebarState;
+use crate::tui::sidebar::{SidebarState, TreeItemKind};
+use crate::tui::task_list::TaskListState;
 use crate::tui::theme::Theme;
 
 /// Application-wide state visible to all callbacks.
@@ -38,6 +40,8 @@ use crate::tui::theme::Theme;
 pub struct Global {
     ctx: SalsaAppContext<AppEvent, crate::Error>,
     pub config: Config,
+    pub cache: TaskCache,
+    pub storage: TaskStorage,
 }
 
 impl SalsaContext<AppEvent, crate::Error> for Global {
@@ -70,28 +74,40 @@ pub enum FocusPanel {
     Main,
 }
 
+/// What the main panel is currently showing.
+pub enum MainView {
+    Dashboard,
+    TaskList(Box<TaskListState>),
+}
+
 /// UI widget state tree.
 pub struct AppState {
     pub keymap: Keymap,
     pub theme: Theme,
     pub sidebar: SidebarState,
     pub focus: FocusPanel,
+    pub main_view: MainView,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
 pub fn run(config: Config) -> crate::Result<()> {
     let cache = TaskCache::open(&config.cache_dir.join("index.db"))?;
     let sidebar = SidebarState::from_cache(&cache)?;
+    let storage_config = StorageConfig::new(config.cache_dir.clone(), "default".to_string());
+    let storage = TaskStorage::new(storage_config);
 
     let mut global = Global {
         ctx: SalsaAppContext::default(),
         config,
+        cache,
+        storage,
     };
     let mut state = AppState {
         keymap: keymap::default_keymap(),
         theme: Theme::default(),
         sidebar,
         focus: FocusPanel::Sidebar,
+        main_view: MainView::Dashboard,
     };
 
     run_tui(
@@ -121,35 +137,18 @@ fn render(
 
     let theme = &state.theme;
     let sidebar_focused = state.focus == FocusPanel::Sidebar;
+    let main_focused = state.focus == FocusPanel::Main;
 
     // Sidebar
     state
         .sidebar
         .render(theme, sidebar_focused, columns[0], buf);
 
-    // Main area — dashboard placeholder
-    let main_border = if sidebar_focused {
-        theme.border_unfocused
-    } else {
-        theme.border_focused
-    };
-    let greeting = Paragraph::new(vec![
-        Line::default(),
-        Line::from_iter([
-            Span::from("  gtr").style(theme.accent.add_modifier(Modifier::BOLD)),
-            Span::from(" — Getting Things Rusty"),
-        ]),
-        Line::default(),
-        Span::from("  Dashboard coming soon...")
-            .style(theme.muted)
-            .into(),
-    ])
-    .block(
-        Block::bordered()
-            .title(" dashboard ")
-            .border_style(main_border),
-    );
-    greeting.render(columns[1], buf);
+    // Main area — dispatch based on current view
+    match &state.main_view {
+        MainView::Dashboard => render_dashboard(theme, main_focused, columns[1], buf),
+        MainView::TaskList(task_list) => task_list.render(theme, main_focused, columns[1], buf),
+    }
 
     // Status bar
     render_status_bar(state, layout[1], buf);
@@ -162,10 +161,32 @@ fn render(
     Ok(())
 }
 
+/// Render the dashboard placeholder in the main area.
+fn render_dashboard(theme: &Theme, focused: bool, area: Rect, buf: &mut Buffer) {
+    let border = if focused {
+        theme.border_focused
+    } else {
+        theme.border_unfocused
+    };
+    let greeting = Paragraph::new(vec![
+        Line::default(),
+        Line::from_iter([
+            Span::from("  gtr").style(theme.accent.add_modifier(Modifier::BOLD)),
+            Span::from(" \u{2014} Getting Things Rusty"),
+        ]),
+        Line::default(),
+        Span::from("  Dashboard coming soon...")
+            .style(theme.muted)
+            .into(),
+    ])
+    .block(Block::bordered().title(" dashboard ").border_style(border));
+    greeting.render(area, buf);
+}
+
 fn handle_event(
     event: &AppEvent,
     state: &mut AppState,
-    _ctx: &mut Global,
+    ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
     let AppEvent::Event(Event::Key(key)) = event else {
         return Ok(Control::Continue);
@@ -199,13 +220,47 @@ fn handle_event(
                 state.sidebar.select_next();
                 return Ok(Control::Changed);
             }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                return handle_sidebar_select(state, ctx);
+            }
+            _ => {}
+        }
+    }
+
+    // Main panel navigation when main is focused and not mid-chord.
+    if state.focus == FocusPanel::Main
+        && !state.keymap.is_pending()
+        && let MainView::TaskList(ref mut task_list) = state.main_view
+    {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                task_list.select_prev();
+                return Ok(Control::Changed);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                task_list.select_next();
+                return Ok(Control::Changed);
+            }
+            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
+                state.main_view = MainView::Dashboard;
+                return Ok(Control::Changed);
+            }
             _ => {}
         }
     }
 
     // Global keymap (chords, actions).
     match state.keymap.process(*key) {
-        KeymapResult::Matched(Action::Quit) => Ok(Control::Quit),
+        KeymapResult::Matched(Action::Quit) => {
+            // q navigates back through the view stack before quitting.
+            match &state.main_view {
+                MainView::TaskList(_) => {
+                    state.main_view = MainView::Dashboard;
+                    Ok(Control::Changed)
+                }
+                MainView::Dashboard => Ok(Control::Quit),
+            }
+        }
         KeymapResult::Matched(_action) => {
             // Other actions will be handled in later commits.
             Ok(Control::Changed)
@@ -215,23 +270,63 @@ fn handle_event(
     }
 }
 
+/// Handle Enter/l/Right on a sidebar item.
+fn handle_sidebar_select(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let kind = state.sidebar.selected_kind();
+    let id = state.sidebar.selected_id().to_string();
+    let name = state.sidebar.selected_name().to_string();
+
+    match kind {
+        Some(TreeItemKind::Project) if !id.is_empty() => {
+            let icon_theme = ctx.config.effective_icon_theme();
+            let task_list = TaskListState::from_cache(&ctx.cache, &id, &name, icon_theme)?;
+            state.main_view = MainView::TaskList(Box::new(task_list));
+            state.focus = FocusPanel::Main;
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
 /// Render the status bar with context-aware key hints.
 fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
     let theme = &state.theme;
 
-    let mut hints: Vec<Span<'_>> = vec![
-        Span::styled(" q", theme.status_key),
-        Span::styled(" quit", theme.status_desc),
+    let mut hints: Vec<Span<'_>> = Vec::new();
+
+    match (&state.main_view, state.focus) {
+        (MainView::TaskList(_), FocusPanel::Main) => {
+            hints.extend([
+                Span::styled(" Esc", theme.status_key),
+                Span::styled(" back", theme.status_desc),
+                Span::styled("  j/k", theme.status_key),
+                Span::styled(" nav", theme.status_desc),
+            ]);
+        }
+        _ => {
+            hints.extend([
+                Span::styled(" q", theme.status_key),
+                Span::styled(" quit", theme.status_desc),
+                Span::styled("  g", theme.status_key),
+                Span::styled(" goto", theme.status_desc),
+            ]);
+        }
+    }
+
+    hints.extend([
         Span::styled("  Tab", theme.status_key),
         Span::styled(" focus", theme.status_desc),
-        Span::styled("  g", theme.status_key),
-        Span::styled(" goto", theme.status_desc),
-    ];
+    ]);
 
     if state.focus == FocusPanel::Sidebar {
         hints.extend([
             Span::styled("  j/k", theme.status_key),
             Span::styled(" nav", theme.status_desc),
+            Span::styled("  Enter", theme.status_key),
+            Span::styled(" open", theme.status_desc),
         ]);
     }
 

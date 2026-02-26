@@ -29,12 +29,21 @@ use ratatui::widgets::Widget;
 use super::theme::Theme;
 use crate::cache::{CachedNamespace, CachedProject, TaskCache};
 
+/// The kind of entity a sidebar item represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeItemKind {
+    SectionHeader,
+    Project,
+    Namespace,
+}
+
 /// A flattened, renderable tree item.
 #[derive(Debug, Clone)]
 struct TreeItem {
     id: String,
     name: String,
     depth: u16,
+    kind: TreeItemKind,
     is_section_header: bool,
 }
 
@@ -66,6 +75,7 @@ impl SidebarState {
             id: String::new(),
             name: "Projects".to_string(),
             depth: 0,
+            kind: TreeItemKind::SectionHeader,
             is_section_header: true,
         });
         flatten_projects(&projects, None, 1, &mut items);
@@ -75,6 +85,7 @@ impl SidebarState {
             id: String::new(),
             name: "Namespaces".to_string(),
             depth: 0,
+            kind: TreeItemKind::SectionHeader,
             is_section_header: true,
         });
         flatten_namespaces(&namespaces, None, 1, &mut items);
@@ -101,6 +112,19 @@ impl SidebarState {
         self.items
             .get(self.selected)
             .map(|i| i.id.as_str())
+            .unwrap_or("")
+    }
+
+    /// Get the kind of the currently selected item.
+    pub fn selected_kind(&self) -> Option<TreeItemKind> {
+        self.items.get(self.selected).map(|i| i.kind)
+    }
+
+    /// Get the display name of the currently selected item.
+    pub fn selected_name(&self) -> &str {
+        self.items
+            .get(self.selected)
+            .map(|i| i.name.as_str())
             .unwrap_or("")
     }
 
@@ -170,6 +194,7 @@ fn flatten_projects(
             id: proj.id.clone(),
             name: proj.name.clone(),
             depth,
+            kind: TreeItemKind::Project,
             is_section_header: false,
         });
         flatten_projects(all, Some(&proj.id), depth + 1, out);
@@ -193,6 +218,7 @@ fn flatten_namespaces(
             id: ns.id.clone(),
             name: ns.name.clone(),
             depth,
+            kind: TreeItemKind::Namespace,
             is_section_header: false,
         });
         flatten_namespaces(all, Some(&ns.id), depth + 1, out);
