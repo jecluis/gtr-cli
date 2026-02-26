@@ -238,6 +238,39 @@ fn handle_event(
 
     // Main panel navigation when main is focused and not mid-chord.
     if state.focus == FocusPanel::Main && !state.keymap.is_pending() {
+        // Filter input mode: intercept all keys when search is active.
+        if let MainView::TaskList(ref mut task_list) = state.main_view
+            && task_list.is_filtering()
+        {
+            match key.code {
+                KeyCode::Esc => {
+                    task_list.cancel_filter();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Enter => {
+                    // Confirm filter — just dismiss the filter input bar.
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Backspace => {
+                    task_list.filter_pop();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Char(c) => {
+                    task_list.filter_push(c);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Up => {
+                    task_list.select_prev();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Down => {
+                    task_list.select_next();
+                    return Ok(Control::Changed);
+                }
+                _ => return Ok(Control::Continue),
+            }
+        }
+
         match &mut state.main_view {
             MainView::TaskList(task_list) => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -250,6 +283,10 @@ fn handle_event(
                 }
                 KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                     return handle_task_list_select(state, ctx);
+                }
+                KeyCode::Char('/') => {
+                    task_list.start_filter();
+                    return Ok(Control::Changed);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
@@ -376,6 +413,13 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" scroll", theme.status_desc),
             ]);
         }
+        (MainView::TaskList(tl), FocusPanel::Main) if tl.is_filtering() => {
+            hints.extend([
+                Span::styled(" Esc", theme.status_key),
+                Span::styled(" cancel", theme.status_desc),
+                Span::styled("  type to filter", theme.status_desc),
+            ]);
+        }
         (MainView::TaskList(tl), FocusPanel::Main) => {
             hints.extend([
                 Span::styled(" Esc", theme.status_key),
@@ -389,6 +433,10 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                     Span::styled(" open", theme.status_desc),
                 ]);
             }
+            hints.extend([
+                Span::styled("  /", theme.status_key),
+                Span::styled(" filter", theme.status_desc),
+            ]);
         }
         _ => {
             hints.extend([

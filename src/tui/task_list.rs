@@ -50,6 +50,10 @@ pub struct TaskListState {
     pub selected: usize,
     /// Minimum prefix length for unique ID display.
     prefix_len: usize,
+    /// Active filter text (None = no filter active).
+    filter: Option<String>,
+    /// Indices into `tasks` that match the current filter.
+    filtered_indices: Vec<usize>,
     /// Icon theme for style decisions (e.g. Nerd-specific coloring).
     icon_theme: IconTheme,
     /// Raw glyphs for rendering (no ANSI codes).
@@ -101,6 +105,7 @@ impl TaskListState {
                 .then_with(|| b.modified.cmp(&a.modified))
         });
 
+        let filtered_indices: Vec<usize> = (0..tasks.len()).collect();
         let glyphs = Glyphs::new(icon_theme);
         Ok(Self {
             project_id: project_id.to_string(),
@@ -110,14 +115,21 @@ impl TaskListState {
             subtask_counts,
             selected: 0,
             prefix_len,
+            filter: None,
+            filtered_indices,
             icon_theme,
             glyphs,
         })
     }
 
-    /// Whether the task list is empty.
+    /// Whether the visible (filtered) task list is empty.
     pub fn is_empty(&self) -> bool {
-        self.tasks.is_empty()
+        self.filtered_indices.is_empty()
+    }
+
+    /// Number of visible (filtered) tasks.
+    pub fn len(&self) -> usize {
+        self.filtered_indices.len()
     }
 
     /// Move selection up.
@@ -129,14 +141,79 @@ impl TaskListState {
 
     /// Move selection down.
     pub fn select_next(&mut self) {
-        if !self.tasks.is_empty() && self.selected + 1 < self.tasks.len() {
+        if !self.filtered_indices.is_empty() && self.selected + 1 < self.filtered_indices.len() {
             self.selected += 1;
         }
     }
 
     /// Get the ID of the currently selected task.
     pub fn selected_task_id(&self) -> Option<&str> {
-        self.tasks.get(self.selected).map(|t| t.id.as_str())
+        self.filtered_indices
+            .get(self.selected)
+            .and_then(|&idx| self.tasks.get(idx))
+            .map(|t| t.id.as_str())
+    }
+
+    /// Whether the filter input is currently active.
+    pub fn is_filtering(&self) -> bool {
+        self.filter.is_some()
+    }
+
+    /// Activate the search filter.
+    pub fn start_filter(&mut self) {
+        self.filter = Some(String::new());
+    }
+
+    /// Cancel the search filter and show all tasks.
+    pub fn cancel_filter(&mut self) {
+        self.filter = None;
+        self.filtered_indices = (0..self.tasks.len()).collect();
+        self.selected = 0;
+    }
+
+    /// Get the current filter text.
+    pub fn filter_text(&self) -> Option<&str> {
+        self.filter.as_deref()
+    }
+
+    /// Add a character to the filter and recompute matches.
+    pub fn filter_push(&mut self, c: char) {
+        if let Some(ref mut f) = self.filter {
+            f.push(c);
+        }
+        self.recompute_filter();
+    }
+
+    /// Remove the last character from the filter.
+    pub fn filter_pop(&mut self) {
+        if let Some(ref mut f) = self.filter {
+            f.pop();
+        }
+        self.recompute_filter();
+    }
+
+    /// Recompute filtered indices based on current filter text.
+    fn recompute_filter(&mut self) {
+        let query = self.filter.as_deref().unwrap_or("").to_lowercase();
+
+        if query.is_empty() {
+            self.filtered_indices = (0..self.tasks.len()).collect();
+        } else {
+            self.filtered_indices = self
+                .tasks
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.title.to_lowercase().contains(&query))
+                .map(|(i, _)| i)
+                .collect();
+        }
+
+        // Clamp selection to the new visible range.
+        if self.filtered_indices.is_empty() {
+            self.selected = 0;
+        } else if self.selected >= self.filtered_indices.len() {
+            self.selected = self.filtered_indices.len() - 1;
+        }
     }
 
     /// Render the task list into the given area.
@@ -147,14 +224,23 @@ impl TaskListState {
             theme.border_unfocused
         };
 
-        let title = format!(" {} ", self.project_name);
+        let title = if let Some(ref q) = self.filter {
+            format!(" {} \u{2502} /{q}\u{2588} ", self.project_name)
+        } else {
+            format!(" {} ", self.project_name)
+        };
+
         let block = Block::bordered().title(title).border_style(border_style);
         let inner = block.inner(area);
         block.render(area, buf);
 
-        if self.tasks.is_empty() {
-            Paragraph::new(Line::from(Span::styled("  No open tasks", theme.muted)))
-                .render(inner, buf);
+        if self.filtered_indices.is_empty() {
+            let msg = if self.filter.is_some() {
+                "  No matching tasks"
+            } else {
+                "  No open tasks"
+            };
+            Paragraph::new(Line::from(Span::styled(msg, theme.muted))).render(inner, buf);
             return;
         }
 
@@ -163,13 +249,14 @@ impl TaskListState {
             .style(theme.emphasis)
             .bottom_margin(0);
 
-        // Build rows.
+        // Build rows from filtered indices.
         let rows: Vec<Row<'_>> = self
-            .tasks
+            .filtered_indices
             .iter()
             .enumerate()
-            .map(|(idx, task)| {
-                let is_selected = idx == self.selected && focused;
+            .map(|(vis_idx, &task_idx)| {
+                let task = &self.tasks[task_idx];
+                let is_selected = vis_idx == self.selected && focused;
                 self.render_row(task, theme, is_selected)
             })
             .collect();
@@ -187,8 +274,16 @@ impl TaskListState {
         let table = Table::new(rows, widths).header(header);
         Widget::render(table, inner, buf);
 
-        // Footer: task count.
-        let count_text = format!(" {} tasks ", self.tasks.len());
+        // Footer: count of visible / total tasks.
+        let count_text = if self.filter.is_some() {
+            format!(
+                " {}/{} tasks ",
+                self.filtered_indices.len(),
+                self.tasks.len()
+            )
+        } else {
+            format!(" {} tasks ", self.tasks.len())
+        };
         let footer_area = Rect::new(
             inner.x,
             inner.y + inner.height.saturating_sub(1),
