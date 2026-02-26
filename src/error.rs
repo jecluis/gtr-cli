@@ -58,4 +58,8 @@ pub enum Error {
 
     #[error("database error: {0}")]
     Database(String),
+
+    #[cfg(feature = "tui")]
+    #[error("channel error: {0}")]
+    Channel(#[from] crossbeam_channel::TryRecvError),
 }

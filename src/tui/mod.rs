@@ -15,34 +15,15 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Getting Things Rusty CLI client library.
+//! Terminal user interface for gtr.
+//!
+//! Launched when `gtr` is invoked with no subcommand. Provides an
+//! interactive, keyboard-driven interface for browsing and managing
+//! tasks and documents.
 
-pub mod cache;
-pub mod client;
-pub mod commands;
-pub mod config;
-pub mod crdt;
-pub mod editor;
-pub mod error;
-pub mod hierarchy;
-pub mod icons;
-pub mod labels;
-pub mod local;
-pub mod logging;
-pub mod markdown;
-pub mod models;
-pub mod output;
-pub mod promotion;
-pub mod references;
-pub mod resolve;
-pub mod slug;
-pub mod storage;
-pub mod sync;
-pub mod threshold_cache;
-#[cfg(feature = "tui")]
-pub mod tui;
-pub mod url_fetch;
-pub mod utils;
+mod app;
 
-pub use client::Client;
-pub use error::{Error, Result};
+/// Launch the TUI, taking over the terminal until the user quits.
+pub fn run(config: crate::config::Config) -> crate::Result<()> {
+    app::run(config)
+}

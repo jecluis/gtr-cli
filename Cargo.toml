@@ -70,8 +70,18 @@ automerge = "0.7.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 unicode-width = "0.2"
 
+# TUI framework (behind feature flag)
+ratatui = { version = "0.30", optional = true, default-features = false, features = ["crossterm"] }
+rat-salsa = { version = "4.0", optional = true }
+rat-widget = { version = "3.1", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+
 [dev-dependencies]
 tempfile = "3.8"
+
+[features]
+default = ["tui"]
+tui = ["dep:ratatui", "dep:rat-salsa", "dep:rat-widget", "dep:crossbeam-channel"]
 
 [profile.release]
 opt-level = 3

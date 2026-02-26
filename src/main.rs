@@ -38,7 +38,7 @@ struct Cli {
     token: Option<String>,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -940,12 +940,12 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // Handle init command separately (doesn't need existing config)
-    if let Commands::Init { server, token } = cli.command {
+    if let Some(Commands::Init { server, token }) = cli.command {
         return gtr::commands::init::run(&server, &token);
     }
 
     // Handle version command (may need config for server version)
-    if let Commands::Version = cli.command {
+    if let Some(Commands::Version) = cli.command {
         let config = Config::load(cli.config.as_deref()).ok();
         return gtr::commands::version::run(config.as_ref()).await;
     }
@@ -963,7 +963,15 @@ async fn run() -> Result<()> {
 
     // Execute command
     match cli.command {
-        Commands::List {
+        // No subcommand — launch TUI (or print help if TUI feature disabled)
+        #[cfg(feature = "tui")]
+        None => gtr::tui::run(config),
+        #[cfg(not(feature = "tui"))]
+        None => {
+            eprintln!("No command specified. Use 'gtr --help' for usage.");
+            Ok(())
+        }
+        Some(Commands::List {
             project,
             priority,
             size,
@@ -985,7 +993,7 @@ async fn run() -> Result<()> {
             compact,
             labels,
             with_labels,
-        } => {
+        }) => {
             gtr::commands::list::tasks(
                 &config,
                 project,
@@ -1012,20 +1020,20 @@ async fn run() -> Result<()> {
             )
             .await
         }
-        Commands::Show {
+        Some(Commands::Show {
             task_ids,
             no_sync,
             no_format,
             no_wrap,
             tree,
             recursive,
-        } => {
+        }) => {
             gtr::commands::show::run(
                 &config, &task_ids, no_sync, no_format, no_wrap, tree, recursive,
             )
             .await
         }
-        Commands::New {
+        Some(Commands::New {
             project,
             title,
             body,
@@ -1040,7 +1048,7 @@ async fn run() -> Result<()> {
             parent,
             labels,
             no_sync,
-        } => {
+        }) => {
             let url = from.or(bookmark_url.clone());
             let is_bookmark = bookmark_url.is_some();
 
@@ -1074,7 +1082,7 @@ async fn run() -> Result<()> {
             )
             .await
         }
-        Commands::Update {
+        Some(Commands::Update {
             task_id,
             title,
             body,
@@ -1091,73 +1099,73 @@ async fn run() -> Result<()> {
             labels,
             unlabels,
             no_sync,
-        } => {
+        }) => {
             gtr::commands::update::run(
                 &config, &task_id, title, body, priority, size, deadline, progress, impact, joy,
                 project, parent, unset, recursive, labels, unlabels, no_sync,
             )
             .await
         }
-        Commands::Done { task_ids, no_sync } => {
+        Some(Commands::Done { task_ids, no_sync }) => {
             gtr::commands::done::run(&config, task_ids, no_sync).await
         }
-        Commands::Undone {
+        Some(Commands::Undone {
             task_id,
             progress,
             no_sync,
-        } => gtr::commands::undone::run(&config, &task_id, progress, no_sync).await,
-        Commands::Delete {
+        }) => gtr::commands::undone::run(&config, &task_id, progress, no_sync).await,
+        Some(Commands::Delete {
             task_id,
             recursive,
             no_sync,
-        } => gtr::commands::delete::run(&config, &task_id, recursive, no_sync).await,
-        Commands::Restore { task_id, no_sync } => {
+        }) => gtr::commands::delete::run(&config, &task_id, recursive, no_sync).await,
+        Some(Commands::Restore { task_id, no_sync }) => {
             gtr::commands::restore::run(&config, &task_id, no_sync).await
         }
-        Commands::Progress {
+        Some(Commands::Progress {
             value,
             task_id,
             unset,
             no_sync,
-        } => {
+        }) => {
             if unset {
                 gtr::commands::progress::unset(&config, task_id, no_sync).await
             } else {
                 gtr::commands::progress::run(&config, value.unwrap(), task_id, no_sync).await
             }
         }
-        Commands::Now { task_id, no_sync } => {
+        Some(Commands::Now { task_id, no_sync }) => {
             gtr::commands::now::run(&config, &task_id, no_sync).await
         }
-        Commands::Later { task_id, no_sync } => {
+        Some(Commands::Later { task_id, no_sync }) => {
             gtr::commands::later::run(&config, &task_id, no_sync).await
         }
-        Commands::Start {
+        Some(Commands::Start {
             task_id,
             filter,
             no_sync,
-        } => gtr::commands::start::run(&config, task_id, filter, no_sync).await,
-        Commands::Stop { task_id, no_sync } => {
+        }) => gtr::commands::start::run(&config, task_id, filter, no_sync).await,
+        Some(Commands::Stop { task_id, no_sync }) => {
             gtr::commands::stop::run(&config, task_id, no_sync).await
         }
-        Commands::Doing { project } => gtr::commands::doing::run(&config, project).await,
-        Commands::Next { project, no_sync } => {
+        Some(Commands::Doing { project }) => gtr::commands::doing::run(&config, project).await,
+        Some(Commands::Next { project, no_sync }) => {
             gtr::commands::next::run(&config, project, no_sync).await
         }
-        Commands::Log {
+        Some(Commands::Log {
             task_id,
             work,
             state,
             no_sync,
-        } => gtr::commands::log::run(&config, &task_id, work, state, no_sync).await,
-        Commands::Search {
+        }) => gtr::commands::log::run(&config, &task_id, work, state, no_sync).await,
+        Some(Commands::Search {
             query,
             project,
             limit,
             all,
             no_sync,
-        } => gtr::commands::search::run(&config, &query, project, limit, all, no_sync).await,
-        Commands::Doc { command } => match command {
+        }) => gtr::commands::search::run(&config, &query, project, limit, all, no_sync).await,
+        Some(Commands::Doc { command }) => match command {
             DocCommands::New {
                 title,
                 namespace,
@@ -1266,7 +1274,7 @@ async fn run() -> Result<()> {
                 gtr::commands::pkms::backlinks(&config, &doc_id, no_sync).await
             }
         },
-        Commands::Namespace { command } => match command {
+        Some(Commands::Namespace { command }) => match command {
             NamespaceCommands::Create {
                 name,
                 description,
@@ -1291,7 +1299,7 @@ async fn run() -> Result<()> {
                 gtr::commands::namespace::unlink(&config, &id, &project).await
             }
         },
-        Commands::Project { command } => match command {
+        Some(Commands::Project { command }) => match command {
             ProjectCommands::Create {
                 name,
                 description,
@@ -1331,7 +1339,7 @@ async fn run() -> Result<()> {
                 } => gtr::commands::project::label_rename(&config, &project_id, &old, &new).await,
             },
         },
-        Commands::Config { command } => match command {
+        Some(Commands::Config { command }) => match command {
             ConfigCommands::Editor { set, unset } => {
                 if unset {
                     gtr::commands::config::unset_editor(&mut config)
@@ -1362,23 +1370,25 @@ async fn run() -> Result<()> {
                 }
             },
         },
-        Commands::Sync { command } => match command {
+        Some(Commands::Sync { command }) => match command {
             SyncCommands::Now => gtr::commands::sync::now(&config).await,
             SyncCommands::Status => gtr::commands::sync::status(&config).await,
         },
-        Commands::Feels {
+        Some(Commands::Feels {
             energy,
             focus,
             no_sync,
-        } => gtr::commands::feels::run(&config, energy, focus, no_sync).await,
-        Commands::Status { with_labels } => gtr::commands::status::run(&config, with_labels).await,
-        Commands::Ref {
+        }) => gtr::commands::feels::run(&config, energy, focus, no_sync).await,
+        Some(Commands::Status { with_labels }) => {
+            gtr::commands::status::run(&config, with_labels).await
+        }
+        Some(Commands::Ref {
             task_id,
             target,
             r#type,
             unset,
             no_sync,
-        } => {
+        }) => {
             if unset {
                 gtr::commands::reference::remove_ref(&config, &task_id, &target, no_sync).await
             } else {
@@ -1386,7 +1396,7 @@ async fn run() -> Result<()> {
                     .await
             }
         }
-        Commands::Init { .. } => unreachable!(),
-        Commands::Version => unreachable!(),
+        Some(Commands::Init { .. }) => unreachable!(),
+        Some(Commands::Version) => unreachable!(),
     }
 }
