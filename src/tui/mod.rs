@@ -24,6 +24,7 @@
 mod app;
 pub mod keymap;
 pub mod sidebar;
+pub mod task_detail;
 pub mod task_list;
 pub mod theme;
 

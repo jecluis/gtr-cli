@@ -32,6 +32,7 @@ use crate::config::Config;
 use crate::storage::{StorageConfig, TaskStorage};
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::sidebar::{SidebarState, TreeItemKind};
+use crate::tui::task_detail::TaskDetailState;
 use crate::tui::task_list::TaskListState;
 use crate::tui::theme::Theme;
 
@@ -78,6 +79,11 @@ pub enum FocusPanel {
 pub enum MainView {
     Dashboard,
     TaskList(Box<TaskListState>),
+    TaskDetail {
+        detail: Box<TaskDetailState>,
+        /// Preserved list state so we can go back.
+        list: Box<TaskListState>,
+    },
 }
 
 /// UI widget state tree.
@@ -148,6 +154,9 @@ fn render(
     match &state.main_view {
         MainView::Dashboard => render_dashboard(theme, main_focused, columns[1], buf),
         MainView::TaskList(task_list) => task_list.render(theme, main_focused, columns[1], buf),
+        MainView::TaskDetail { detail, .. } => {
+            detail.render(theme, main_focused, columns[1], buf);
+        }
     }
 
     // Status bar
@@ -228,24 +237,41 @@ fn handle_event(
     }
 
     // Main panel navigation when main is focused and not mid-chord.
-    if state.focus == FocusPanel::Main
-        && !state.keymap.is_pending()
-        && let MainView::TaskList(ref mut task_list) = state.main_view
-    {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                task_list.select_prev();
-                return Ok(Control::Changed);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                task_list.select_next();
-                return Ok(Control::Changed);
-            }
-            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
-                state.main_view = MainView::Dashboard;
-                return Ok(Control::Changed);
-            }
-            _ => {}
+    if state.focus == FocusPanel::Main && !state.keymap.is_pending() {
+        match &mut state.main_view {
+            MainView::TaskList(task_list) => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    task_list.select_prev();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    task_list.select_next();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                    return handle_task_list_select(state, ctx);
+                }
+                KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
+                    state.main_view = MainView::Dashboard;
+                    return Ok(Control::Changed);
+                }
+                _ => {}
+            },
+            MainView::TaskDetail { detail, .. } => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    detail.scroll_up();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    detail.scroll_down();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
+                    return handle_back_from_detail(state);
+                }
+                _ => {}
+            },
+            MainView::Dashboard => {}
         }
     }
 
@@ -254,6 +280,7 @@ fn handle_event(
         KeymapResult::Matched(Action::Quit) => {
             // q navigates back through the view stack before quitting.
             match &state.main_view {
+                MainView::TaskDetail { .. } => handle_back_from_detail(state),
                 MainView::TaskList(_) => {
                     state.main_view = MainView::Dashboard;
                     Ok(Control::Changed)
@@ -291,6 +318,49 @@ fn handle_sidebar_select(
     }
 }
 
+/// Handle Enter/l/Right on a task in the task list.
+fn handle_task_list_select(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    // We need to take ownership of the current TaskList to move it into TaskDetail.
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+
+    let Some(task_id) = task_list.selected_task_id() else {
+        return Ok(Control::Continue);
+    };
+    let task_id = task_id.to_string();
+    let project_name = task_list.project_name.clone();
+
+    // Load full task from CRDT storage.
+    let task = match ctx.storage.load_task(&task_id) {
+        Ok(task) => task,
+        Err(_) => return Ok(Control::Continue),
+    };
+
+    let detail = Box::new(TaskDetailState::new(task, project_name));
+
+    // Move the list state into the detail variant for back-navigation.
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+    let MainView::TaskList(list) = prev else {
+        unreachable!();
+    };
+    state.main_view = MainView::TaskDetail { detail, list };
+
+    Ok(Control::Changed)
+}
+
+/// Navigate back from task detail to the task list.
+fn handle_back_from_detail(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+    if let MainView::TaskDetail { list, .. } = prev {
+        state.main_view = MainView::TaskList(list);
+    }
+    Ok(Control::Changed)
+}
+
 /// Render the status bar with context-aware key hints.
 fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
     let theme = &state.theme;
@@ -298,13 +368,27 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
     let mut hints: Vec<Span<'_>> = Vec::new();
 
     match (&state.main_view, state.focus) {
-        (MainView::TaskList(_), FocusPanel::Main) => {
+        (MainView::TaskDetail { .. }, FocusPanel::Main) => {
+            hints.extend([
+                Span::styled(" Esc", theme.status_key),
+                Span::styled(" back", theme.status_desc),
+                Span::styled("  j/k", theme.status_key),
+                Span::styled(" scroll", theme.status_desc),
+            ]);
+        }
+        (MainView::TaskList(tl), FocusPanel::Main) => {
             hints.extend([
                 Span::styled(" Esc", theme.status_key),
                 Span::styled(" back", theme.status_desc),
                 Span::styled("  j/k", theme.status_key),
                 Span::styled(" nav", theme.status_desc),
             ]);
+            if !tl.is_empty() {
+                hints.extend([
+                    Span::styled("  Enter", theme.status_key),
+                    Span::styled(" open", theme.status_desc),
+                ]);
+            }
         }
         _ => {
             hints.extend([
