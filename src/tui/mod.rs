@@ -22,6 +22,7 @@
 //! tasks and documents.
 
 mod app;
+pub mod keymap;
 
 /// Launch the TUI, taking over the terminal until the user quits.
 pub fn run(config: crate::config::Config) -> crate::Result<()> {

@@ -18,10 +18,9 @@
 //! rat-salsa application skeleton: Global state, event types, and the
 //! four callback functions (init, render, event, error).
 
-use crossterm::event::Event;
+use crossterm::event::{Event, KeyEventKind};
 use rat_salsa::poll::PollCrossterm;
 use rat_salsa::{Control, RunConfig, SalsaAppContext, SalsaContext, run_tui};
-use rat_widget::event::ct_event;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Stylize;
@@ -29,6 +28,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget};
 
 use crate::config::Config;
+use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 
 /// Application-wide state visible to all callbacks.
 #[allow(dead_code)]
@@ -61,8 +61,9 @@ impl From<Event> for AppEvent {
 }
 
 /// UI widget state tree.
-#[derive(Default)]
-pub struct AppState {}
+pub struct AppState {
+    pub keymap: Keymap,
+}
 
 /// Enter the TUI event loop. Returns when the user quits.
 pub fn run(config: Config) -> crate::Result<()> {
@@ -70,7 +71,9 @@ pub fn run(config: Config) -> crate::Result<()> {
         ctx: SalsaAppContext::default(),
         config,
     };
-    let mut state = AppState::default();
+    let mut state = AppState {
+        keymap: keymap::default_keymap(),
+    };
 
     run_tui(
         init,
@@ -90,7 +93,7 @@ fn init(_state: &mut AppState, _ctx: &mut Global) -> Result<(), crate::Error> {
 fn render(
     area: Rect,
     buf: &mut Buffer,
-    _state: &mut AppState,
+    state: &mut AppState,
     _ctx: &mut Global,
 ) -> Result<(), crate::Error> {
     let layout = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(area);
@@ -110,25 +113,41 @@ fn render(
 
     // Status bar
     Line::from_iter([
-        Span::from(" [q] quit").dim(),
-        Span::from("  [Ctrl-c] quit").dim(),
+        Span::from(" q").cyan().bold(),
+        Span::from(" quit").dim(),
+        Span::from("  g").cyan().bold(),
+        Span::from(" goto").dim(),
+        Span::from("  ?").cyan().bold(),
+        Span::from(" help").dim(),
     ])
     .render(layout[1], buf);
+
+    // Which-key popup when a prefix key is pending
+    if let Some(node) = state.keymap.pending_node() {
+        keymap::render_which_key(node, layout[0], buf);
+    }
 
     Ok(())
 }
 
 fn handle_event(
     event: &AppEvent,
-    _state: &mut AppState,
+    state: &mut AppState,
     _ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
     match event {
-        AppEvent::Event(event) => match event {
-            ct_event!(key press 'q') => Ok(Control::Quit),
-            ct_event!(key press CONTROL-'c') => Ok(Control::Quit),
-            _ => Ok(Control::Continue),
-        },
+        AppEvent::Event(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+            match state.keymap.process(*key) {
+                KeymapResult::Matched(Action::Quit) => Ok(Control::Quit),
+                KeymapResult::Matched(_action) => {
+                    // Other actions will be handled in later commits.
+                    Ok(Control::Changed)
+                }
+                KeymapResult::Pending(_) => Ok(Control::Changed),
+                KeymapResult::Cancelled | KeymapResult::NotFound => Ok(Control::Changed),
+            }
+        }
+        _ => Ok(Control::Continue),
     }
 }
 
