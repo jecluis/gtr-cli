@@ -29,6 +29,9 @@ use ratatui::widgets::Widget;
 use super::theme::Theme;
 use crate::cache::{CachedNamespace, CachedProject, TaskCache};
 
+/// Nil UUID constant for the meta-root project.
+const META_ROOT_UUID: &str = "00000000-0000-0000-0000-000000000000";
+
 /// The kind of entity a sidebar item represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreeItemKind {
@@ -78,7 +81,7 @@ impl SidebarState {
             kind: TreeItemKind::SectionHeader,
             is_section_header: true,
         });
-        flatten_projects(&projects, None, 1, &mut items);
+        flatten_projects(&projects, Some(META_ROOT_UUID), 1, &mut items);
 
         // Namespaces section
         items.push(TreeItem {
