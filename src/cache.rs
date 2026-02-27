@@ -158,6 +158,11 @@ impl TaskCache {
             [],
         );
 
+        // Migrate existing caches: add progress column if missing
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tasks ADD COLUMN progress INTEGER", []);
+
         // Projects table: local registry mirroring server
         self.conn
             .execute_batch(
@@ -413,7 +418,7 @@ impl TaskCache {
     /// Parse a TaskSummary from a row with columns:
     /// id, project_id, title, priority, size, created, modified,
     /// done, deleted, deadline, needs_push, is_bookmark, labels,
-    /// impact, joy, parent_id
+    /// impact, joy, parent_id, progress
     fn row_to_summary(row: &rusqlite::Row) -> rusqlite::Result<TaskSummary> {
         let labels_json: String = row.get(12)?;
         let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
@@ -434,6 +439,7 @@ impl TaskCache {
             impact: row.get::<_, i64>(13).unwrap_or(5) as u8,
             joy: row.get::<_, i64>(14).unwrap_or(5) as u8,
             parent_id: row.get(15)?,
+            progress: row.get::<_, Option<i64>>(16)?.map(|v| v as u8),
         })
     }
 
@@ -445,8 +451,8 @@ impl TaskCache {
             INSERT INTO tasks (
                 id, project_id, title, priority, size, created, modified,
                 done, deleted, deadline, version, needs_push, impact, joy,
-                current_work_state, parent_id, is_bookmark, labels
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                current_work_state, parent_id, is_bookmark, labels, progress
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
                 title = excluded.title,
@@ -463,7 +469,8 @@ impl TaskCache {
                 current_work_state = excluded.current_work_state,
                 parent_id = excluded.parent_id,
                 is_bookmark = excluded.is_bookmark,
-                labels = excluded.labels
+                labels = excluded.labels,
+                progress = excluded.progress
             "#,
                 params![
                     task.id,
@@ -484,6 +491,7 @@ impl TaskCache {
                     task.parent_id,
                     task.is_bookmark() as i64,
                     serde_json::to_string(&task.labels).unwrap_or_else(|_| "[]".to_string()),
+                    task.progress.map(|v| v as i64),
                 ],
             )
             .map_err(|e| Error::Database(format!("upsert failed: {e}")))?;
@@ -540,7 +548,7 @@ impl TaskCache {
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
                    done, deleted, deadline, needs_push, is_bookmark, labels,
-                   impact, joy, parent_id
+                   impact, joy, parent_id, progress
             FROM tasks WHERE id = ?1
             "#,
                 params![task_id],
@@ -558,7 +566,7 @@ impl TaskCache {
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
                    done, deleted, deadline, needs_push, is_bookmark, labels,
-                   impact, joy, parent_id
+                   impact, joy, parent_id, progress
             FROM tasks
             WHERE project_id = ?1
             ORDER BY modified DESC
@@ -762,7 +770,7 @@ impl TaskCache {
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
                    done, deleted, deadline, needs_push, is_bookmark, labels,
-                   impact, joy, parent_id
+                   impact, joy, parent_id, progress
             FROM tasks
             WHERE parent_id = ?1 AND deleted IS NULL
             ORDER BY modified DESC
@@ -2146,6 +2154,7 @@ pub struct TaskSummary {
     pub impact: u8,
     pub joy: u8,
     pub parent_id: Option<String>,
+    pub progress: Option<u8>,
 }
 
 impl TaskSummary {
