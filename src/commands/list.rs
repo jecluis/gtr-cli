@@ -117,19 +117,12 @@ pub async fn tasks(
         ids
     };
 
-    // Load tasks from local cache and storage
-    let mut all_tasks = Vec::new();
+    // Load tasks from local cache (source of truth for listing)
+    let mut all_tasks: Vec<Task> = Vec::new();
 
     for project_id in &project_ids {
-        // Get task summaries from cache (includes project_id)
         let summaries = ctx.cache.list_tasks(project_id)?;
-
-        for summary in summaries {
-            // Load full task from storage
-            if let Ok(task) = ctx.storage.load_task(&summary.id) {
-                all_tasks.push(task);
-            }
-        }
+        all_tasks.extend(summaries.into_iter().map(|s| s.into_task()));
     }
 
     // Filter to subtasks of a specific parent if --for is set

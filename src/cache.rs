@@ -418,7 +418,7 @@ impl TaskCache {
     /// Parse a TaskSummary from a row with columns:
     /// id, project_id, title, priority, size, created, modified,
     /// done, deleted, deadline, needs_push, is_bookmark, labels,
-    /// impact, joy, parent_id, progress
+    /// impact, joy, parent_id, progress, current_work_state
     fn row_to_summary(row: &rusqlite::Row) -> rusqlite::Result<TaskSummary> {
         let labels_json: String = row.get(12)?;
         let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
@@ -440,6 +440,7 @@ impl TaskCache {
             joy: row.get::<_, i64>(14).unwrap_or(5) as u8,
             parent_id: row.get(15)?,
             progress: row.get::<_, Option<i64>>(16)?.map(|v| v as u8),
+            current_work_state: row.get(17)?,
         })
     }
 
@@ -548,7 +549,7 @@ impl TaskCache {
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
                    done, deleted, deadline, needs_push, is_bookmark, labels,
-                   impact, joy, parent_id, progress
+                   impact, joy, parent_id, progress, current_work_state
             FROM tasks WHERE id = ?1
             "#,
                 params![task_id],
@@ -566,7 +567,7 @@ impl TaskCache {
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
                    done, deleted, deadline, needs_push, is_bookmark, labels,
-                   impact, joy, parent_id, progress
+                   impact, joy, parent_id, progress, current_work_state
             FROM tasks
             WHERE project_id = ?1
             ORDER BY modified DESC
@@ -770,7 +771,7 @@ impl TaskCache {
                 r#"
             SELECT id, project_id, title, priority, size, created, modified,
                    done, deleted, deadline, needs_push, is_bookmark, labels,
-                   impact, joy, parent_id, progress
+                   impact, joy, parent_id, progress, current_work_state
             FROM tasks
             WHERE parent_id = ?1 AND deleted IS NULL
             ORDER BY modified DESC
@@ -2155,6 +2156,7 @@ pub struct TaskSummary {
     pub joy: u8,
     pub parent_id: Option<String>,
     pub progress: Option<u8>,
+    pub current_work_state: Option<String>,
 }
 
 impl TaskSummary {
@@ -2164,6 +2166,39 @@ impl TaskSummary {
             format!("{}{}", icons.bookmark, self.title)
         } else {
             self.title.clone()
+        }
+    }
+
+    /// Convert this summary into a full `Task` model, filling in defaults
+    /// for fields not tracked in the cache (body, version, subtasks, etc.).
+    pub fn into_task(self) -> crate::models::Task {
+        let mut custom = serde_json::Map::new();
+        if self.is_bookmark {
+            custom.insert("is_bookmark".to_string(), serde_json::Value::Bool(true));
+        }
+        crate::models::Task {
+            id: self.id,
+            project_id: self.project_id,
+            title: self.title,
+            body: String::new(),
+            priority: self.priority,
+            size: self.size,
+            created: self.created,
+            modified: self.modified,
+            done: self.done,
+            deleted: self.deleted,
+            deadline: self.deadline,
+            version: 0,
+            subtasks: Vec::new(),
+            custom: serde_json::Value::Object(custom),
+            log: Vec::new(),
+            current_work_state: self.current_work_state,
+            progress: self.progress,
+            impact: self.impact,
+            joy: self.joy,
+            parent_id: self.parent_id,
+            labels: self.labels,
+            references: Vec::new(),
         }
     }
 }
