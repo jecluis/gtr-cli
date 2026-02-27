@@ -288,6 +288,10 @@ fn handle_event(
                     task_list.start_filter();
                     return Ok(Control::Changed);
                 }
+                KeyCode::Char('r') => {
+                    task_list.toggle_recursive(&ctx.cache, &ctx.config);
+                    return Ok(Control::Changed);
+                }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
                     return Ok(Control::Changed);
@@ -435,6 +439,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
             hints.extend([
                 Span::styled("  /", theme.status_key),
                 Span::styled(" filter", theme.status_desc),
+                Span::styled("  r", theme.status_key),
+                Span::styled(" recursive", theme.status_desc),
             ]);
         }
         _ => {

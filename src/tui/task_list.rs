@@ -65,6 +65,10 @@ pub struct TaskListState {
     thresholds: CachedThresholds,
     /// Stable label → colour index mapping (first-appearance order).
     label_color_map: std::collections::HashMap<String, LabelColorIndex>,
+    /// Whether recursive listing is active (shows descendant projects).
+    recursive: bool,
+    /// Maps project_id → short project name (populated in recursive mode).
+    project_names: std::collections::HashMap<String, String>,
 }
 
 impl TaskListState {
@@ -157,7 +161,103 @@ impl TaskListState {
             glyphs,
             thresholds,
             label_color_map,
+            recursive: false,
+            project_names: std::collections::HashMap::new(),
         })
+    }
+
+    /// Whether recursive listing mode is active.
+    pub fn is_recursive(&self) -> bool {
+        self.recursive
+    }
+
+    /// Toggle recursive listing on/off.
+    pub fn toggle_recursive(&mut self, cache: &TaskCache, config: &Config) {
+        self.recursive = !self.recursive;
+
+        if self.recursive {
+            // Gather tasks from current project + all descendants.
+            let descendants = cache
+                .get_project_descendants(&self.project_id)
+                .unwrap_or_default();
+
+            let mut all_project_ids = vec![self.project_id.clone()];
+            all_project_ids.extend(descendants);
+
+            // Build project name lookup.
+            self.project_names.clear();
+            for pid in &all_project_ids {
+                if let Ok(Some(proj)) = cache.get_project(pid) {
+                    self.project_names.insert(pid.clone(), proj.name.clone());
+                }
+            }
+
+            // Load tasks from all projects.
+            let mut tasks: Vec<TaskSummary> = Vec::new();
+            for pid in &all_project_ids {
+                if let Ok(list) = cache.list_tasks(pid) {
+                    tasks.extend(
+                        list.into_iter()
+                            .filter(|t| t.done.is_none() && t.deleted.is_none()),
+                    );
+                }
+            }
+            self.tasks = tasks;
+        } else {
+            // Reload just the current project's tasks.
+            self.project_names.clear();
+            self.tasks = cache
+                .list_tasks(&self.project_id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| t.done.is_none() && t.deleted.is_none())
+                .collect();
+        }
+
+        // Re-sort tasks.
+        let work_states = &self.work_states;
+        self.tasks.sort_by(|a, b| {
+            let ws_a = work_states.get(&a.id).map(String::as_str);
+            let ws_b = work_states.get(&b.id).map(String::as_str);
+
+            let rank = |ws: Option<&str>| match ws {
+                Some("doing") => 0,
+                Some("stopped") => 1,
+                _ => 2,
+            };
+
+            rank(ws_a)
+                .cmp(&rank(ws_b))
+                .then_with(|| {
+                    display::priority_rank(&a.priority).cmp(&display::priority_rank(&b.priority))
+                })
+                .then_with(|| display::cmp_deadline(a.deadline.as_deref(), b.deadline.as_deref()))
+                .then_with(|| b.modified.cmp(&a.modified))
+        });
+
+        // Rebuild subtask counts.
+        self.subtask_counts =
+            compute_subtask_counts(self.tasks.iter().map(|t| t.parent_id.as_deref()));
+
+        // Rebuild label color map.
+        self.label_color_map =
+            display::assign_label_colors(self.tasks.iter().map(|t| t.labels.as_slice()))
+                .into_iter()
+                .map(|(label, idx)| (label.to_string(), idx))
+                .collect();
+
+        // Update thresholds if needed.
+        self.thresholds =
+            crate::threshold_cache::read_cache(config).unwrap_or_else(|| CachedThresholds {
+                deadline: crate::utils::default_thresholds(),
+                impact_labels: crate::utils::default_impact_labels(),
+                impact_multipliers: crate::utils::default_impact_multipliers(),
+            });
+
+        // Reset filter and selection.
+        self.filter = None;
+        self.filtered_indices = (0..self.tasks.len()).collect();
+        self.selected = 0;
     }
 
     /// Whether the visible (filtered) task list is empty.
@@ -283,7 +383,12 @@ impl TaskListState {
         }
 
         // Build header.
-        let header = Row::new(vec!["  ID", "Title", "Pri", "Size", "Deadline", "Status"])
+        let mut header_cells = vec!["  ID", "Title"];
+        if self.recursive {
+            header_cells.push("Project");
+        }
+        header_cells.extend(["Pri", "Size", "Deadline", "Status"]);
+        let header = Row::new(header_cells)
             .style(theme.emphasis)
             .bottom_margin(0);
 
@@ -299,15 +404,18 @@ impl TaskListState {
             })
             .collect();
 
-        // Column widths: ID(13) Title(fill) Pri(9) Size(6) Deadline(13) Status(8)
-        let widths = [
-            ratatui::layout::Constraint::Length(13),
-            ratatui::layout::Constraint::Fill(1),
-            ratatui::layout::Constraint::Length(9),
-            ratatui::layout::Constraint::Length(6),
-            ratatui::layout::Constraint::Length(13),
-            ratatui::layout::Constraint::Length(8),
-        ];
+        // Column widths.
+        use ratatui::layout::Constraint;
+        let mut widths: Vec<Constraint> = vec![Constraint::Length(13), Constraint::Fill(1)];
+        if self.recursive {
+            widths.push(Constraint::Length(12));
+        }
+        widths.extend([
+            Constraint::Length(9),
+            Constraint::Length(4),
+            Constraint::Length(13),
+            Constraint::Length(8),
+        ]);
 
         let table = Table::new(rows, widths).header(header);
         Widget::render(table, inner, buf);
@@ -404,16 +512,21 @@ impl TaskListState {
         let has_labels = !task.labels.is_empty();
         let height = 1 + has_hierarchy as u16 + has_labels as u16;
 
-        Row::new(vec![
-            id_cell,
-            title_cell,
-            pri_cell,
-            size_cell,
-            deadline_cell,
-            status_cell,
-        ])
-        .height(height)
-        .style(base)
+        let mut cells = vec![id_cell, title_cell];
+
+        // Insert project column when in recursive mode.
+        if self.recursive {
+            let proj_name = self
+                .project_names
+                .get(&task.project_id)
+                .cloned()
+                .unwrap_or_default();
+            cells.push(Cell::from(Line::styled(proj_name, base.patch(theme.muted))));
+        }
+
+        cells.extend([pri_cell, size_cell, deadline_cell, status_cell]);
+
+        Row::new(cells).height(height).style(base)
     }
 
     /// Build the multi-line title cell matching CLI layout:
