@@ -345,8 +345,7 @@ fn handle_sidebar_select(
 
     match kind {
         Some(TreeItemKind::Project) if !id.is_empty() => {
-            let icon_theme = ctx.config.effective_icon_theme();
-            let task_list = TaskListState::from_cache(&ctx.cache, &id, &name, icon_theme)?;
+            let task_list = TaskListState::from_cache(&ctx.cache, &id, &name, &ctx.config)?;
             state.main_view = MainView::TaskList(Box::new(task_list));
             state.focus = FocusPanel::Main;
             Ok(Control::Changed)

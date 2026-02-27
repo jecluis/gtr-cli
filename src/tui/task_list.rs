@@ -21,8 +21,6 @@
 //! by priority, deadline urgency, and modification time. Mirrors the
 //! CLI's list output using ratatui widgets.
 
-use chrono::{DateTime, Utc};
-use chrono_humanize::{Accuracy, HumanTime, Tense};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -31,8 +29,11 @@ use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, Widget};
 
 use super::theme::Theme;
 use crate::cache::{TaskCache, TaskSummary};
+use crate::config::Config;
+use crate::display::{self, DeadlineUrgency, LabelColorIndex};
 use crate::icons::{Glyphs, IconTheme};
 use crate::output::{compute_min_prefix_len, compute_subtask_counts};
+use crate::threshold_cache::CachedThresholds;
 
 /// State for the task list view.
 pub struct TaskListState {
@@ -58,6 +59,10 @@ pub struct TaskListState {
     icon_theme: IconTheme,
     /// Raw glyphs for rendering (no ANSI codes).
     glyphs: Glyphs,
+    /// Promotion thresholds for deadline urgency computation.
+    thresholds: CachedThresholds,
+    /// Stable label → colour index mapping (first-appearance order).
+    label_color_map: std::collections::HashMap<String, LabelColorIndex>,
 }
 
 impl TaskListState {
@@ -66,8 +71,10 @@ impl TaskListState {
         cache: &TaskCache,
         project_id: &str,
         project_name: &str,
-        icon_theme: IconTheme,
+        config: &Config,
     ) -> crate::Result<Self> {
+        let icon_theme = config.effective_icon_theme();
+
         let mut tasks: Vec<TaskSummary> = cache
             .list_tasks(project_id)?
             .into_iter()
@@ -100,10 +107,27 @@ impl TaskListState {
 
             rank(ws_a)
                 .cmp(&rank(ws_b))
-                .then_with(|| priority_rank(&a.priority).cmp(&priority_rank(&b.priority)))
-                .then_with(|| cmp_deadline(a.deadline.as_deref(), b.deadline.as_deref()))
+                .then_with(|| {
+                    display::priority_rank(&a.priority).cmp(&display::priority_rank(&b.priority))
+                })
+                .then_with(|| display::cmp_deadline(a.deadline.as_deref(), b.deadline.as_deref()))
                 .then_with(|| b.modified.cmp(&a.modified))
         });
+
+        // Load promotion thresholds from local cache.
+        let thresholds =
+            crate::threshold_cache::read_cache(config).unwrap_or_else(|| CachedThresholds {
+                deadline: crate::utils::default_thresholds(),
+                impact_labels: crate::utils::default_impact_labels(),
+                impact_multipliers: crate::utils::default_impact_multipliers(),
+            });
+
+        // Build stable label color map (first-appearance order across all tasks).
+        let label_color_map: std::collections::HashMap<String, LabelColorIndex> =
+            display::assign_label_colors(tasks.iter().map(|t| t.labels.as_slice()))
+                .into_iter()
+                .map(|(label, idx)| (label.to_string(), idx))
+                .collect();
 
         let filtered_indices: Vec<usize> = (0..tasks.len()).collect();
         let glyphs = Glyphs::new(icon_theme);
@@ -119,6 +143,8 @@ impl TaskListState {
             filtered_indices,
             icon_theme,
             glyphs,
+            thresholds,
+            label_color_map,
         })
     }
 
@@ -306,17 +332,23 @@ impl TaskListState {
             _ => base,
         };
 
+        // Compute deadline urgency once for this row.
+        let urgency = display::deadline_urgency(
+            task.deadline.as_deref(),
+            &task.size,
+            task.impact,
+            &self.thresholds,
+        );
+
         // ── ID cell: cyan prefix │ dim suffix ──
-        let id_short = &task.id[..8];
-        let prefix = &id_short[..self.prefix_len];
-        let suffix = &id_short[self.prefix_len..];
+        let (prefix, suffix) = display::split_id(&task.id, self.prefix_len);
         let id_cell = Cell::from(Line::from(vec![
             Span::styled(format!("  {prefix}\u{2502}"), base.patch(theme.accent)),
             Span::styled(suffix.to_string(), base.patch(theme.muted)),
         ]));
 
         // ── Title cell: multi-line with subtitles ──
-        let title_cell = self.build_title_cell(task, theme, base, row_style);
+        let title_cell = self.build_title_cell(task, theme, base, row_style, urgency);
 
         // ── Priority cell: impact_glyph + priority_text ──
         let pri_cell = self.build_priority_cell(task, theme, base);
@@ -326,13 +358,19 @@ impl TaskListState {
             Cell::from(Line::styled(task.size.clone(), base).alignment(Alignment::Center));
 
         // ── Deadline ──
-        let deadline = format_deadline_plain(task.deadline.as_deref());
-        let deadline_style = if is_overdue(task.deadline.as_deref()) {
-            base.patch(theme.danger)
-        } else {
-            base
-        };
-        let deadline_cell = Cell::from(Line::styled(deadline, deadline_style));
+        let (deadline_text, deadline_style) =
+            match display::format_deadline_relative(task.deadline.as_deref()) {
+                Some(d) => {
+                    let style = match urgency {
+                        DeadlineUrgency::Overdue => base.patch(theme.danger),
+                        DeadlineUrgency::Warning => base.patch(theme.warning),
+                        DeadlineUrgency::None => base,
+                    };
+                    (d.text, style)
+                }
+                None => (String::new(), base),
+            };
+        let deadline_cell = Cell::from(Line::styled(deadline_text, deadline_style));
 
         // ── Status ──
         let ws = self
@@ -367,7 +405,7 @@ impl TaskListState {
     }
 
     /// Build the multi-line title cell matching CLI layout:
-    /// Line 1: [joy_icon] [bookmark] title
+    /// Line 1: [urgency] [joy_icon] [bookmark] title
     /// Line 2: (optional) hierarchy subtitle
     /// Line 3: (optional) labels subtitle
     fn build_title_cell<'a>(
@@ -376,18 +414,28 @@ impl TaskListState {
         theme: &Theme,
         base: Style,
         row_style: Style,
+        urgency: DeadlineUrgency,
     ) -> Cell<'a> {
         let mut lines: Vec<Line<'_>> = Vec::new();
 
-        // Line 1: [overdue] [joy] [bookmark] title
+        // Line 1: [urgency] [joy] [bookmark] title
         let mut title_spans: Vec<Span<'_>> = Vec::new();
 
-        // Overdue/looming glyph
-        if is_overdue(task.deadline.as_deref()) {
-            title_spans.push(Span::styled(
-                format!("{} ", self.glyphs.overdue),
-                base.patch(theme.danger),
-            ));
+        // Urgency glyph (overdue or warning)
+        match urgency {
+            DeadlineUrgency::Overdue => {
+                title_spans.push(Span::styled(
+                    format!("{} ", self.glyphs.overdue),
+                    base.patch(theme.danger),
+                ));
+            }
+            DeadlineUrgency::Warning => {
+                title_spans.push(Span::styled(
+                    format!("{} ", self.glyphs.deadline_warning),
+                    base.patch(theme.warning),
+                ));
+            }
+            DeadlineUrgency::None => {}
         }
 
         // Joy icon
@@ -409,8 +457,12 @@ impl TaskListState {
             ));
         }
 
-        // Title text
-        title_spans.push(Span::styled(task.title.clone(), row_style));
+        // Title text — apply warning colorization when looming
+        let title_style = match urgency {
+            DeadlineUrgency::Warning => base.patch(theme.warning),
+            _ => row_style,
+        };
+        title_spans.push(Span::styled(task.title.clone(), title_style));
         lines.push(Line::from(title_spans));
 
         // Line 2: hierarchy subtitle (parent + subtask count)
@@ -485,14 +537,20 @@ impl TaskListState {
 
     /// Build labels subtitle: "  🏷 label1, label2, label3"
     fn build_label_subtitle<'a>(&self, task: &TaskSummary, base: Style, theme: &Theme) -> Line<'a> {
-        // Cycle through label colours matching the CLI palette.
-        let label_colors = [
+        // TUI label palette matching CLI's 12-colour palette order.
+        const LABEL_PALETTE: [Color; display::LABEL_PALETTE_LEN] = [
             Color::Cyan,
             Color::Yellow,
             Color::Green,
             Color::Magenta,
             Color::Blue,
             Color::Red,
+            Color::LightCyan,
+            Color::LightYellow,
+            Color::LightGreen,
+            Color::LightMagenta,
+            Color::LightBlue,
+            Color::LightRed,
         ];
 
         let mut spans: Vec<Span<'_>> = vec![
@@ -504,7 +562,12 @@ impl TaskListState {
             if i > 0 {
                 spans.push(Span::styled(", ", base.patch(theme.muted)));
             }
-            let color = label_colors[i % label_colors.len()];
+            let idx = self
+                .label_color_map
+                .get(label.as_str())
+                .copied()
+                .unwrap_or(0);
+            let color = LABEL_PALETTE[idx];
             spans.push(Span::styled(label.clone(), base.fg(color)));
         }
 
@@ -513,10 +576,14 @@ impl TaskListState {
 
     /// Build the priority cell: impact_glyph + priority text.
     fn build_priority_cell<'a>(&self, task: &TaskSummary, theme: &Theme, base: Style) -> Cell<'a> {
-        let (impact_glyph, impact_style) = match task.impact {
-            1 => (self.glyphs.impact_critical, base.patch(theme.danger)),
-            2 => (self.glyphs.impact_significant, base.fg(Color::Blue)),
-            _ => ("", base),
+        let (impact_glyph, impact_style) = match display::impact_level(task.impact) {
+            display::ImpactLevel::Critical => {
+                (self.glyphs.impact_critical, base.patch(theme.danger))
+            }
+            display::ImpactLevel::Significant => {
+                (self.glyphs.impact_significant, base.fg(Color::Blue))
+            }
+            display::ImpactLevel::Normal => ("", base),
         };
 
         let pri_style = match task.priority.as_str() {
@@ -538,71 +605,4 @@ impl TaskListState {
 
         Cell::from(Line::from(spans))
     }
-}
-
-/// Lower value = higher priority.
-fn priority_rank(p: &str) -> u8 {
-    match p {
-        "now" => 0,
-        "later" => 1,
-        _ => 2,
-    }
-}
-
-/// Compare deadlines: tasks with deadlines sort before those without.
-/// Nearer deadlines sort first.
-fn cmp_deadline(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
-    match (a, b) {
-        (Some(a), Some(b)) => a.cmp(b),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    }
-}
-
-/// Format a deadline for the TUI (plain text, no ANSI colors).
-///
-/// Uses chrono-humanize for relative formatting (same as CLI),
-/// falls back to absolute date for deadlines >30 days out.
-fn format_deadline_plain(deadline_str: Option<&str>) -> String {
-    let Some(s) = deadline_str else {
-        return String::new();
-    };
-    let Ok(deadline) = DateTime::parse_from_rfc3339(s) else {
-        return String::new();
-    };
-    let now = Utc::now();
-    let is_overdue = deadline < now;
-
-    let duration = if is_overdue {
-        now.signed_duration_since(deadline)
-    } else {
-        deadline.signed_duration_since(now)
-    };
-
-    if duration.num_days() > 30 {
-        return deadline
-            .with_timezone(&chrono::Local)
-            .format("%Y-%m-%d")
-            .to_string();
-    }
-
-    let ht = HumanTime::from(deadline);
-    let tense = if is_overdue {
-        Tense::Past
-    } else {
-        Tense::Future
-    };
-    ht.to_text_en(Accuracy::Rough, tense)
-}
-
-/// Check if a deadline is past due.
-fn is_overdue(deadline_str: Option<&str>) -> bool {
-    let Some(s) = deadline_str else {
-        return false;
-    };
-    let Ok(deadline) = DateTime::parse_from_rfc3339(s) else {
-        return false;
-    };
-    deadline < Utc::now()
 }
