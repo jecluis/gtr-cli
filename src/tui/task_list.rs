@@ -35,6 +35,21 @@ use crate::icons::{Glyphs, IconTheme};
 use crate::output::{compute_min_prefix_len, compute_subtask_counts};
 use crate::threshold_cache::CachedThresholds;
 
+/// Maximum title width before word-wrapping (matches CLI's 60-char wrap).
+const TITLE_WRAP_WIDTH: usize = 60;
+
+/// 8-colour palette for distinguishing projects (matches CLI order).
+const PROJECT_PALETTE: [Color; 8] = [
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Magenta,
+    Color::Blue,
+    Color::LightCyan,
+    Color::LightGreen,
+    Color::LightYellow,
+];
+
 /// State for the task list view.
 pub struct TaskListState {
     /// Project ID whose tasks are being shown.
@@ -67,8 +82,10 @@ pub struct TaskListState {
     label_color_map: std::collections::HashMap<String, LabelColorIndex>,
     /// Whether recursive listing is active (shows descendant projects).
     recursive: bool,
-    /// Maps project_id → short project name (populated in recursive mode).
-    project_names: std::collections::HashMap<String, String>,
+    /// Maps project_id → ancestor path names (populated in recursive mode).
+    project_paths: std::collections::HashMap<String, Vec<String>>,
+    /// Maps project_id → palette colour (populated in recursive mode).
+    project_colors: std::collections::HashMap<String, Color>,
 }
 
 impl TaskListState {
@@ -162,7 +179,8 @@ impl TaskListState {
             thresholds,
             label_color_map,
             recursive: false,
-            project_names: std::collections::HashMap::new(),
+            project_paths: std::collections::HashMap::new(),
+            project_colors: std::collections::HashMap::new(),
         })
     }
 
@@ -184,12 +202,15 @@ impl TaskListState {
             let mut all_project_ids = vec![self.project_id.clone()];
             all_project_ids.extend(descendants);
 
-            // Build project name lookup.
-            self.project_names.clear();
-            for pid in &all_project_ids {
-                if let Ok(Some(proj)) = cache.get_project(pid) {
-                    self.project_names.insert(pid.clone(), proj.name.clone());
+            // Build project path and colour lookups.
+            self.project_paths.clear();
+            self.project_colors.clear();
+            for (idx, pid) in all_project_ids.iter().enumerate() {
+                if let Ok(path) = cache.get_project_path(pid) {
+                    self.project_paths.insert(pid.clone(), path);
                 }
+                self.project_colors
+                    .insert(pid.clone(), PROJECT_PALETTE[idx % PROJECT_PALETTE.len()]);
             }
 
             // Load tasks from all projects.
@@ -205,7 +226,8 @@ impl TaskListState {
             self.tasks = tasks;
         } else {
             // Reload just the current project's tasks.
-            self.project_names.clear();
+            self.project_paths.clear();
+            self.project_colors.clear();
             self.tasks = cache
                 .list_tasks(&self.project_id)
                 .unwrap_or_default()
@@ -382,12 +404,28 @@ impl TaskListState {
             return;
         }
 
+        // Show progress column if any visible task has explicit progress or a work state.
+        let show_progress = self.filtered_indices.iter().any(|&idx| {
+            let t = &self.tasks[idx];
+            t.progress.is_some() || self.work_states.contains_key(&t.id)
+        });
+
         // Build header.
-        let mut header_cells = vec!["  ID", "Title"];
+        let mut header_cells: Vec<Cell<'_>> = vec![Cell::from("  ID"), Cell::from("Title")];
         if self.recursive {
-            header_cells.push("Project");
+            header_cells.push(Cell::from("Project"));
         }
-        header_cells.extend(["Pri", "Size", "Deadline", "Status"]);
+        header_cells.extend([
+            Cell::from("Pri"),
+            Cell::from("Size"),
+            Cell::from("Deadline"),
+        ]);
+        if show_progress {
+            header_cells.push(Cell::from(
+                Line::from("Progress").alignment(Alignment::Center),
+            ));
+        }
+        header_cells.push(Cell::from("Status"));
         let header = Row::new(header_cells)
             .style(theme.emphasis)
             .bottom_margin(0);
@@ -400,7 +438,7 @@ impl TaskListState {
             .map(|(vis_idx, &task_idx)| {
                 let task = &self.tasks[task_idx];
                 let is_selected = vis_idx == self.selected && focused;
-                self.render_row(task, theme, is_selected)
+                self.render_row(task, theme, is_selected, show_progress)
             })
             .collect();
 
@@ -412,10 +450,13 @@ impl TaskListState {
         }
         widths.extend([
             Constraint::Length(9),
-            Constraint::Length(4),
-            Constraint::Length(13),
-            Constraint::Length(8),
+            Constraint::Length(6),
+            Constraint::Length(10),
         ]);
+        if show_progress {
+            widths.push(Constraint::Length(15));
+        }
+        widths.push(Constraint::Length(8));
 
         let table = Table::new(rows, widths).header(header);
         Widget::render(table, inner, buf);
@@ -440,7 +481,13 @@ impl TaskListState {
     }
 
     /// Render a single task row (mirrors the CLI's `build_task_row` layout).
-    fn render_row<'a>(&self, task: &TaskSummary, theme: &Theme, selected: bool) -> Row<'a> {
+    fn render_row<'a>(
+        &self,
+        task: &TaskSummary,
+        theme: &Theme,
+        selected: bool,
+        show_progress: bool,
+    ) -> Row<'a> {
         let base = if selected {
             theme.selected
         } else {
@@ -467,8 +514,9 @@ impl TaskListState {
             Span::styled(suffix.to_string(), base.patch(theme.muted)),
         ]));
 
-        // ── Title cell: multi-line with subtitles ──
-        let title_cell = self.build_title_cell(task, theme, base, row_style, urgency);
+        // ── Title cell: multi-line with word-wrapped title + subtitles ──
+        let (title_cell, title_lines) =
+            self.build_title_cell(task, theme, base, row_style, urgency);
 
         // ── Priority cell: impact_glyph + priority_text ──
         let pri_cell = self.build_priority_cell(task, theme, base);
@@ -477,9 +525,9 @@ impl TaskListState {
         let size_cell =
             Cell::from(Line::styled(task.size.clone(), base).alignment(Alignment::Center));
 
-        // ── Deadline ──
+        // ── Deadline (compact format) ──
         let (deadline_text, deadline_style) =
-            match display::format_deadline_relative(task.deadline.as_deref()) {
+            match display::format_deadline_compact(task.deadline.as_deref()) {
                 Some(d) => {
                     let style = match urgency {
                         DeadlineUrgency::Overdue => base.patch(theme.danger),
@@ -506,33 +554,52 @@ impl TaskListState {
         let status_cell =
             Cell::from(Line::styled(ws.to_string(), status_style).alignment(Alignment::Center));
 
-        // Compute row height: 1 (title) + optional subtitle lines.
-        let has_hierarchy =
-            task.parent_id.is_some() || self.subtask_counts.get(&task.id).copied().unwrap_or(0) > 0;
-        let has_labels = !task.labels.is_empty();
-        let height = 1 + has_hierarchy as u16 + has_labels as u16;
-
         let mut cells = vec![id_cell, title_cell];
+        let mut max_lines = title_lines;
 
-        // Insert project column when in recursive mode.
+        // Insert project column when in recursive mode (hierarchical tree).
         if self.recursive {
-            let proj_name = self
-                .project_names
-                .get(&task.project_id)
-                .cloned()
-                .unwrap_or_default();
-            cells.push(Cell::from(Line::styled(proj_name, base.patch(theme.muted))));
+            let (proj_cell, proj_lines) = self.build_project_cell(&task.project_id, base, theme);
+            cells.push(proj_cell);
+            max_lines = max_lines.max(proj_lines);
         }
 
-        cells.extend([pri_cell, size_cell, deadline_cell, status_cell]);
+        cells.extend([pri_cell, size_cell, deadline_cell]);
 
-        Row::new(cells).height(height).style(base)
+        // Progress column: use explicit progress or infer 0% from work state.
+        if show_progress {
+            let effective_progress = task
+                .progress
+                .or_else(|| self.work_states.contains_key(&task.id).then_some(0));
+            let progress_cell = match display::format_progress_bar(effective_progress, 8) {
+                Some(pb) => {
+                    let fill_color = match pb.percentage {
+                        0..=49 => Color::Yellow,
+                        50..=99 => Color::Cyan,
+                        _ => Color::Green,
+                    };
+                    Cell::from(Line::from(vec![
+                        Span::styled("\u{2588}".repeat(pb.filled), base.fg(fill_color)),
+                        Span::styled("\u{00b7}".repeat(pb.empty), base.fg(Color::DarkGray)),
+                        Span::styled(format!(" {:>3}%", pb.percentage), base),
+                    ]))
+                }
+                None => Cell::from(
+                    Line::styled("\u{2014}", base.fg(Color::DarkGray)).alignment(Alignment::Center),
+                ),
+            };
+            cells.push(progress_cell);
+        }
+
+        cells.push(status_cell);
+
+        Row::new(cells).height(max_lines as u16).style(base)
     }
 
-    /// Build the multi-line title cell matching CLI layout:
-    /// Line 1: [urgency] [joy_icon] [bookmark] title
-    /// Line 2: (optional) hierarchy subtitle
-    /// Line 3: (optional) labels subtitle
+    /// Build the multi-line title cell matching CLI layout.
+    ///
+    /// Returns `(Cell, line_count)` so the caller can set the correct
+    /// row height. Title text is word-wrapped at [`TITLE_WRAP_WIDTH`].
     fn build_title_cell<'a>(
         &self,
         task: &TaskSummary,
@@ -540,22 +607,20 @@ impl TaskListState {
         base: Style,
         row_style: Style,
         urgency: DeadlineUrgency,
-    ) -> Cell<'a> {
+    ) -> (Cell<'a>, usize) {
         let mut lines: Vec<Line<'_>> = Vec::new();
 
-        // Line 1: [urgency] [joy] [bookmark] title
-        let mut title_spans: Vec<Span<'_>> = Vec::new();
-
-        // Urgency glyph (overdue or warning)
+        // Prefix glyphs (urgency, joy, bookmark) — first wrapped line only.
+        let mut prefix_spans: Vec<Span<'_>> = Vec::new();
         match urgency {
             DeadlineUrgency::Overdue => {
-                title_spans.push(Span::styled(
+                prefix_spans.push(Span::styled(
                     format!("{} ", self.glyphs.overdue),
                     base.patch(theme.danger),
                 ));
             }
             DeadlineUrgency::Warning => {
-                title_spans.push(Span::styled(
+                prefix_spans.push(Span::styled(
                     format!("{} ", self.glyphs.deadline_warning),
                     base.patch(theme.warning),
                 ));
@@ -563,7 +628,6 @@ impl TaskListState {
             DeadlineUrgency::None => {}
         }
 
-        // Joy icon
         let joy_glyph = self.glyphs.joy_icon(task.joy);
         if !joy_glyph.is_empty() {
             let joy_style = match (task.joy, self.icon_theme) {
@@ -571,12 +635,11 @@ impl TaskListState {
                 (0..=4, IconTheme::Nerd) => base.fg(Color::Blue),
                 _ => base,
             };
-            title_spans.push(Span::styled(format!("{joy_glyph} "), joy_style));
+            prefix_spans.push(Span::styled(format!("{joy_glyph} "), joy_style));
         }
 
-        // Bookmark
         if task.is_bookmark {
-            title_spans.push(Span::styled(
+            prefix_spans.push(Span::styled(
                 format!("{} ", self.glyphs.bookmark),
                 base.patch(theme.accent),
             ));
@@ -587,24 +650,84 @@ impl TaskListState {
             DeadlineUrgency::Warning => base.patch(theme.warning),
             _ => row_style,
         };
-        title_spans.push(Span::styled(task.title.clone(), title_style));
-        lines.push(Line::from(title_spans));
 
-        // Line 2: hierarchy subtitle (parent + subtask count)
+        // Word-wrap the title text at TITLE_WRAP_WIDTH.
+        let wrapped = display::wrap_text(&task.title, TITLE_WRAP_WIDTH);
+        for (i, chunk) in wrapped.iter().enumerate() {
+            if i == 0 {
+                let mut first_line = prefix_spans.clone();
+                first_line.push(Span::styled(chunk.clone(), title_style));
+                lines.push(Line::from(first_line));
+            } else {
+                lines.push(Line::styled(chunk.clone(), title_style));
+            }
+        }
+
+        // Hierarchy subtitle (parent + subtask count)
         let has_parent = task.parent_id.is_some();
         let child_count = self.subtask_counts.get(&task.id).copied().unwrap_or(0);
         if has_parent || child_count > 0 {
-            let subtitle = self.build_hierarchy_subtitle(task, base, theme);
-            lines.push(subtitle);
+            lines.push(self.build_hierarchy_subtitle(task, base, theme));
         }
 
-        // Line 3: labels
+        // Labels subtitle
         if !task.labels.is_empty() {
-            let label_line = self.build_label_subtitle(task, base, theme);
-            lines.push(label_line);
+            lines.push(self.build_label_subtitle(task, base, theme));
         }
 
-        Cell::from(Text::from(lines))
+        let count = lines.len();
+        (Cell::from(Text::from(lines)), count)
+    }
+
+    /// Build the project cell for recursive mode using hierarchical tree
+    /// format matching the CLI's `format_project_cell`.
+    ///
+    /// Returns `(Cell, line_count)`.
+    fn build_project_cell<'a>(
+        &self,
+        project_id: &str,
+        base: Style,
+        _theme: &Theme,
+    ) -> (Cell<'a>, usize) {
+        let color = self
+            .project_colors
+            .get(project_id)
+            .copied()
+            .unwrap_or(Color::White);
+
+        let path = self.project_paths.get(project_id);
+
+        match path {
+            Some(p) if p.len() > 1 => {
+                let mut lines: Vec<Line<'_>> = Vec::new();
+                for (i, segment) in p.iter().enumerate() {
+                    let is_last = i == p.len() - 1;
+                    if i == 0 {
+                        lines.push(Line::styled(segment.clone(), base.fg(color)));
+                    } else {
+                        let connector = if is_last { "\u{2514} " } else { "\u{251c} " };
+                        let indent = "  ".repeat(i.saturating_sub(1));
+                        let mut spans = vec![
+                            Span::styled(indent, base),
+                            Span::styled(connector.to_string(), base.fg(Color::DarkGray)),
+                        ];
+                        spans.push(Span::styled(segment.clone(), base.fg(color)));
+                        lines.push(Line::from(spans));
+                    }
+                }
+                let count = lines.len();
+                (Cell::from(Text::from(lines)), count)
+            }
+            Some(p) if !p.is_empty() => {
+                let line = Line::styled(p[0].clone(), base.fg(color));
+                (Cell::from(line), 1)
+            }
+            _ => {
+                let short = &project_id[..8.min(project_id.len())];
+                let line = Line::styled(short.to_string(), base.fg(color));
+                (Cell::from(line), 1)
+            }
+        }
     }
 
     /// Build hierarchy subtitle: "  ↳ parent_id · ▶ N subtasks"
