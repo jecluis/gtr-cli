@@ -430,19 +430,7 @@ impl TaskListState {
             .style(theme.emphasis)
             .bottom_margin(0);
 
-        // Build rows from filtered indices.
-        let rows: Vec<Row<'_>> = self
-            .filtered_indices
-            .iter()
-            .enumerate()
-            .map(|(vis_idx, &task_idx)| {
-                let task = &self.tasks[task_idx];
-                let is_selected = vis_idx == self.selected && focused;
-                self.render_row(task, theme, is_selected, show_progress)
-            })
-            .collect();
-
-        // Column widths.
+        // Column widths (computed once, shared by rows and separator).
         use ratatui::layout::Constraint;
         let mut widths: Vec<Constraint> = vec![Constraint::Length(13), Constraint::Fill(1)];
         if self.recursive {
@@ -458,8 +446,63 @@ impl TaskListState {
         }
         widths.push(Constraint::Length(8));
 
+        // Find the boundary between "doing" tasks and the rest.
+        let doing_boundary = self
+            .filtered_indices
+            .iter()
+            .position(|&idx| {
+                self.work_states
+                    .get(&self.tasks[idx].id)
+                    .map(String::as_str)
+                    != Some("doing")
+            })
+            .unwrap_or(self.filtered_indices.len());
+        let has_doing_divider = doing_boundary > 0 && doing_boundary < self.filtered_indices.len();
+
+        // Build rows from filtered indices with alternating tint and margins.
+        // Track cumulative height so we can draw the divider after the table.
+        let mut rows: Vec<Row<'_>> = Vec::new();
+        let mut doing_section_height: u16 = 0;
+        for (vis_row, (vis_idx, &task_idx)) in self.filtered_indices.iter().enumerate().enumerate()
+        {
+            let task = &self.tasks[task_idx];
+            let is_selected = vis_idx == self.selected && focused;
+            let (mut row, line_count) = self.render_row(task, theme, is_selected, show_progress);
+
+            // Alternating row tint (skip for selected row — it has its own bg).
+            if !is_selected && vis_row % 2 == 1 {
+                row = row.style(Style::default().bg(theme.row_alt_bg));
+            }
+
+            // Every row gets bottom margin for consistent vertical spacing,
+            // regardless of whether it has subtitle lines.
+            let margin = 1u16;
+            if margin > 0 {
+                row = row.bottom_margin(margin);
+            }
+
+            // Accumulate height of the "doing" section (rows before the boundary).
+            if has_doing_divider && vis_idx < doing_boundary {
+                doing_section_height += line_count as u16 + margin;
+            }
+
+            rows.push(row);
+        }
+
         let table = Table::new(rows, widths).header(header);
         Widget::render(table, inner, buf);
+
+        // Draw the doing/backlog divider as a full-width dashed line
+        // directly onto the buffer (avoids table column-gap fragmentation).
+        if has_doing_divider {
+            let divider_y = inner.y + doing_section_height; // margin line of last doing row
+            if divider_y < inner.y + inner.height {
+                let dash: &str = "\u{2504}";
+                let line_str: String = dash.repeat(inner.width as usize);
+                Line::styled(line_str, theme.divider)
+                    .render(Rect::new(inner.x, divider_y, inner.width, 1), buf);
+            }
+        }
 
         // Footer: count of visible / total tasks.
         let count_text = if self.filter.is_some() {
@@ -481,13 +524,16 @@ impl TaskListState {
     }
 
     /// Render a single task row (mirrors the CLI's `build_task_row` layout).
+    ///
+    /// Returns `(Row, line_count)` so the caller can set margins based on
+    /// whether the row is multi-line.
     fn render_row<'a>(
         &self,
         task: &TaskSummary,
         theme: &Theme,
         selected: bool,
         show_progress: bool,
-    ) -> Row<'a> {
+    ) -> (Row<'a>, usize) {
         let base = if selected {
             theme.selected
         } else {
@@ -593,7 +639,10 @@ impl TaskListState {
 
         cells.push(status_cell);
 
-        Row::new(cells).height(max_lines as u16).style(base)
+        (
+            Row::new(cells).height(max_lines as u16).style(base),
+            max_lines,
+        )
     }
 
     /// Build the multi-line title cell matching CLI layout.
@@ -709,7 +758,7 @@ impl TaskListState {
                         let indent = "  ".repeat(i.saturating_sub(1));
                         let mut spans = vec![
                             Span::styled(indent, base),
-                            Span::styled(connector.to_string(), base.fg(Color::DarkGray)),
+                            Span::styled(connector.to_string(), base.fg(color)),
                         ];
                         spans.push(Span::styled(segment.clone(), base.fg(color)));
                         lines.push(Line::from(spans));

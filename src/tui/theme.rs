@@ -51,6 +51,10 @@ pub struct Theme {
     pub border_focused: Style,
     /// Borders on unfocused panels.
     pub border_unfocused: Style,
+    /// Alternating row background tint (subtle, for visual grouping).
+    pub row_alt_bg: Color,
+    /// Divider line between sections (e.g. doing vs backlog).
+    pub divider: Style,
 }
 
 impl Default for Theme {
@@ -71,6 +75,8 @@ impl Default for Theme {
             selected: Style::new().bg(Color::DarkGray).fg(Color::White),
             border_focused: Style::new().fg(Color::Cyan),
             border_unfocused: Style::new().fg(Color::DarkGray),
+            row_alt_bg: Color::Indexed(235),
+            divider: Style::new().fg(Color::Gray),
         }
     }
 }
