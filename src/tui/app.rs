@@ -404,7 +404,12 @@ fn handle_task_list_select(
         Err(_) => return Ok(Control::Continue),
     };
 
-    let detail = Box::new(TaskDetailState::new(task, project_name));
+    let detail = Box::new(TaskDetailState::new(
+        task,
+        project_name,
+        &ctx.cache,
+        &ctx.config,
+    ));
 
     // Move the list state into the detail variant for back-navigation.
     let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
