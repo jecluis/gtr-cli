@@ -25,7 +25,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, Widget};
+use ratatui::widgets::{
+    Block, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+    Table, TableState, Widget,
+};
 
 use super::theme::Theme;
 use crate::cache::{TaskCache, TaskSummary};
@@ -86,6 +89,8 @@ pub struct TaskListState {
     project_paths: std::collections::HashMap<String, Vec<String>>,
     /// Maps project_id → palette colour (populated in recursive mode).
     project_colors: std::collections::HashMap<String, Color>,
+    /// Ratatui table state for scroll offset and selection tracking.
+    table_state: TableState,
 }
 
 impl TaskListState {
@@ -181,6 +186,7 @@ impl TaskListState {
             recursive: false,
             project_paths: std::collections::HashMap::new(),
             project_colors: std::collections::HashMap::new(),
+            table_state: TableState::new().with_selected(Some(0)),
         })
     }
 
@@ -280,6 +286,7 @@ impl TaskListState {
         self.filter = None;
         self.filtered_indices = (0..self.tasks.len()).collect();
         self.selected = 0;
+        self.table_state.select(Some(0));
     }
 
     /// Whether the visible (filtered) task list is empty.
@@ -296,6 +303,7 @@ impl TaskListState {
     pub fn select_prev(&mut self) {
         if self.selected > 0 {
             self.selected -= 1;
+            self.table_state.select(Some(self.selected));
         }
     }
 
@@ -303,6 +311,21 @@ impl TaskListState {
     pub fn select_next(&mut self) {
         if !self.filtered_indices.is_empty() && self.selected + 1 < self.filtered_indices.len() {
             self.selected += 1;
+            self.table_state.select(Some(self.selected));
+        }
+    }
+
+    /// Move selection up by a page.
+    pub fn select_page_up(&mut self, page_size: usize) {
+        self.selected = self.selected.saturating_sub(page_size);
+        self.table_state.select(Some(self.selected));
+    }
+
+    /// Move selection down by a page.
+    pub fn select_page_down(&mut self, page_size: usize) {
+        if !self.filtered_indices.is_empty() {
+            self.selected = (self.selected + page_size).min(self.filtered_indices.len() - 1);
+            self.table_state.select(Some(self.selected));
         }
     }
 
@@ -329,6 +352,7 @@ impl TaskListState {
         self.filter = None;
         self.filtered_indices = (0..self.tasks.len()).collect();
         self.selected = 0;
+        self.table_state.select(Some(0));
     }
 
     /// Get the current filter text.
@@ -374,10 +398,11 @@ impl TaskListState {
         } else if self.selected >= self.filtered_indices.len() {
             self.selected = self.filtered_indices.len() - 1;
         }
+        self.table_state.select(Some(self.selected));
     }
 
     /// Render the task list into the given area.
-    pub fn render(&self, theme: &Theme, focused: bool, area: Rect, buf: &mut Buffer) {
+    pub fn render(&mut self, theme: &Theme, focused: bool, area: Rect, buf: &mut Buffer) {
         let border_style = if focused {
             theme.border_focused
         } else {
@@ -460,9 +485,9 @@ impl TaskListState {
         let has_doing_divider = doing_boundary > 0 && doing_boundary < self.filtered_indices.len();
 
         // Build rows from filtered indices with alternating tint and margins.
-        // Track cumulative height so we can draw the divider after the table.
+        // Track per-row heights (content + margin) for divider positioning.
         let mut rows: Vec<Row<'_>> = Vec::new();
-        let mut doing_section_height: u16 = 0;
+        let mut row_heights: Vec<u16> = Vec::new();
         for (vis_row, (vis_idx, &task_idx)) in self.filtered_indices.iter().enumerate().enumerate()
         {
             let task = &self.tasks[task_idx];
@@ -481,26 +506,54 @@ impl TaskListState {
                 row = row.bottom_margin(margin);
             }
 
-            // Accumulate height of the "doing" section (rows before the boundary).
-            if has_doing_divider && vis_idx < doing_boundary {
-                doing_section_height += line_count as u16 + margin;
-            }
-
+            row_heights.push(line_count as u16 + margin);
             rows.push(row);
         }
 
         let table = Table::new(rows, widths).header(header);
-        Widget::render(table, inner, buf);
+        StatefulWidget::render(table, inner, buf, &mut self.table_state);
+
+        // Vertical scrollbar on the block's right border — only when content overflows.
+        let content_height: u16 = row_heights.iter().sum();
+        let viewport_height = inner.height.saturating_sub(1); // minus header
+        if content_height > viewport_height {
+            use ratatui::layout::Margin;
+            let scrollbar_area = area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            });
+            let mut scrollbar_state = ScrollbarState::new(self.filtered_indices.len())
+                .position(self.table_state.offset())
+                .viewport_content_length(viewport_height as usize);
+            StatefulWidget::render(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None),
+                scrollbar_area,
+                buf,
+                &mut scrollbar_state,
+            );
+        }
 
         // Draw the doing/backlog divider as a full-width dashed line
         // directly onto the buffer (avoids table column-gap fragmentation).
+        // Account for the table's scroll offset so the divider scrolls with content.
         if has_doing_divider {
-            let divider_y = inner.y + doing_section_height; // margin line of last doing row
-            if divider_y < inner.y + inner.height {
-                let dash: &str = "\u{2504}";
-                let line_str: String = dash.repeat(inner.width as usize);
-                Line::styled(line_str, theme.divider)
-                    .render(Rect::new(inner.x, divider_y, inner.width, 1), buf);
+            let offset = self.table_state.offset();
+            // Divider only visible if the doing section is still on-screen.
+            if offset < doing_boundary {
+                // Sum heights of visible doing rows (from offset to doing_boundary).
+                let visible_doing_height: u16 = row_heights[offset..doing_boundary].iter().sum();
+                // The divider sits on the margin line of the last doing row,
+                // which is the last line of the visible doing section.
+                // +1 for the header row.
+                let divider_y = inner.y + 1 + visible_doing_height - 1;
+                if divider_y < inner.y + inner.height {
+                    let dash: &str = "\u{2504}";
+                    let line_str: String = dash.repeat(inner.width as usize);
+                    Line::styled(line_str, theme.divider)
+                        .render(Rect::new(inner.x, divider_y, inner.width, 1), buf);
+                }
             }
         }
 

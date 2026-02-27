@@ -151,7 +151,7 @@ fn render(
         .render(theme, sidebar_focused, columns[0], buf);
 
     // Main area — dispatch based on current view
-    match &state.main_view {
+    match &mut state.main_view {
         MainView::Dashboard => render_dashboard(theme, main_focused, columns[1], buf),
         MainView::TaskList(task_list) => task_list.render(theme, main_focused, columns[1], buf),
         MainView::TaskDetail { detail, .. } => {
@@ -267,6 +267,14 @@ fn handle_event(
                     task_list.select_next();
                     return Ok(Control::Changed);
                 }
+                KeyCode::PageUp => {
+                    task_list.select_page_up(10);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageDown => {
+                    task_list.select_page_down(10);
+                    return Ok(Control::Changed);
+                }
                 _ => return Ok(Control::Continue),
             }
         }
@@ -279,6 +287,14 @@ fn handle_event(
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     task_list.select_next();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageUp => {
+                    task_list.select_page_up(10);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageDown => {
+                    task_list.select_page_down(10);
                     return Ok(Control::Changed);
                 }
                 KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
@@ -305,6 +321,14 @@ fn handle_event(
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     detail.scroll_down();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageUp => {
+                    detail.scroll_page_up(10);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageDown => {
+                    detail.scroll_page_down(10);
                     return Ok(Control::Changed);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {

@@ -65,6 +65,16 @@ impl TaskDetailState {
         self.scroll = self.scroll.saturating_add(1);
     }
 
+    /// Scroll up by a page.
+    pub fn scroll_page_up(&mut self, page_size: u16) {
+        self.scroll = self.scroll.saturating_sub(page_size);
+    }
+
+    /// Scroll down by a page.
+    pub fn scroll_page_down(&mut self, page_size: u16) {
+        self.scroll = self.scroll.saturating_add(page_size);
+    }
+
     /// Render the detail view into the given area.
     pub fn render(&self, theme: &Theme, focused: bool, area: Rect, buf: &mut Buffer) {
         let border_style = if focused {
