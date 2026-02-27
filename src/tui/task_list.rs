@@ -41,6 +41,8 @@ pub struct TaskListState {
     pub project_id: String,
     /// Display name for the project (shown in title).
     pub project_name: String,
+    /// Ancestor breadcrumb trail (e.g. "workspace > clyso > cbs").
+    breadcrumb: String,
     /// Tasks in display order (sorted).
     tasks: Vec<TaskSummary>,
     /// Active work states keyed by task ID.
@@ -129,11 +131,21 @@ impl TaskListState {
                 .map(|(label, idx)| (label.to_string(), idx))
                 .collect();
 
+        // Build breadcrumb from project ancestor path.
+        let path = cache.get_project_path(project_id).unwrap_or_default();
+        let breadcrumb = if path.len() > 1 {
+            // Join all ancestors including current project name.
+            path.join(" > ")
+        } else {
+            project_name.to_string()
+        };
+
         let filtered_indices: Vec<usize> = (0..tasks.len()).collect();
         let glyphs = Glyphs::new(icon_theme);
         Ok(Self {
             project_id: project_id.to_string(),
             project_name: project_name.to_string(),
+            breadcrumb,
             tasks,
             work_states,
             subtask_counts,
@@ -251,9 +263,9 @@ impl TaskListState {
         };
 
         let title = if let Some(ref q) = self.filter {
-            format!(" {} \u{2502} /{q}\u{2588} ", self.project_name)
+            format!(" {} \u{2502} /{q}\u{2588} ", self.breadcrumb)
         } else {
-            format!(" {} ", self.project_name)
+            format!(" {} ", self.breadcrumb)
         };
 
         let block = Block::bordered().title(title).border_style(border_style);
