@@ -88,9 +88,9 @@ impl TaskListState {
         let work_states: std::collections::HashMap<String, String> =
             active.into_iter().map(|a| (a.id, a.work_state)).collect();
 
-        // Compute prefix length for unique IDs.
-        let ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
-        let prefix_len = compute_min_prefix_len(&ids);
+        // Compute prefix length for unique IDs across all projects.
+        let all_ids = cache.all_task_ids().unwrap_or_default();
+        let prefix_len = compute_min_prefix_len(&all_ids);
 
         // Build subtask counts from parent_id references.
         let subtask_counts = compute_subtask_counts(tasks.iter().map(|t| t.parent_id.as_deref()));
