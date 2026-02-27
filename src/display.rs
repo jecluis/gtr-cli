@@ -212,6 +212,115 @@ pub fn assign_label_colors<'a>(
     map
 }
 
+/// A compact, fixed-width deadline rendering for table columns.
+pub struct CompactDeadline {
+    /// Short text like "3d ago", "in 2w", "now" (max ~9 chars).
+    pub text: String,
+    /// Whether the deadline is in the past.
+    pub is_overdue: bool,
+}
+
+/// Format a deadline as a compact string suitable for narrow table columns.
+///
+/// Returns `None` when the input is `None` or unparseable.
+/// Max width: ~9 characters. No chrono-humanize dependency.
+pub fn format_deadline_compact(deadline_str: Option<&str>) -> Option<CompactDeadline> {
+    let s = deadline_str?;
+    let deadline = DateTime::parse_from_rfc3339(s).ok()?;
+    let now = Utc::now();
+    let is_overdue = deadline < now;
+
+    let secs = if is_overdue {
+        now.signed_duration_since(deadline).num_seconds()
+    } else {
+        deadline.signed_duration_since(now).num_seconds()
+    };
+
+    let unit = if secs <= 10 {
+        "now".to_string()
+    } else if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h", secs / 3600)
+    } else if secs < 604800 {
+        format!("{}d", secs / 86400)
+    } else if secs < 2592000 {
+        format!("{}w", secs / 604800)
+    } else if secs < 31536000 {
+        format!("{}mo", secs / 2592000)
+    } else {
+        format!("{}y", secs / 31536000)
+    };
+
+    let text = if unit == "now" {
+        unit
+    } else if is_overdue {
+        format!("{unit} ago")
+    } else {
+        format!("in {unit}")
+    };
+
+    Some(CompactDeadline { text, is_overdue })
+}
+
+/// Pre-computed progress bar dimensions for a given bar width.
+pub struct ProgressBar {
+    /// Number of filled blocks.
+    pub filled: usize,
+    /// Number of empty blocks.
+    pub empty: usize,
+    /// The raw percentage value (0-100).
+    pub percentage: u8,
+}
+
+/// Compute progress bar dimensions from an optional progress value.
+///
+/// Returns `None` when progress is `None`. Both CLI and TUI map
+/// the result to their own styled output (colored/ratatui).
+pub fn format_progress_bar(progress: Option<u8>, bar_width: usize) -> Option<ProgressBar> {
+    let pct = progress?;
+    let filled = (pct as usize * bar_width) / 100;
+    let empty = bar_width - filled;
+    Some(ProgressBar {
+        filled,
+        empty,
+        percentage: pct,
+    })
+}
+
+/// Wrap text at a maximum width, preserving word boundaries.
+///
+/// Words longer than `width` are kept intact on their own line (no
+/// mid-word breaking), matching the CLI's `keep_words(true)` behaviour.
+pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current = word.to_string();
+        } else if current.len() + 1 + word.len() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(current);
+            current = word.to_string();
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +519,144 @@ mod tests {
         let tasks: Vec<&[String]> = vec![&empty];
         let map = assign_label_colors(tasks.into_iter());
         assert!(map.is_empty());
+    }
+
+    // ── format_deadline_compact ──
+
+    #[test]
+    fn compact_deadline_overdue() {
+        let past = (Utc::now() - Duration::hours(3)).to_rfc3339();
+        let d = format_deadline_compact(Some(&past)).unwrap();
+        assert!(d.is_overdue);
+        assert_eq!(d.text, "3h ago");
+    }
+
+    #[test]
+    fn compact_deadline_future() {
+        // Use a large enough offset so integer division doesn't round down.
+        let future = (Utc::now() + Duration::days(5) + Duration::hours(1)).to_rfc3339();
+        let d = format_deadline_compact(Some(&future)).unwrap();
+        assert!(!d.is_overdue);
+        assert_eq!(d.text, "in 5d");
+    }
+
+    #[test]
+    fn compact_deadline_now() {
+        let just_now = (Utc::now() + Duration::seconds(3)).to_rfc3339();
+        let d = format_deadline_compact(Some(&just_now)).unwrap();
+        assert_eq!(d.text, "now");
+    }
+
+    #[test]
+    fn compact_deadline_seconds() {
+        let soon = (Utc::now() + Duration::seconds(45)).to_rfc3339();
+        let d = format_deadline_compact(Some(&soon)).unwrap();
+        assert!(d.text.starts_with("in "));
+        assert!(d.text.ends_with('s'));
+    }
+
+    #[test]
+    fn compact_deadline_minutes() {
+        let soon = (Utc::now() - Duration::minutes(15)).to_rfc3339();
+        let d = format_deadline_compact(Some(&soon)).unwrap();
+        assert_eq!(d.text, "15m ago");
+    }
+
+    #[test]
+    fn compact_deadline_weeks() {
+        let future = (Utc::now() + Duration::weeks(2) + Duration::hours(1)).to_rfc3339();
+        let d = format_deadline_compact(Some(&future)).unwrap();
+        assert_eq!(d.text, "in 2w");
+    }
+
+    #[test]
+    fn compact_deadline_months() {
+        let future = (Utc::now() + Duration::days(90)).to_rfc3339();
+        let d = format_deadline_compact(Some(&future)).unwrap();
+        assert!(d.text.starts_with("in "));
+        assert!(d.text.ends_with("mo"));
+    }
+
+    #[test]
+    fn compact_deadline_years() {
+        let future = (Utc::now() + Duration::days(400)).to_rfc3339();
+        let d = format_deadline_compact(Some(&future)).unwrap();
+        assert_eq!(d.text, "in 1y");
+    }
+
+    #[test]
+    fn compact_deadline_none() {
+        assert!(format_deadline_compact(None).is_none());
+    }
+
+    // ── format_progress_bar ──
+
+    #[test]
+    fn progress_bar_zero() {
+        let pb = format_progress_bar(Some(0), 10).unwrap();
+        assert_eq!(pb.filled, 0);
+        assert_eq!(pb.empty, 10);
+        assert_eq!(pb.percentage, 0);
+    }
+
+    #[test]
+    fn progress_bar_fifty() {
+        let pb = format_progress_bar(Some(50), 10).unwrap();
+        assert_eq!(pb.filled, 5);
+        assert_eq!(pb.empty, 5);
+        assert_eq!(pb.percentage, 50);
+    }
+
+    #[test]
+    fn progress_bar_hundred() {
+        let pb = format_progress_bar(Some(100), 8).unwrap();
+        assert_eq!(pb.filled, 8);
+        assert_eq!(pb.empty, 0);
+        assert_eq!(pb.percentage, 100);
+    }
+
+    #[test]
+    fn progress_bar_none() {
+        assert!(format_progress_bar(None, 10).is_none());
+    }
+
+    #[test]
+    fn progress_bar_rounding() {
+        // 33% of 8 = 2.64 → truncates to 2
+        let pb = format_progress_bar(Some(33), 8).unwrap();
+        assert_eq!(pb.filled, 2);
+        assert_eq!(pb.empty, 6);
+    }
+
+    // ── wrap_text ──
+
+    #[test]
+    fn wrap_text_short() {
+        let lines = wrap_text("hello world", 60);
+        assert_eq!(lines, vec!["hello world"]);
+    }
+
+    #[test]
+    fn wrap_text_exact_boundary() {
+        let lines = wrap_text("aaaa bbbb", 9);
+        assert_eq!(lines, vec!["aaaa bbbb"]);
+    }
+
+    #[test]
+    fn wrap_text_wraps() {
+        let lines = wrap_text("aaaa bbbb cccc", 9);
+        assert_eq!(lines, vec!["aaaa bbbb", "cccc"]);
+    }
+
+    #[test]
+    fn wrap_text_long_word() {
+        let lines = wrap_text("superlongword short", 10);
+        assert_eq!(lines, vec!["superlongword", "short"]);
+    }
+
+    #[test]
+    fn wrap_text_empty() {
+        let lines = wrap_text("", 60);
+        assert_eq!(lines, vec![""]);
     }
 }
