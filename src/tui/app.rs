@@ -25,7 +25,7 @@ use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use rat_salsa::poll::PollCrossterm;
+use rat_salsa::poll::{PollCrossterm, PollTasks};
 use rat_salsa::{Control, RunConfig, SalsaAppContext, SalsaContext, run_tui};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -69,12 +69,23 @@ impl SalsaContext<AppEvent, crate::Error> for Global {
 pub enum AppEvent {
     /// Terminal input (key press, mouse, resize).
     Event(Event),
+    /// Background sync completed (true = success).
+    SyncComplete(bool),
 }
 
 impl From<Event> for AppEvent {
     fn from(value: Event) -> Self {
         Self::Event(value)
     }
+}
+
+/// Background sync status indicator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncStatus {
+    Idle,
+    Syncing,
+    Synced,
+    Failed,
 }
 
 /// Which panel currently has keyboard focus.
@@ -105,6 +116,7 @@ pub struct AppState {
     pub confirm: Option<ConfirmState>,
     pub create_form: Option<CreateFormState>,
     pub command_bar: Option<CommandBarState>,
+    pub sync_status: SyncStatus,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
@@ -129,6 +141,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         confirm: None,
         create_form: None,
         command_bar: None,
+        sync_status: SyncStatus::Idle,
     };
 
     run_tui(
@@ -138,7 +151,9 @@ pub fn run(config: Config) -> crate::Result<()> {
         handle_error,
         &mut global,
         &mut state,
-        RunConfig::default()?.poll(PollCrossterm),
+        RunConfig::default()?
+            .poll(PollCrossterm)
+            .poll(PollTasks::default()),
     )
 }
 
@@ -224,6 +239,15 @@ fn handle_event(
     state: &mut AppState,
     ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
+    if let AppEvent::SyncComplete(success) = event {
+        state.sync_status = if *success {
+            SyncStatus::Synced
+        } else {
+            SyncStatus::Failed
+        };
+        return Ok(Control::Changed);
+    }
+
     let AppEvent::Event(Event::Key(key)) = event else {
         return Ok(Control::Continue);
     };
@@ -518,6 +542,7 @@ fn handle_toggle_work_state_from_list(
     if let MainView::TaskList(ref mut list) = state.main_view {
         list.refresh(&ctx.cache, &ctx.config);
     }
+    trigger_background_sync(state, ctx);
     Ok(Control::Changed)
 }
 
@@ -535,6 +560,7 @@ fn handle_toggle_priority_from_list(
     if let MainView::TaskList(ref mut list) = state.main_view {
         list.refresh(&ctx.cache, &ctx.config);
     }
+    trigger_background_sync(state, ctx);
     Ok(Control::Changed)
 }
 
@@ -607,6 +633,7 @@ fn handle_editor_from_list(
     if let MainView::TaskList(ref mut list) = state.main_view {
         list.refresh(&ctx.cache, &ctx.config);
     }
+    trigger_background_sync(state, ctx);
     Ok(Control::Changed)
 }
 
@@ -628,6 +655,7 @@ fn handle_editor_from_detail(
         detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
         list.refresh(&ctx.cache, &ctx.config);
     }
+    trigger_background_sync(state, ctx);
     Ok(Control::Changed)
 }
 
@@ -678,6 +706,7 @@ fn handle_toggle_work_state_from_detail(
         detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
         list.refresh(&ctx.cache, &ctx.config);
     }
+    trigger_background_sync(state, ctx);
     Ok(Control::Changed)
 }
 
@@ -698,6 +727,7 @@ fn handle_toggle_priority_from_detail(
         detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
         list.refresh(&ctx.cache, &ctx.config);
     }
+    trigger_background_sync(state, ctx);
     Ok(Control::Changed)
 }
 
@@ -819,6 +849,7 @@ fn execute_command(
                 }
                 _ => {}
             }
+            trigger_background_sync(state, ctx);
             Ok(Control::Changed)
         }
         Command::Unknown(_) => {
@@ -873,6 +904,7 @@ fn handle_create_form_input(
             if let MainView::TaskList(ref mut list) = state.main_view {
                 list.refresh(&ctx.cache, &ctx.config);
             }
+            trigger_background_sync(state, ctx);
             Ok(Control::Changed)
         }
         KeyCode::Tab => {
@@ -996,6 +1028,7 @@ fn execute_confirmed_action(
         _ => {}
     }
 
+    trigger_background_sync(state, ctx);
     Ok(Control::Changed)
 }
 
@@ -1006,6 +1039,30 @@ fn handle_back_from_detail(state: &mut AppState) -> Result<Control<AppEvent>, cr
         state.main_view = MainView::TaskList(list);
     }
     Ok(Control::Changed)
+}
+
+/// Spawn a background sync to push local mutations to the server.
+fn trigger_background_sync(state: &mut AppState, ctx: &mut Global) {
+    state.sync_status = SyncStatus::Syncing;
+    let config = ctx.config.clone();
+    let cache_path = ctx.config.cache_dir.join("index.db");
+    let storage_config = ctx.storage.config().clone();
+    let _ = ctx.spawn(move || {
+        let success = (|| -> crate::Result<bool> {
+            let cache = crate::cache::TaskCache::open(&cache_path)?;
+            let storage = crate::storage::TaskStorage::new(storage_config);
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(crate::Error::Io)?;
+            rt.block_on(async {
+                let sync = crate::sync::SyncManager::new(&config, storage, cache)?;
+                Ok::<bool, crate::Error>(sync.try_sync(std::time::Duration::from_secs(3)).await)
+            })
+        })()
+        .unwrap_or(false);
+        Ok(Control::Event(AppEvent::SyncComplete(success)))
+    });
 }
 
 /// Render the status bar with context-aware key hints.
@@ -1100,6 +1157,13 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
         Span::styled("  ?", theme.status_key),
         Span::styled(" help", theme.status_desc),
     ]);
+
+    match state.sync_status {
+        SyncStatus::Syncing => hints.push(Span::styled("  syncing", theme.muted)),
+        SyncStatus::Synced => hints.push(Span::styled("  synced", theme.success)),
+        SyncStatus::Failed => hints.push(Span::styled("  sync failed", theme.danger)),
+        SyncStatus::Idle => {}
+    }
 
     Line::from(hints).style(theme.status_bar).render(area, buf);
 }
