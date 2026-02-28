@@ -26,9 +26,27 @@ use ratatui::widgets::{Block, Clear, Tabs, Widget};
 
 use crate::display;
 use crate::icons::{Glyphs, IconTheme};
+use crate::models::Task;
 use crate::tui::theme::Theme;
 
 const SIZES: [&str; 4] = ["S", "M", "L", "XL"];
+
+/// Whether the form is creating a new task or editing an existing one.
+pub enum FormMode {
+    Create,
+    Update { task_id: String },
+}
+
+/// Snapshot of original values for change detection in update mode.
+struct OriginalValues {
+    title: String,
+    priority: String,
+    size_idx: usize,
+    impact: u8,
+    joy: u8,
+    labels: Vec<String>,
+    parent_id: Option<String>,
+}
 
 /// Which page of the form is visible.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -69,6 +87,8 @@ pub enum FormField {
 pub struct TaskFormState {
     pub project_id: String,
     pub project_name: String,
+    mode: FormMode,
+    original: Option<OriginalValues>,
     icon_theme: IconTheme,
     glyphs: Glyphs,
     page: FormPage,
@@ -95,6 +115,8 @@ impl TaskFormState {
         Self {
             project_id,
             project_name,
+            mode: FormMode::Create,
+            original: None,
             icon_theme,
             glyphs: Glyphs::new(icon_theme),
             page: FormPage::Main,
@@ -112,6 +134,56 @@ impl TaskFormState {
             parent_cursor: 0,
             resolved_parent_title: None,
             resolved_parent_id: None,
+        }
+    }
+
+    /// Create a form pre-filled with an existing task's values.
+    pub fn for_update(task: &Task, project_name: String, icon_theme: IconTheme) -> Self {
+        let size_idx = SIZES
+            .iter()
+            .position(|s| s.eq_ignore_ascii_case(&task.size))
+            .unwrap_or(1);
+
+        let parent_input = task
+            .parent_id
+            .as_ref()
+            .map(|id| id[..8.min(id.len())].to_string())
+            .unwrap_or_default();
+
+        let original = OriginalValues {
+            title: task.title.clone(),
+            priority: task.priority.clone(),
+            size_idx,
+            impact: task.impact,
+            joy: task.joy,
+            labels: task.labels.clone(),
+            parent_id: task.parent_id.clone(),
+        };
+
+        Self {
+            project_id: task.project_id.clone(),
+            project_name,
+            mode: FormMode::Update {
+                task_id: task.id.clone(),
+            },
+            original: Some(original),
+            icon_theme,
+            glyphs: Glyphs::new(icon_theme),
+            page: FormPage::Main,
+            focused: FormPage::Main.fields()[0],
+            title: task.title.clone(),
+            cursor_pos: task.title.len(),
+            priority: task.priority.clone(),
+            size_idx,
+            impact: task.impact,
+            joy: task.joy,
+            labels: task.labels.clone(),
+            label_input: String::new(),
+            label_cursor: 0,
+            parent_input,
+            parent_cursor: 0,
+            resolved_parent_title: None,
+            resolved_parent_id: task.parent_id.clone(),
         }
     }
 
@@ -372,6 +444,48 @@ impl TaskFormState {
         self.resolved_parent_id = full_id;
     }
 
+    /// Whether this form is in update mode.
+    pub fn is_update(&self) -> bool {
+        matches!(self.mode, FormMode::Update { .. })
+    }
+
+    /// The task ID when in update mode.
+    pub fn task_id(&self) -> Option<&str> {
+        match &self.mode {
+            FormMode::Update { task_id } => Some(task_id),
+            FormMode::Create => None,
+        }
+    }
+
+    /// Compute which fields changed compared to the original values.
+    pub fn changed_fields(&self) -> ChangedFields {
+        let Some(orig) = &self.original else {
+            return ChangedFields::default();
+        };
+        ChangedFields {
+            title: (self.title != orig.title).then(|| self.title.clone()),
+            priority: (self.priority != orig.priority).then(|| self.priority.clone()),
+            size: (self.size_idx != orig.size_idx).then(|| SIZES[self.size_idx].to_string()),
+            impact: (self.impact != orig.impact).then_some(self.impact),
+            joy: (self.joy != orig.joy).then_some(self.joy),
+            labels: (self.labels != orig.labels).then(|| self.labels.clone()),
+            parent_id: (self.resolved_parent_id != orig.parent_id)
+                .then(|| self.resolved_parent_id.clone()),
+        }
+    }
+
+    /// Whether any field has been modified from the original values.
+    pub fn has_changes(&self) -> bool {
+        let f = self.changed_fields();
+        f.title.is_some()
+            || f.priority.is_some()
+            || f.size.is_some()
+            || f.impact.is_some()
+            || f.joy.is_some()
+            || f.labels.is_some()
+            || f.parent_id.is_some()
+    }
+
     pub fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
         let popup_width = 56u16.min(area.width.saturating_sub(4));
         let popup_height = 15;
@@ -380,9 +494,12 @@ impl TaskFormState {
         Clear.render(popup, buf);
 
         let border_style = theme.accent;
-        let block = Block::bordered()
-            .title(format!(" new task in {} ", self.project_name))
-            .border_style(border_style);
+        let title = if self.is_update() {
+            format!(" edit task in {} ", self.project_name)
+        } else {
+            format!(" new task in {} ", self.project_name)
+        };
+        let block = Block::bordered().title(title).border_style(border_style);
         let inner = block.inner(popup);
         block.render(popup, buf);
 
@@ -662,6 +779,12 @@ impl TaskFormState {
     }
 
     fn render_submit_buttons(&self, _theme: &Theme, area: Rect, buf: &mut Buffer) {
+        let action_text = if self.is_update() {
+            " Save "
+        } else {
+            " Create "
+        };
+
         let save_focused = self.focused == FormField::Submit;
         let cancel_focused = self.focused == FormField::Cancel;
 
@@ -687,12 +810,26 @@ impl TaskFormState {
 
         let hint = Line::from(vec![
             Span::raw("  "),
-            Span::styled(" Create ", save_style),
+            Span::styled(action_text, save_style),
             Span::raw("  "),
             Span::styled(" Cancel ", cancel_style),
         ]);
         hint.alignment(Alignment::Left).render(area, buf);
     }
+}
+
+/// Set of fields that changed from original values in update mode.
+#[derive(Default)]
+pub struct ChangedFields {
+    pub title: Option<String>,
+    pub priority: Option<String>,
+    pub size: Option<String>,
+    pub impact: Option<u8>,
+    pub joy: Option<u8>,
+    pub labels: Option<Vec<String>>,
+    /// `Some(None)` means parent was cleared; `Some(Some(id))` means
+    /// parent was changed to a new ID.
+    pub parent_id: Option<Option<String>>,
 }
 
 /// Style for a field label: accent+bold when focused, default otherwise.

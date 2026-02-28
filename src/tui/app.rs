@@ -389,6 +389,9 @@ fn handle_event(
                 KeyCode::Char('e') => {
                     return handle_editor_from_list(state, ctx);
                 }
+                KeyCode::Char('u') => {
+                    return handle_update_task_from_list(state, ctx);
+                }
                 KeyCode::Char('n') => {
                     return handle_new_task(state, ctx);
                 }
@@ -426,6 +429,9 @@ fn handle_event(
                 }
                 KeyCode::Char('x') => {
                     return handle_delete_from_detail(state, ctx);
+                }
+                KeyCode::Char('u') => {
+                    return handle_update_task_from_detail(state, ctx);
                 }
                 KeyCode::Char('e') => {
                     return handle_editor_from_detail(state, ctx);
@@ -879,6 +885,177 @@ fn handle_new_task(state: &mut AppState, ctx: &Global) -> Result<Control<AppEven
     Ok(Control::Changed)
 }
 
+fn handle_update_task_from_list(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = task_list.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    let project_name = task_list.project_name.clone();
+    open_update_form(state, ctx, &task_id, &project_name)
+}
+
+fn handle_update_task_from_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let task_id = detail.task.id.clone();
+    let project_name = detail.project_name.clone();
+    open_update_form(state, ctx, &task_id, &project_name)
+}
+
+fn open_update_form(
+    state: &mut AppState,
+    ctx: &mut Global,
+    task_id: &str,
+    project_name: &str,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let task = ctx.storage.load_task(task_id)?;
+    let mut form =
+        TaskFormState::for_update(&task, project_name.to_string(), ctx.config.icon_theme);
+
+    // Resolve existing parent if present
+    if let Some(ref pid) = task.parent_id {
+        let title = ctx
+            .cache
+            .get_task_summary(pid)
+            .ok()
+            .flatten()
+            .map(|s| s.title);
+        form.set_resolved_parent(title);
+    }
+
+    state.create_form = Some(form);
+    Ok(Control::Changed)
+}
+
+fn submit_create_form(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let form = state.create_form.as_ref().unwrap();
+    let project_id = form.project_id.clone();
+    let title = form.title().to_string();
+    let priority = form.priority().to_string();
+    let size = form.size().to_string();
+    let impact = form.impact();
+    let joy = form.joy();
+    let labels = form.labels().to_vec();
+    let parent_id = form.parent_id().map(String::from);
+    state.create_form = None;
+
+    auto_register_labels(&labels, &project_id, &ctx.cache)?;
+
+    crate::mutations::create_task(
+        &ctx.storage,
+        &ctx.cache,
+        &project_id,
+        &title,
+        &priority,
+        &size,
+        Some(impact),
+        Some(joy),
+        labels,
+        parent_id,
+    )?;
+
+    refresh_current_view(state, ctx);
+    trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+fn submit_update_form(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let form = state.create_form.as_ref().unwrap();
+    let task_id = form.task_id().unwrap().to_string();
+    let project_id = form.project_id.clone();
+
+    if !form.has_changes() {
+        state.create_form = None;
+        return Ok(Control::Changed);
+    }
+
+    // Validate parent before submitting
+    if let Some(Some(ref pid)) = form.changed_fields().parent_id {
+        if pid == &task_id {
+            return Ok(Control::Continue); // can't parent to self
+        }
+        if ctx.cache.would_create_cycle(&task_id, pid)? {
+            return Ok(Control::Continue); // would create cycle
+        }
+    }
+
+    let changes = form.changed_fields();
+    let labels_for_registry = changes.labels.clone();
+    state.create_form = None;
+
+    // Auto-register new labels
+    if let Some(ref new_labels) = labels_for_registry {
+        auto_register_labels(new_labels, &project_id, &ctx.cache)?;
+    }
+
+    crate::mutations::update_task(
+        &ctx.storage,
+        &ctx.cache,
+        &task_id,
+        changes.title,
+        changes.priority,
+        changes.size,
+        changes.impact,
+        changes.joy,
+        changes.labels,
+        changes.parent_id,
+    )?;
+
+    refresh_current_view(state, ctx);
+    trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+/// Register any new labels in the project label registry.
+fn auto_register_labels(
+    labels: &[String],
+    project_id: &str,
+    cache: &TaskCache,
+) -> crate::Result<()> {
+    if labels.is_empty() {
+        return Ok(());
+    }
+    let mut project_labels = cache.get_project_labels(project_id)?;
+    let mut changed = false;
+    for label in labels {
+        if !project_labels.contains(label) {
+            project_labels.push(label.clone());
+            changed = true;
+        }
+    }
+    if changed {
+        cache.set_project_labels(project_id, &project_labels)?;
+    }
+    Ok(())
+}
+
+/// Refresh the current view (task list and/or detail) after a mutation.
+fn refresh_current_view(state: &mut AppState, ctx: &mut Global) {
+    match &mut state.main_view {
+        MainView::TaskList(list) => list.refresh(&ctx.cache, &ctx.config),
+        MainView::TaskDetail { detail, list } => {
+            detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
+            list.refresh(&ctx.cache, &ctx.config);
+        }
+        MainView::Dashboard => {}
+    }
+}
+
 fn handle_create_form_input(
     key: &crossterm::event::KeyEvent,
     state: &mut AppState,
@@ -933,49 +1110,11 @@ fn handle_create_form_input(
             if !form.can_submit() {
                 return Ok(Control::Continue);
             }
-            let project_id = form.project_id.clone();
-            let title = form.title().to_string();
-            let priority = form.priority().to_string();
-            let size = form.size().to_string();
-            let impact = form.impact();
-            let joy = form.joy();
-            let labels = form.labels().to_vec();
-            let parent_id = form.parent_id().map(String::from);
-            state.create_form = None;
 
-            // Auto-register new labels in the project registry
-            if !labels.is_empty() {
-                let mut project_labels = ctx.cache.get_project_labels(&project_id)?;
-                let mut changed = false;
-                for label in &labels {
-                    if !project_labels.contains(label) {
-                        project_labels.push(label.clone());
-                        changed = true;
-                    }
-                }
-                if changed {
-                    ctx.cache.set_project_labels(&project_id, &project_labels)?;
-                }
+            match form.task_id() {
+                Some(_) => submit_update_form(state, ctx),
+                None => submit_create_form(state, ctx),
             }
-
-            crate::mutations::create_task(
-                &ctx.storage,
-                &ctx.cache,
-                &project_id,
-                &title,
-                &priority,
-                &size,
-                Some(impact),
-                Some(joy),
-                labels,
-                parent_id,
-            )?;
-
-            if let MainView::TaskList(ref mut list) = state.main_view {
-                list.refresh(&ctx.cache, &ctx.config);
-            }
-            trigger_background_sync(state, ctx);
-            Ok(Control::Changed)
         }
         KeyCode::Tab => {
             if let Some(ref mut form) = state.create_form {
@@ -1201,6 +1340,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" done", theme.status_desc),
                 Span::styled("  x", theme.status_key),
                 Span::styled(" delete", theme.status_desc),
+                Span::styled("  u", theme.status_key),
+                Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
             ]);
@@ -1238,6 +1379,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" done", theme.status_desc),
                 Span::styled("  x", theme.status_key),
                 Span::styled(" delete", theme.status_desc),
+                Span::styled("  u", theme.status_key),
+                Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
                 Span::styled("  n", theme.status_key),

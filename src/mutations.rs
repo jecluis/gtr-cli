@@ -346,6 +346,124 @@ pub fn update_body(
     Ok(task)
 }
 
+/// Update specific fields of an existing task.
+///
+/// Only fields with `Some` values are modified. Returns the updated
+/// task. For `parent_id`, `Some(None)` clears the parent while
+/// `Some(Some(id))` sets a new parent.
+#[allow(clippy::too_many_arguments)]
+pub fn update_task(
+    storage: &TaskStorage,
+    cache: &TaskCache,
+    task_id: &str,
+    title: Option<String>,
+    priority: Option<String>,
+    size: Option<String>,
+    impact: Option<u8>,
+    joy: Option<u8>,
+    labels: Option<Vec<String>>,
+    parent_id: Option<Option<String>>,
+) -> Result<Task> {
+    let mut task = storage.load_task(task_id)?;
+    let now = Utc::now();
+
+    if let Some(new_title) = title {
+        let old = task.title.clone();
+        task.title = new_title;
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::TitleChanged {
+                from: old,
+                to: task.title.clone(),
+            },
+            source: LogSource::User,
+        });
+    }
+
+    if let Some(new_priority) = priority {
+        let old = task.priority.clone();
+        task.priority = new_priority;
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::PriorityChanged {
+                from: old,
+                to: task.priority.clone(),
+            },
+            source: LogSource::User,
+        });
+    }
+
+    if let Some(new_size) = size {
+        let old = task.size.clone();
+        task.size = new_size;
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::SizeChanged {
+                from: old,
+                to: task.size.clone(),
+            },
+            source: LogSource::User,
+        });
+    }
+
+    if let Some(new_impact) = impact {
+        let old = task.impact;
+        task.impact = new_impact;
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::ImpactChanged {
+                from: old,
+                to: new_impact,
+            },
+            source: LogSource::User,
+        });
+    }
+
+    if let Some(new_joy) = joy {
+        let old = task.joy;
+        task.joy = new_joy;
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::JoyChanged {
+                from: old,
+                to: new_joy,
+            },
+            source: LogSource::User,
+        });
+    }
+
+    if let Some(new_labels) = labels {
+        task.labels = new_labels;
+    }
+
+    if let Some(new_parent) = parent_id {
+        let old_parent = task.parent_id.clone();
+        task.parent_id = new_parent;
+
+        // Update ancestor progress for both old and new parents
+        task.modified = now.to_rfc3339();
+        task.version += 1;
+        storage.update_task(&task)?;
+        cache.upsert_task(&task, true)?;
+
+        if let Some(ref old_pid) = old_parent {
+            hierarchy::update_ancestor_progress(cache, storage, old_pid)?;
+        }
+        if let Some(ref new_pid) = task.parent_id {
+            hierarchy::update_ancestor_progress(cache, storage, new_pid)?;
+        }
+
+        return Ok(task);
+    }
+
+    task.modified = now.to_rfc3339();
+    task.version += 1;
+    storage.update_task(&task)?;
+    cache.upsert_task(&task, true)?;
+
+    Ok(task)
+}
+
 /// Create a new task.
 ///
 /// Basic fields (title, priority, size) are required. Extended fields
