@@ -36,6 +36,7 @@ use ratatui::widgets::{Block, Paragraph, Widget};
 use crate::cache::TaskCache;
 use crate::config::Config;
 use crate::storage::{StorageConfig, TaskStorage};
+use crate::tui::command_bar::CommandBarState;
 use crate::tui::confirm::ConfirmState;
 use crate::tui::create_form::CreateFormState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
@@ -103,6 +104,7 @@ pub struct AppState {
     pub main_view: MainView,
     pub confirm: Option<ConfirmState>,
     pub create_form: Option<CreateFormState>,
+    pub command_bar: Option<CommandBarState>,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
@@ -126,6 +128,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         main_view: MainView::Dashboard,
         confirm: None,
         create_form: None,
+        command_bar: None,
     };
 
     run_tui(
@@ -171,8 +174,12 @@ fn render(
         }
     }
 
-    // Status bar
-    render_status_bar(state, layout[1], buf);
+    // Status bar (or command bar when active)
+    if let Some(ref cmd_bar) = state.command_bar {
+        cmd_bar.render(theme, layout[1], buf);
+    } else {
+        render_status_bar(state, layout[1], buf);
+    }
 
     // Overlay dialogs (above content, below which-key)
     if let Some(ref confirm) = state.confirm {
@@ -237,6 +244,11 @@ fn handle_event(
     // Create form intercepts all input when active.
     if state.create_form.is_some() {
         return handle_create_form_input(key.code, state, ctx);
+    }
+
+    // Command bar intercepts all input when active.
+    if state.command_bar.is_some() {
+        return handle_command_bar_input(key.code, state, ctx);
     }
 
     // Tab toggles focus between sidebar and main panel.
@@ -401,6 +413,12 @@ fn handle_event(
             },
             MainView::Dashboard => {}
         }
+    }
+
+    // ':' opens command bar from anywhere (not during filter/overlay/mid-chord).
+    if key.code == KeyCode::Char(':') && !state.keymap.is_pending() {
+        state.command_bar = Some(CommandBarState::new());
+        return Ok(Control::Changed);
     }
 
     // Global keymap (chords, actions).
@@ -729,6 +747,85 @@ fn handle_delete_from_detail(
         child_count,
     }));
     Ok(Control::Changed)
+}
+
+// -- Command bar handlers --
+
+fn handle_command_bar_input(
+    code: KeyCode,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match code {
+        KeyCode::Esc => {
+            state.command_bar = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            let cmd = state.command_bar.as_ref().unwrap().parse();
+            state.command_bar = None;
+            execute_command(cmd, state, ctx)
+        }
+        KeyCode::Backspace => {
+            let bar = state.command_bar.as_mut().unwrap();
+            if bar.is_empty() {
+                state.command_bar = None;
+            } else {
+                bar.backspace();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(c) => {
+            if let Some(ref mut bar) = state.command_bar {
+                bar.char_input(c);
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
+fn execute_command(
+    cmd: crate::tui::command_bar::Command,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::command_bar::Command;
+
+    match cmd {
+        Command::Quit => Ok(Control::Quit),
+        Command::New { title } => {
+            // Determine project from current task list view
+            let project_id = match &state.main_view {
+                MainView::TaskList(list) => list.project_id.clone(),
+                MainView::TaskDetail { list, .. } => list.project_id.clone(),
+                MainView::Dashboard => return Ok(Control::Changed),
+            };
+
+            crate::mutations::create_task(
+                &ctx.storage,
+                &ctx.cache,
+                &project_id,
+                &title,
+                "later",
+                "M",
+            )?;
+
+            match &mut state.main_view {
+                MainView::TaskList(list) => list.refresh(&ctx.cache, &ctx.config),
+                MainView::TaskDetail { list, detail } => {
+                    list.refresh(&ctx.cache, &ctx.config);
+                    detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
+                }
+                _ => {}
+            }
+            Ok(Control::Changed)
+        }
+        Command::Unknown(_) => {
+            // Silently ignore unknown commands
+            Ok(Control::Changed)
+        }
+    }
 }
 
 // -- Create form handlers --
