@@ -321,6 +321,18 @@ fn handle_event(
                     task_list.toggle_recursive(&ctx.cache, &ctx.config);
                     return Ok(Control::Changed);
                 }
+                KeyCode::Char('s') => {
+                    return handle_toggle_work_state_from_list(state, ctx);
+                }
+                KeyCode::Char('p') => {
+                    return handle_toggle_priority_from_list(state, ctx);
+                }
+                KeyCode::Char('d') => {
+                    return handle_done_from_list(state, ctx);
+                }
+                KeyCode::Char('x') => {
+                    return handle_delete_from_list(state, ctx);
+                }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
                     return Ok(Control::Changed);
@@ -343,6 +355,18 @@ fn handle_event(
                 KeyCode::PageDown => {
                     detail.scroll_page_down(10);
                     return Ok(Control::Changed);
+                }
+                KeyCode::Char('s') => {
+                    return handle_toggle_work_state_from_detail(state, ctx);
+                }
+                KeyCode::Char('p') => {
+                    return handle_toggle_priority_from_detail(state, ctx);
+                }
+                KeyCode::Char('d') => {
+                    return handle_done_from_detail(state, ctx);
+                }
+                KeyCode::Char('x') => {
+                    return handle_delete_from_detail(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     return handle_back_from_detail(state);
@@ -431,6 +455,184 @@ fn handle_task_list_select(
     };
     state.main_view = MainView::TaskDetail { detail, list };
 
+    Ok(Control::Changed)
+}
+
+// -- Task list mutation handlers --
+
+fn handle_toggle_work_state_from_list(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = task_list.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    crate::mutations::toggle_work_state(&ctx.storage, &ctx.cache, &task_id)?;
+    if let MainView::TaskList(ref mut list) = state.main_view {
+        list.refresh(&ctx.cache, &ctx.config);
+    }
+    Ok(Control::Changed)
+}
+
+fn handle_toggle_priority_from_list(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = task_list.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    crate::mutations::toggle_priority(&ctx.storage, &ctx.cache, &task_id)?;
+    if let MainView::TaskList(ref mut list) = state.main_view {
+        list.refresh(&ctx.cache, &ctx.config);
+    }
+    Ok(Control::Changed)
+}
+
+fn handle_done_from_list(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::confirm::PendingAction;
+
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = task_list.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    let title = task_list.selected_task_title().unwrap_or("").to_string();
+    let descendant_count = ctx
+        .cache
+        .get_all_descendants(&task_id)
+        .map(|d| d.len())
+        .unwrap_or(0);
+    state.confirm = Some(ConfirmState::new(PendingAction::Done {
+        task_id,
+        title,
+        descendant_count,
+    }));
+    Ok(Control::Changed)
+}
+
+fn handle_delete_from_list(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::confirm::PendingAction;
+
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = task_list.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    let title = task_list.selected_task_title().unwrap_or("").to_string();
+    let child_count = ctx
+        .cache
+        .get_children(&task_id)
+        .map(|c| c.len())
+        .unwrap_or(0);
+    state.confirm = Some(ConfirmState::new(PendingAction::Delete {
+        task_id,
+        title,
+        child_count,
+    }));
+    Ok(Control::Changed)
+}
+
+// -- Task detail mutation handlers --
+
+fn handle_toggle_work_state_from_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let task_id = detail.task.id.clone();
+    crate::mutations::toggle_work_state(&ctx.storage, &ctx.cache, &task_id)?;
+    if let MainView::TaskDetail {
+        ref mut detail,
+        ref mut list,
+    } = state.main_view
+    {
+        detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
+        list.refresh(&ctx.cache, &ctx.config);
+    }
+    Ok(Control::Changed)
+}
+
+fn handle_toggle_priority_from_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let task_id = detail.task.id.clone();
+    crate::mutations::toggle_priority(&ctx.storage, &ctx.cache, &task_id)?;
+    if let MainView::TaskDetail {
+        ref mut detail,
+        ref mut list,
+    } = state.main_view
+    {
+        detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
+        list.refresh(&ctx.cache, &ctx.config);
+    }
+    Ok(Control::Changed)
+}
+
+fn handle_done_from_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::confirm::PendingAction;
+
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let task_id = detail.task.id.clone();
+    let title = detail.task.title.clone();
+    let descendant_count = ctx
+        .cache
+        .get_all_descendants(&task_id)
+        .map(|d| d.len())
+        .unwrap_or(0);
+    state.confirm = Some(ConfirmState::new(PendingAction::Done {
+        task_id,
+        title,
+        descendant_count,
+    }));
+    Ok(Control::Changed)
+}
+
+fn handle_delete_from_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::confirm::PendingAction;
+
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let task_id = detail.task.id.clone();
+    let title = detail.task.title.clone();
+    let child_count = ctx
+        .cache
+        .get_children(&task_id)
+        .map(|c| c.len())
+        .unwrap_or(0);
+    state.confirm = Some(ConfirmState::new(PendingAction::Delete {
+        task_id,
+        title,
+        child_count,
+    }));
     Ok(Control::Changed)
 }
 
@@ -546,6 +748,14 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" back", theme.status_desc),
                 Span::styled("  j/k", theme.status_key),
                 Span::styled(" scroll", theme.status_desc),
+                Span::styled("  s", theme.status_key),
+                Span::styled(" start/stop", theme.status_desc),
+                Span::styled("  p", theme.status_key),
+                Span::styled(" priority", theme.status_desc),
+                Span::styled("  d", theme.status_key),
+                Span::styled(" done", theme.status_desc),
+                Span::styled("  x", theme.status_key),
+                Span::styled(" delete", theme.status_desc),
             ]);
         }
         (MainView::TaskList(tl), FocusPanel::Main) if tl.is_filtering() => {
@@ -573,6 +783,14 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" filter", theme.status_desc),
                 Span::styled("  r", theme.status_key),
                 Span::styled(" recursive", theme.status_desc),
+                Span::styled("  s", theme.status_key),
+                Span::styled(" start/stop", theme.status_desc),
+                Span::styled("  p", theme.status_key),
+                Span::styled(" priority", theme.status_desc),
+                Span::styled("  d", theme.status_key),
+                Span::styled(" done", theme.status_desc),
+                Span::styled("  x", theme.status_key),
+                Span::styled(" delete", theme.status_desc),
             ]);
         }
         _ => {
