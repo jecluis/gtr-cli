@@ -23,6 +23,7 @@
 
 mod app;
 pub mod confirm;
+pub mod create_form;
 pub mod keymap;
 pub mod sidebar;
 pub mod task_detail;

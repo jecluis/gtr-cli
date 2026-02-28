@@ -37,6 +37,7 @@ use crate::cache::TaskCache;
 use crate::config::Config;
 use crate::storage::{StorageConfig, TaskStorage};
 use crate::tui::confirm::ConfirmState;
+use crate::tui::create_form::CreateFormState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::sidebar::{SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
@@ -101,6 +102,7 @@ pub struct AppState {
     pub focus: FocusPanel,
     pub main_view: MainView,
     pub confirm: Option<ConfirmState>,
+    pub create_form: Option<CreateFormState>,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
@@ -123,6 +125,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         focus: FocusPanel::Sidebar,
         main_view: MainView::Dashboard,
         confirm: None,
+        create_form: None,
     };
 
     run_tui(
@@ -171,9 +174,12 @@ fn render(
     // Status bar
     render_status_bar(state, layout[1], buf);
 
-    // Confirmation dialog overlay (above content, below which-key)
+    // Overlay dialogs (above content, below which-key)
     if let Some(ref confirm) = state.confirm {
         confirm.render(theme, area, buf);
+    }
+    if let Some(ref form) = state.create_form {
+        form.render(theme, area, buf);
     }
 
     // Which-key popup when a prefix key is pending
@@ -226,6 +232,11 @@ fn handle_event(
     // Confirmation dialog intercepts all input when active.
     if state.confirm.is_some() {
         return handle_confirm_input(key.code, state, ctx);
+    }
+
+    // Create form intercepts all input when active.
+    if state.create_form.is_some() {
+        return handle_create_form_input(key.code, state, ctx);
     }
 
     // Tab toggles focus between sidebar and main panel.
@@ -341,6 +352,9 @@ fn handle_event(
                 }
                 KeyCode::Char('e') => {
                     return handle_editor_from_list(state, ctx);
+                }
+                KeyCode::Char('n') => {
+                    return handle_new_task(state);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
@@ -717,6 +731,87 @@ fn handle_delete_from_detail(
     Ok(Control::Changed)
 }
 
+// -- Create form handlers --
+
+fn handle_new_task(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let project_id = task_list.project_id.clone();
+    let project_name = task_list.project_name.clone();
+    state.create_form = Some(CreateFormState::new(project_id, project_name));
+    Ok(Control::Changed)
+}
+
+fn handle_create_form_input(
+    code: KeyCode,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match code {
+        KeyCode::Esc => {
+            state.create_form = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            let form = state.create_form.as_ref().unwrap();
+            if !form.can_submit() {
+                return Ok(Control::Continue);
+            }
+            let project_id = form.project_id.clone();
+            let title = form.title().to_string();
+            let priority = form.priority().to_string();
+            let size = form.size().to_string();
+            state.create_form = None;
+
+            crate::mutations::create_task(
+                &ctx.storage,
+                &ctx.cache,
+                &project_id,
+                &title,
+                &priority,
+                &size,
+            )?;
+
+            if let MainView::TaskList(ref mut list) = state.main_view {
+                list.refresh(&ctx.cache, &ctx.config);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Tab => {
+            if let Some(ref mut form) = state.create_form {
+                form.focus_next();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::BackTab => {
+            if let Some(ref mut form) = state.create_form {
+                form.focus_prev();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Backspace => {
+            if let Some(ref mut form) = state.create_form {
+                form.backspace();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(' ') => {
+            if let Some(ref mut form) = state.create_form {
+                form.toggle_or_space();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(c) => {
+            if let Some(ref mut form) = state.create_form {
+                form.char_input(c);
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
 /// Handle key input while the confirmation dialog is active.
 fn handle_confirm_input(
     code: KeyCode,
@@ -876,6 +971,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" delete", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
+                Span::styled("  n", theme.status_key),
+                Span::styled(" new", theme.status_desc),
             ]);
         }
         _ => {
