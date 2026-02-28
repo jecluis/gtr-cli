@@ -18,7 +18,13 @@
 //! rat-salsa application skeleton: Global state, event types, and the
 //! four callback functions (init, render, event, error).
 
+use std::io::stdout;
+
+use crossterm::ExecutableCommand;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use rat_salsa::poll::PollCrossterm;
 use rat_salsa::{Control, RunConfig, SalsaAppContext, SalsaContext, run_tui};
 use ratatui::buffer::Buffer;
@@ -333,6 +339,9 @@ fn handle_event(
                 KeyCode::Char('x') => {
                     return handle_delete_from_list(state, ctx);
                 }
+                KeyCode::Char('e') => {
+                    return handle_editor_from_list(state, ctx);
+                }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
                     return Ok(Control::Changed);
@@ -367,6 +376,9 @@ fn handle_event(
                 }
                 KeyCode::Char('x') => {
                     return handle_delete_from_detail(state, ctx);
+                }
+                KeyCode::Char('e') => {
+                    return handle_editor_from_detail(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     return handle_back_from_detail(state);
@@ -544,6 +556,75 @@ fn handle_delete_from_list(
         child_count,
     }));
     Ok(Control::Changed)
+}
+
+// -- Editor handlers --
+
+fn handle_editor_from_list(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = task_list.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    let task = ctx.storage.load_task(&task_id)?;
+    run_editor_for_task(&task, ctx)?;
+    if let MainView::TaskList(ref mut list) = state.main_view {
+        list.refresh(&ctx.cache, &ctx.config);
+    }
+    Ok(Control::Changed)
+}
+
+fn handle_editor_from_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let task_id = detail.task.id.clone();
+    let task = ctx.storage.load_task(&task_id)?;
+    run_editor_for_task(&task, ctx)?;
+    if let MainView::TaskDetail {
+        ref mut detail,
+        ref mut list,
+    } = state.main_view
+    {
+        detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
+        list.refresh(&ctx.cache, &ctx.config);
+    }
+    Ok(Control::Changed)
+}
+
+/// Suspend TUI, launch external editor, resume TUI.
+fn run_editor_for_task(task: &crate::models::Task, ctx: &mut Global) -> crate::Result<()> {
+    // Suspend TUI
+    stdout().execute(LeaveAlternateScreen)?;
+    disable_raw_mode()?;
+
+    let result = crate::editor::edit_body(&ctx.config, &task.title, &task.body);
+
+    // Resume TUI
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen)?;
+    // Force full repaint: ratatui's diff buffer is stale after the
+    // editor used the terminal, so clear it to avoid a blank screen.
+    ctx.clear_terminal();
+
+    match result {
+        Ok(crate::editor::EditorResult::Changed { title, body }) => {
+            crate::mutations::update_body(&ctx.storage, &ctx.cache, &task.id, title, body)?;
+        }
+        Ok(crate::editor::EditorResult::Unchanged | crate::editor::EditorResult::Cancelled) => {}
+        Err(_) => {
+            // Editor errors are non-fatal in TUI context
+        }
+    }
+
+    Ok(())
 }
 
 // -- Task detail mutation handlers --
@@ -756,6 +837,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" done", theme.status_desc),
                 Span::styled("  x", theme.status_key),
                 Span::styled(" delete", theme.status_desc),
+                Span::styled("  e", theme.status_key),
+                Span::styled(" edit", theme.status_desc),
             ]);
         }
         (MainView::TaskList(tl), FocusPanel::Main) if tl.is_filtering() => {
@@ -791,6 +874,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" done", theme.status_desc),
                 Span::styled("  x", theme.status_key),
                 Span::styled(" delete", theme.status_desc),
+                Span::styled("  e", theme.status_key),
+                Span::styled(" edit", theme.status_desc),
             ]);
         }
         _ => {
