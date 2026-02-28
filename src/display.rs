@@ -290,35 +290,22 @@ pub fn format_progress_bar(progress: Option<u8>, bar_width: usize) -> Option<Pro
     })
 }
 
-/// Wrap text at a maximum width, preserving word boundaries.
+/// Wrap text at a maximum display-width, preserving word boundaries.
 ///
-/// Words longer than `width` are kept intact on their own line (no
-/// mid-word breaking), matching the CLI's `keep_words(true)` behaviour.
+/// Uses `textwrap` with unicode-width support so multi-cell characters
+/// (emoji, CJK) are measured correctly. Words longer than `width` are
+/// kept intact on their own line (no mid-word breaking).
 pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current = String::new();
-
-    for word in text.split_whitespace() {
-        if current.is_empty() {
-            current = word.to_string();
-        } else if current.len() + 1 + word.len() <= width {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            lines.push(current);
-            current = word.to_string();
-        }
+    if text.is_empty() {
+        return vec![String::new()];
     }
-
-    if !current.is_empty() {
-        lines.push(current);
-    }
-
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-
-    lines
+    let options = textwrap::Options::new(width)
+        .word_separator(textwrap::WordSeparator::AsciiSpace)
+        .break_words(false);
+    textwrap::wrap(text, options)
+        .into_iter()
+        .map(|cow| cow.into_owned())
+        .collect()
 }
 
 #[cfg(test)]

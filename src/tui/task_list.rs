@@ -38,8 +38,8 @@ use crate::icons::{Glyphs, IconTheme};
 use crate::output::{compute_min_prefix_len, compute_subtask_counts};
 use crate::threshold_cache::CachedThresholds;
 
-/// Maximum title width before word-wrapping (matches CLI's 60-char wrap).
-const TITLE_WRAP_WIDTH: usize = 60;
+/// Fallback title wrap width when layout width is unavailable.
+const TITLE_WRAP_FALLBACK: usize = 60;
 
 /// 8-colour palette for distinguishing projects (matches CLI order).
 const PROJECT_PALETTE: [Color; 8] = [
@@ -435,6 +435,36 @@ impl TaskListState {
             t.progress.is_some() || self.work_states.contains_key(&t.id)
         });
 
+        // Column widths (computed once, shared by header, rows, and separator).
+        use ratatui::layout::Constraint;
+        let mut widths: Vec<Constraint> = vec![Constraint::Length(13), Constraint::Fill(1)];
+        if self.recursive {
+            widths.push(Constraint::Length(12));
+        }
+        widths.extend([
+            Constraint::Length(9),
+            Constraint::Length(6),
+            Constraint::Length(10),
+        ]);
+        if show_progress {
+            widths.push(Constraint::Length(15));
+        }
+        widths.push(Constraint::Length(8));
+
+        // Resolve the Title column's actual width so we can word-wrap to fit.
+        // Include .spacing(1) to match Table's default column_spacing.
+        let title_width = {
+            let col_rects = ratatui::layout::Layout::horizontal(&widths)
+                .spacing(1)
+                .split(inner);
+            col_rects[1].width as usize
+        };
+        let title_wrap = if title_width > 0 {
+            title_width
+        } else {
+            TITLE_WRAP_FALLBACK
+        };
+
         // Build header.
         let mut header_cells: Vec<Cell<'_>> = vec![Cell::from("  ID"), Cell::from("Title")];
         if self.recursive {
@@ -454,22 +484,6 @@ impl TaskListState {
         let header = Row::new(header_cells)
             .style(theme.emphasis)
             .bottom_margin(0);
-
-        // Column widths (computed once, shared by rows and separator).
-        use ratatui::layout::Constraint;
-        let mut widths: Vec<Constraint> = vec![Constraint::Length(13), Constraint::Fill(1)];
-        if self.recursive {
-            widths.push(Constraint::Length(12));
-        }
-        widths.extend([
-            Constraint::Length(9),
-            Constraint::Length(6),
-            Constraint::Length(10),
-        ]);
-        if show_progress {
-            widths.push(Constraint::Length(15));
-        }
-        widths.push(Constraint::Length(8));
 
         // Find the boundary between "doing" tasks and the rest.
         let doing_boundary = self
@@ -492,7 +506,8 @@ impl TaskListState {
         {
             let task = &self.tasks[task_idx];
             let is_selected = vis_idx == self.selected && focused;
-            let (mut row, line_count) = self.render_row(task, theme, is_selected, show_progress);
+            let (mut row, line_count) =
+                self.render_row(task, theme, is_selected, show_progress, title_wrap);
 
             // Alternating row tint (skip for selected row — it has its own bg).
             if !is_selected && vis_row % 2 == 1 {
@@ -586,6 +601,7 @@ impl TaskListState {
         theme: &Theme,
         selected: bool,
         show_progress: bool,
+        title_wrap: usize,
     ) -> (Row<'a>, usize) {
         let base = if selected {
             theme.selected
@@ -615,7 +631,7 @@ impl TaskListState {
 
         // ── Title cell: multi-line with word-wrapped title + subtitles ──
         let (title_cell, title_lines) =
-            self.build_title_cell(task, theme, base, row_style, urgency);
+            self.build_title_cell(task, theme, base, row_style, urgency, title_wrap);
 
         // ── Priority cell: impact_glyph + priority_text ──
         let pri_cell = self.build_priority_cell(task, theme, base);
@@ -701,7 +717,8 @@ impl TaskListState {
     /// Build the multi-line title cell matching CLI layout.
     ///
     /// Returns `(Cell, line_count)` so the caller can set the correct
-    /// row height. Title text is word-wrapped at [`TITLE_WRAP_WIDTH`].
+    /// row height. Title text is word-wrapped at `title_wrap` characters
+    /// (resolved from the actual column width at render time).
     fn build_title_cell<'a>(
         &self,
         task: &TaskSummary,
@@ -709,6 +726,7 @@ impl TaskListState {
         base: Style,
         row_style: Style,
         urgency: DeadlineUrgency,
+        title_wrap: usize,
     ) -> (Cell<'a>, usize) {
         let mut lines: Vec<Line<'_>> = Vec::new();
 
@@ -753,8 +771,18 @@ impl TaskListState {
             _ => row_style,
         };
 
-        // Word-wrap the title text at TITLE_WRAP_WIDTH.
-        let wrapped = display::wrap_text(&task.title, TITLE_WRAP_WIDTH);
+        // Word-wrap the title text to fit the allocated column width.
+        // Subtract prefix glyph width so the first line doesn't overflow the cell.
+        let prefix_width: usize = prefix_spans
+            .iter()
+            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
+        let effective_wrap = if prefix_width > 0 {
+            title_wrap.saturating_sub(prefix_width)
+        } else {
+            title_wrap
+        };
+        let wrapped = display::wrap_text(&task.title, effective_wrap);
         for (i, chunk) in wrapped.iter().enumerate() {
             if i == 0 {
                 let mut first_line = prefix_spans.clone();

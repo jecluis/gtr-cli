@@ -1066,41 +1066,12 @@ fn render_simplified_table(
     }
 }
 
-/// Wrap text at specified width, preserving word boundaries.
+/// Wrap text at specified display-width, preserving word boundaries.
+///
+/// Delegates to `display::wrap_text` which uses `textwrap` with
+/// unicode-width support for correct multi-cell character handling.
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current_line = String::new();
-
-    for word in text.split_whitespace() {
-        // Check if adding this word would exceed width
-        let test_line = if current_line.is_empty() {
-            word.to_string()
-        } else {
-            format!("{} {}", current_line, word)
-        };
-
-        if test_line.len() <= width {
-            current_line = test_line;
-        } else {
-            // Current line is full, start new line
-            if !current_line.is_empty() {
-                lines.push(current_line);
-            }
-            current_line = word.to_string();
-        }
-    }
-
-    // Don't forget the last line
-    if !current_line.is_empty() {
-        lines.push(current_line);
-    }
-
-    // If no lines were created (empty text), return single empty line
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-
-    lines
+    crate::display::wrap_text(text, width)
 }
 
 /// Wrap text at `width` columns, indenting continuation lines by `indent` spaces.
