@@ -346,7 +346,12 @@ pub fn update_body(
     Ok(task)
 }
 
-/// Create a new task with minimal fields.
+/// Create a new task.
+///
+/// Basic fields (title, priority, size) are required. Extended fields
+/// (impact, joy, labels, parent_id) are optional and fall back to
+/// defaults when `None`.
+#[allow(clippy::too_many_arguments)]
 pub fn create_task(
     storage: &TaskStorage,
     cache: &TaskCache,
@@ -354,6 +359,10 @@ pub fn create_task(
     title: &str,
     priority: &str,
     size: &str,
+    impact: Option<u8>,
+    joy: Option<u8>,
+    labels: Vec<String>,
+    parent_id: Option<String>,
 ) -> Result<Task> {
     let task_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -376,10 +385,10 @@ pub fn create_task(
         log: vec![],
         current_work_state: None,
         progress: None,
-        impact: 3,
-        joy: 5,
-        parent_id: None,
-        labels: vec![],
+        impact: impact.unwrap_or(3),
+        joy: joy.unwrap_or(5),
+        parent_id,
+        labels,
         references: vec![],
     };
 

@@ -38,7 +38,7 @@ use crate::config::Config;
 use crate::storage::{StorageConfig, TaskStorage};
 use crate::tui::command_bar::CommandBarState;
 use crate::tui::confirm::ConfirmState;
-use crate::tui::create_form::CreateFormState;
+use crate::tui::create_form::{FormField, TaskFormState};
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::sidebar::{SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
@@ -114,7 +114,7 @@ pub struct AppState {
     pub focus: FocusPanel,
     pub main_view: MainView,
     pub confirm: Option<ConfirmState>,
-    pub create_form: Option<CreateFormState>,
+    pub create_form: Option<TaskFormState>,
     pub command_bar: Option<CommandBarState>,
     pub sync_status: SyncStatus,
 }
@@ -267,7 +267,7 @@ fn handle_event(
 
     // Create form intercepts all input when active.
     if state.create_form.is_some() {
-        return handle_create_form_input(key.code, state, ctx);
+        return handle_create_form_input(key, state, ctx);
     }
 
     // Command bar intercepts all input when active.
@@ -390,7 +390,7 @@ fn handle_event(
                     return handle_editor_from_list(state, ctx);
                 }
                 KeyCode::Char('n') => {
-                    return handle_new_task(state);
+                    return handle_new_task(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
@@ -839,6 +839,10 @@ fn execute_command(
                 &title,
                 "later",
                 "M",
+                None,
+                None,
+                vec![],
+                None,
             )?;
 
             match &mut state.main_view {
@@ -861,27 +865,70 @@ fn execute_command(
 
 // -- Create form handlers --
 
-fn handle_new_task(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+fn handle_new_task(state: &mut AppState, ctx: &Global) -> Result<Control<AppEvent>, crate::Error> {
     let MainView::TaskList(ref task_list) = state.main_view else {
         return Ok(Control::Continue);
     };
     let project_id = task_list.project_id.clone();
     let project_name = task_list.project_name.clone();
-    state.create_form = Some(CreateFormState::new(project_id, project_name));
+    state.create_form = Some(TaskFormState::new(
+        project_id,
+        project_name,
+        ctx.config.icon_theme,
+    ));
     Ok(Control::Changed)
 }
 
 fn handle_create_form_input(
-    code: KeyCode,
+    key: &crossterm::event::KeyEvent,
     state: &mut AppState,
     ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
+    let code = key.code;
+    let mods = key.modifiers;
+
+    // Ctrl-Right/Left for page switching (always available)
+    if mods.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Right => {
+                if let Some(ref mut form) = state.create_form {
+                    form.next_page();
+                }
+                return Ok(Control::Changed);
+            }
+            KeyCode::Left => {
+                if let Some(ref mut form) = state.create_form {
+                    form.prev_page();
+                }
+                return Ok(Control::Changed);
+            }
+            _ => {}
+        }
+    }
+
     match code {
         KeyCode::Esc => {
             state.create_form = None;
             Ok(Control::Changed)
         }
         KeyCode::Enter => {
+            let focused = state.create_form.as_ref().unwrap().focused();
+
+            // Cancel button
+            if focused == FormField::Cancel {
+                state.create_form = None;
+                return Ok(Control::Changed);
+            }
+
+            // When focused on Labels with pending input, commit the label
+            if let Some(ref mut form) = state.create_form
+                && focused == FormField::Labels
+                && form.has_pending_label()
+            {
+                form.commit_label();
+                return Ok(Control::Changed);
+            }
+
             let form = state.create_form.as_ref().unwrap();
             if !form.can_submit() {
                 return Ok(Control::Continue);
@@ -890,7 +937,26 @@ fn handle_create_form_input(
             let title = form.title().to_string();
             let priority = form.priority().to_string();
             let size = form.size().to_string();
+            let impact = form.impact();
+            let joy = form.joy();
+            let labels = form.labels().to_vec();
+            let parent_id = form.parent_id().map(String::from);
             state.create_form = None;
+
+            // Auto-register new labels in the project registry
+            if !labels.is_empty() {
+                let mut project_labels = ctx.cache.get_project_labels(&project_id)?;
+                let mut changed = false;
+                for label in &labels {
+                    if !project_labels.contains(label) {
+                        project_labels.push(label.clone());
+                        changed = true;
+                    }
+                }
+                if changed {
+                    ctx.cache.set_project_labels(&project_id, &project_labels)?;
+                }
+            }
 
             crate::mutations::create_task(
                 &ctx.storage,
@@ -899,6 +965,10 @@ fn handle_create_form_input(
                 &title,
                 &priority,
                 &size,
+                Some(impact),
+                Some(joy),
+                labels,
+                parent_id,
             )?;
 
             if let MainView::TaskList(ref mut list) = state.main_view {
@@ -922,6 +992,22 @@ fn handle_create_form_input(
         KeyCode::Backspace => {
             if let Some(ref mut form) = state.create_form {
                 form.backspace();
+                resolve_parent_if_needed(form, &ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Left | KeyCode::Right => {
+            if let Some(ref mut form) = state.create_form {
+                match form.focused() {
+                    // Text fields: Left/Right would move cursor — not
+                    // implemented yet, so ignore.
+                    FormField::Title | FormField::Labels | FormField::Parent => {}
+                    // Numeric/toggle fields: adjust value
+                    _ => {
+                        let delta = if code == KeyCode::Right { 1 } else { -1 };
+                        form.adjust_field(delta);
+                    }
+                }
             }
             Ok(Control::Changed)
         }
@@ -934,10 +1020,39 @@ fn handle_create_form_input(
         KeyCode::Char(c) => {
             if let Some(ref mut form) = state.create_form {
                 form.char_input(c);
+                resolve_parent_if_needed(form, &ctx.cache);
             }
             Ok(Control::Changed)
         }
         _ => Ok(Control::Continue),
+    }
+}
+
+/// Attempt to resolve a parent ID after typing in the parent field.
+fn resolve_parent_if_needed(form: &mut TaskFormState, cache: &TaskCache) {
+    if form.focused() != FormField::Parent {
+        return;
+    }
+    let input = form.parent_input();
+    if input.is_empty() {
+        form.set_resolved_parent(None);
+        form.set_parent_id(None);
+        return;
+    }
+    match crate::utils::resolve_task_id_from_cache(cache, input) {
+        Ok(full_id) => {
+            let title = cache
+                .get_task_summary(&full_id)
+                .ok()
+                .flatten()
+                .map(|s| s.title);
+            form.set_resolved_parent(title);
+            form.set_parent_id(Some(full_id));
+        }
+        Err(_) => {
+            form.set_resolved_parent(None);
+            form.set_parent_id(None);
+        }
     }
 }
 
