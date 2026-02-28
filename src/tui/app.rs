@@ -30,6 +30,7 @@ use ratatui::widgets::{Block, Paragraph, Widget};
 use crate::cache::TaskCache;
 use crate::config::Config;
 use crate::storage::{StorageConfig, TaskStorage};
+use crate::tui::confirm::ConfirmState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::sidebar::{SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
@@ -93,6 +94,7 @@ pub struct AppState {
     pub sidebar: SidebarState,
     pub focus: FocusPanel,
     pub main_view: MainView,
+    pub confirm: Option<ConfirmState>,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
@@ -114,6 +116,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         sidebar,
         focus: FocusPanel::Sidebar,
         main_view: MainView::Dashboard,
+        confirm: None,
     };
 
     run_tui(
@@ -162,6 +165,11 @@ fn render(
     // Status bar
     render_status_bar(state, layout[1], buf);
 
+    // Confirmation dialog overlay (above content, below which-key)
+    if let Some(ref confirm) = state.confirm {
+        confirm.render(theme, area, buf);
+    }
+
     // Which-key popup when a prefix key is pending
     if let Some(node) = state.keymap.pending_node() {
         keymap::render_which_key(node, theme, area, buf);
@@ -207,6 +215,11 @@ fn handle_event(
     // Ctrl-c always quits regardless of keymap state.
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Ok(Control::Quit);
+    }
+
+    // Confirmation dialog intercepts all input when active.
+    if state.confirm.is_some() {
+        return handle_confirm_input(key.code, state, ctx);
     }
 
     // Tab toggles focus between sidebar and main panel.
@@ -417,6 +430,96 @@ fn handle_task_list_select(
         unreachable!();
     };
     state.main_view = MainView::TaskDetail { detail, list };
+
+    Ok(Control::Changed)
+}
+
+/// Handle key input while the confirmation dialog is active.
+fn handle_confirm_input(
+    code: KeyCode,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match code {
+        KeyCode::Char('n') | KeyCode::Esc => {
+            state.confirm = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Char('y') => {
+            let confirm = state.confirm.take().unwrap();
+            execute_confirmed_action(confirm, state, ctx)
+        }
+        KeyCode::Enter => {
+            if state.confirm.as_ref().unwrap().is_confirmed() {
+                let confirm = state.confirm.take().unwrap();
+                execute_confirmed_action(confirm, state, ctx)
+            } else {
+                state.confirm = None;
+                Ok(Control::Changed)
+            }
+        }
+        KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::Char('h') | KeyCode::Char('l') => {
+            if let Some(ref mut confirm) = state.confirm {
+                confirm.toggle();
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
+/// Execute the confirmed destructive action and refresh the view.
+fn execute_confirmed_action(
+    confirm: ConfirmState,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::mutations;
+    use crate::tui::confirm::PendingAction;
+
+    match confirm.action {
+        PendingAction::Done { ref task_id, .. } => {
+            mutations::mark_done(&ctx.storage, &ctx.cache, task_id)?;
+        }
+        PendingAction::Delete { ref task_id, .. } => {
+            mutations::delete_task(&ctx.storage, &ctx.cache, task_id)?;
+        }
+    }
+
+    // If we're in detail view for the affected task, go back to list
+    let affected_id = match &confirm.action {
+        PendingAction::Done { task_id, .. } | PendingAction::Delete { task_id, .. } => {
+            task_id.clone()
+        }
+    };
+
+    match &state.main_view {
+        MainView::TaskDetail { detail, .. } if detail.task.id == affected_id => {
+            // Navigate back and refresh
+            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+            if let MainView::TaskDetail { mut list, .. } = prev {
+                list.refresh(&ctx.cache, &ctx.config);
+                state.main_view = MainView::TaskList(list);
+            }
+        }
+        MainView::TaskList(_) => {
+            if let MainView::TaskList(ref mut list) = state.main_view {
+                list.refresh(&ctx.cache, &ctx.config);
+            }
+        }
+        MainView::TaskDetail { .. } => {
+            // Detail for a different task — refresh detail and list
+            if let MainView::TaskDetail {
+                ref mut detail,
+                ref mut list,
+            } = state.main_view
+            {
+                detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
+                list.refresh(&ctx.cache, &ctx.config);
+            }
+        }
+        _ => {}
+    }
 
     Ok(Control::Changed)
 }

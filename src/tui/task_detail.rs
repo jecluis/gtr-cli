@@ -67,7 +67,7 @@ struct SubtaskInfo {
 /// State for the task detail view.
 pub struct TaskDetailState {
     /// The full task being displayed.
-    task: Task,
+    pub task: Task,
     /// Project name for display context.
     pub project_name: String,
     /// Scroll offset for the content area.
@@ -195,6 +195,22 @@ impl TaskDetailState {
     /// Scroll down by a page.
     pub fn scroll_page_down(&mut self, page_size: u16) {
         self.scroll = self.scroll.saturating_add(page_size);
+    }
+
+    /// Reload the task from storage, preserving scroll position.
+    pub fn refresh(
+        &mut self,
+        storage: &crate::storage::TaskStorage,
+        cache: &TaskCache,
+        config: &Config,
+    ) {
+        let task_id = self.task.id.clone();
+        if let Ok(task) = storage.load_task(&task_id) {
+            let project_name = self.project_name.clone();
+            let scroll = self.scroll;
+            *self = Self::new(task, project_name, cache, config);
+            self.scroll = scroll;
+        }
     }
 
     /// Render the detail view into the given area.

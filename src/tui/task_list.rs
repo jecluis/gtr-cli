@@ -337,6 +337,101 @@ impl TaskListState {
             .map(|t| t.id.as_str())
     }
 
+    /// Get the title of the currently selected task.
+    pub fn selected_task_title(&self) -> Option<&str> {
+        self.filtered_indices
+            .get(self.selected)
+            .and_then(|&idx| self.tasks.get(idx))
+            .map(|t| t.title.as_str())
+    }
+
+    /// Rebuild the task list from cache, preserving selection by task ID.
+    pub fn refresh(&mut self, cache: &TaskCache, config: &Config) {
+        // Remember selected task ID to restore position after reload.
+        let prev_id = self.selected_task_id().map(String::from);
+
+        let tasks: Vec<TaskSummary> = if self.recursive {
+            let descendants = cache
+                .get_project_descendants(&self.project_id)
+                .unwrap_or_default();
+            let mut all_pids = vec![self.project_id.clone()];
+            all_pids.extend(descendants);
+            let mut all_tasks = Vec::new();
+            for pid in &all_pids {
+                if let Ok(list) = cache.list_tasks(pid) {
+                    all_tasks.extend(
+                        list.into_iter()
+                            .filter(|t| t.done.is_none() && t.deleted.is_none()),
+                    );
+                }
+            }
+            all_tasks
+        } else {
+            cache
+                .list_tasks(&self.project_id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| t.done.is_none() && t.deleted.is_none())
+                .collect()
+        };
+
+        self.tasks = tasks;
+
+        // Refresh work states.
+        let active = cache.get_active_work_tasks().unwrap_or_default();
+        self.work_states = active.into_iter().map(|a| (a.id, a.work_state)).collect();
+
+        // Re-sort.
+        let work_states = &self.work_states;
+        self.tasks.sort_by(|a, b| {
+            let ws_a = work_states.get(&a.id).map(String::as_str);
+            let ws_b = work_states.get(&b.id).map(String::as_str);
+            let rank = |ws: Option<&str>| match ws {
+                Some("doing") => 0,
+                Some("stopped") => 1,
+                _ => 2,
+            };
+            rank(ws_a)
+                .cmp(&rank(ws_b))
+                .then_with(|| {
+                    display::priority_rank(&a.priority).cmp(&display::priority_rank(&b.priority))
+                })
+                .then_with(|| display::cmp_deadline(a.deadline.as_deref(), b.deadline.as_deref()))
+                .then_with(|| b.modified.cmp(&a.modified))
+        });
+
+        // Rebuild subtask counts and label colors.
+        self.subtask_counts =
+            compute_subtask_counts(self.tasks.iter().map(|t| t.parent_id.as_deref()));
+        self.label_color_map =
+            display::assign_label_colors(self.tasks.iter().map(|t| t.labels.as_slice()))
+                .into_iter()
+                .map(|(label, idx)| (label.to_string(), idx))
+                .collect();
+
+        // Recompute prefix length.
+        let all_ids = cache.all_task_ids().unwrap_or_default();
+        self.prefix_len = compute_min_prefix_len(&all_ids);
+
+        // Recompute thresholds.
+        self.thresholds =
+            crate::threshold_cache::read_cache(config).unwrap_or_else(|| CachedThresholds {
+                deadline: crate::utils::default_thresholds(),
+                impact_labels: crate::utils::default_impact_labels(),
+                impact_multipliers: crate::utils::default_impact_multipliers(),
+            });
+
+        // Reset filter.
+        self.filter = None;
+        self.filtered_indices = (0..self.tasks.len()).collect();
+
+        // Restore selection by ID if possible.
+        self.selected = prev_id
+            .and_then(|id| self.tasks.iter().position(|t| t.id == id))
+            .unwrap_or(0);
+        self.table_state.select(Some(self.selected));
+    }
+
     /// Whether the filter input is currently active.
     pub fn is_filtering(&self) -> bool {
         self.filter.is_some()

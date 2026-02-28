@@ -22,6 +22,7 @@
 //! tasks and documents.
 
 mod app;
+pub mod confirm;
 pub mod keymap;
 pub mod sidebar;
 pub mod task_detail;
