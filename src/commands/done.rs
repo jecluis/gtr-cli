@@ -17,19 +17,14 @@
 
 //! Done command implementation.
 
-use chrono::Utc;
 use colored::Colorize;
-
-use tracing::warn;
 
 use crate::Result;
 use crate::client::Client;
 use crate::config::Config;
-use crate::hierarchy;
 use crate::icons::Icons;
 use crate::local::LocalContext;
-use crate::models::{LogEntry, LogEntryType, TaskStatus};
-use crate::{output, utils};
+use crate::{mutations, output, utils};
 
 /// Mark one or more tasks as done (local-first with optional sync).
 pub async fn run(config: &Config, mut task_ids: Vec<String>, no_sync: bool) -> Result<()> {
@@ -101,94 +96,23 @@ async fn mark_task_done(
 
     let ctx = LocalContext::new(config, !no_sync)?;
 
-    // Load task
-    let mut task = ctx.load_task(&client, &full_id).await?;
-    let title = task.display_title(&icons);
+    // Ensure task is available locally
+    ctx.load_task(&client, &full_id).await?;
 
-    // Mark as done
-    let now = Utc::now();
-    task.done = Some(now.to_rfc3339());
-    task.modified = now.to_rfc3339();
-    task.version += 1;
+    let result = mutations::mark_done(&ctx.storage, &ctx.cache, &full_id)?;
+    let title = result.task.display_title(&icons);
 
-    // Clear work state when marking as done
-    task.current_work_state = None;
-
-    // Add log entry for status change
-    task.log.push(LogEntry {
-        timestamp: now,
-        entry_type: LogEntryType::StatusChanged {
-            status: TaskStatus::Done,
-        },
-        source: crate::models::LogSource::User,
-    });
-
-    // Auto-set progress to 100%
-    let old_progress = task.progress;
-    task.progress = Some(100);
-    task.log.push(LogEntry {
-        timestamp: now,
-        entry_type: LogEntryType::ProgressChanged {
-            from: old_progress,
-            to: Some(100),
-        },
-        source: crate::models::LogSource::User,
-    });
-
-    // Save locally
-    ctx.storage.update_task(&task)?;
-    ctx.cache.upsert_task(&task, true)?;
-
-    // Cascade completion to all descendants
-    let descendants = ctx.cache.get_all_descendants(&full_id)?;
-    let descendant_count = descendants.len();
-    for desc_id in descendants {
-        match ctx.storage.load_task(&desc_id) {
-            Ok(mut desc_task) => {
-                if desc_task.done.is_some() {
-                    continue; // already done
-                }
-                desc_task.done = Some(now.to_rfc3339());
-                desc_task.modified = now.to_rfc3339();
-                desc_task.version += 1;
-                desc_task.current_work_state = None;
-                let old_prog = desc_task.progress;
-                desc_task.progress = Some(100);
-                desc_task.log.push(LogEntry {
-                    timestamp: now,
-                    entry_type: LogEntryType::StatusChanged {
-                        status: TaskStatus::Done,
-                    },
-                    source: crate::models::LogSource::User,
-                });
-                desc_task.log.push(LogEntry {
-                    timestamp: now,
-                    entry_type: LogEntryType::ProgressChanged {
-                        from: old_prog,
-                        to: Some(100),
-                    },
-                    source: crate::models::LogSource::User,
-                });
-                ctx.storage.update_task(&desc_task)?;
-                ctx.cache.upsert_task(&desc_task, true)?;
-            }
-            Err(e) => {
-                warn!(task_id = %desc_id, error = %e, "failed to cascade done to descendant");
-            }
-        }
-    }
-
-    if descendant_count > 0 {
+    if result.descendants_completed > 0 {
         println!(
             "  {}",
-            format!("+ {} subtask(s) also marked done", descendant_count)
-                .green()
-                .bold()
+            format!(
+                "+ {} subtask(s) also marked done",
+                result.descendants_completed
+            )
+            .green()
+            .bold()
         );
     }
-
-    // Update ancestor progress (this task is now done, parent's progress changes)
-    hierarchy::update_ancestor_progress(&ctx.cache, &ctx.storage, &full_id)?;
 
     // Sync
     if !no_sync {

@@ -17,7 +17,6 @@
 
 //! Stop command implementation.
 
-use chrono::Utc;
 use colored::Colorize;
 use dialoguer::Select;
 
@@ -26,8 +25,8 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
 use crate::local::LocalContext;
-use crate::models::{LogEntry, LogEntryType, Task, WorkState};
-use crate::{output, utils};
+use crate::models::Task;
+use crate::{mutations, output, utils};
 
 /// Stop working on a task (clear work state).
 ///
@@ -43,35 +42,21 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
         resolve_doing_task(&client, &ctx, &icons).await?
     };
 
-    let mut task = ctx.load_task(&client, &full_id).await?;
+    // Ensure task is available locally
+    ctx.load_task(&client, &full_id).await?;
 
-    if task.current_work_state.as_deref() != Some("doing") {
+    let result = mutations::stop_task(&ctx.storage, &ctx.cache, &full_id)?;
+
+    if result.was_noop {
         let all_ids = ctx.cache.all_task_ids()?;
         let prefix_len = output::compute_min_prefix_len(&all_ids);
         println!(
             "{} {} is not currently in progress",
             icons.info.blue(),
-            output::format_full_id(&task.id, prefix_len)
+            output::format_full_id(&result.task.id, prefix_len)
         );
         return Ok(());
     }
-
-    let now = Utc::now();
-    task.current_work_state = Some("stopped".to_string());
-    task.modified = now.to_rfc3339();
-    task.version += 1;
-
-    // Add log entry for work state change
-    task.log.push(LogEntry {
-        timestamp: now,
-        entry_type: LogEntryType::WorkStateChanged {
-            state: WorkState::Stopped,
-        },
-        source: crate::models::LogSource::User,
-    });
-
-    ctx.storage.update_task(&task)?;
-    ctx.cache.upsert_task(&task, true)?;
 
     println!(
         "{}",
@@ -81,9 +66,9 @@ pub async fn run(config: &Config, task_id: Option<String>, no_sync: bool) -> Res
     let prefix_len = output::compute_min_prefix_len(&all_ids);
     println!(
         "  ID:       {}",
-        output::format_full_id(&task.id, prefix_len)
+        output::format_full_id(&result.task.id, prefix_len)
     );
-    println!("  Title:    {}", task.display_title(&icons));
+    println!("  Title:    {}", result.task.display_title(&icons));
     println!("  Status:   {}", "stopped".dimmed());
 
     if !no_sync {

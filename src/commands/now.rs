@@ -17,7 +17,6 @@
 
 //! Now command implementation.
 
-use chrono::Utc;
 use colored::Colorize;
 
 use crate::Result;
@@ -25,7 +24,7 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
 use crate::local::LocalContext;
-use crate::utils;
+use crate::{mutations, utils};
 
 /// Set task priority to "now" (local-first with optional sync).
 pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
@@ -35,19 +34,10 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
 
     let ctx = LocalContext::new(config, !no_sync)?;
 
-    // Load task
-    let mut task = ctx.load_task(&client, &full_id).await?;
+    // Ensure task is available locally
+    ctx.load_task(&client, &full_id).await?;
 
-    let old_priority = task.priority.clone();
-
-    // Set priority to "now"
-    task.priority = "now".to_string();
-    task.modified = Utc::now().to_rfc3339();
-    task.version += 1;
-
-    // Save locally
-    ctx.storage.update_task(&task)?;
-    ctx.cache.upsert_task(&task, true)?;
+    let result = mutations::set_priority(&ctx.storage, &ctx.cache, &full_id, "now")?;
 
     println!(
         "{}",
@@ -55,12 +45,12 @@ pub async fn run(config: &Config, task_id: &str, no_sync: bool) -> Result<()> {
             .green()
             .bold()
     );
-    println!("  ID:       {}", task.id.cyan());
-    println!("  Title:    {}", task.display_title(&icons));
+    println!("  ID:       {}", result.task.id.cyan());
+    println!("  Title:    {}", result.task.display_title(&icons));
     println!(
         "  Priority: {} → {}",
-        old_priority.dimmed().strikethrough(),
-        task.priority.red()
+        result.old_priority.dimmed().strikethrough(),
+        result.task.priority.red()
     );
 
     // Sync

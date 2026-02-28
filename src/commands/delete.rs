@@ -26,7 +26,7 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
 use crate::local::LocalContext;
-use crate::{output, utils};
+use crate::{mutations, output, utils};
 
 /// Delete a task (tombstone, local-first with optional sync).
 ///
@@ -41,32 +41,32 @@ pub async fn run(config: &Config, task_id: &str, recursive: bool, no_sync: bool)
 
     let ctx = LocalContext::new(config, !no_sync)?;
 
-    let mut task = ctx.load_task(&client, &full_id).await?;
-    let now = Utc::now();
-
-    // Capture parent before deleting (children will be promoted here)
-    let deleted_parent_id = task.parent_id.clone();
-
-    task.deleted = Some(now.to_rfc3339());
-    task.modified = now.to_rfc3339();
-    task.version += 1;
-
-    ctx.storage.update_task(&task)?;
-    ctx.cache.upsert_task(&task, true)?;
-
-    println!(
-        "{}",
-        format!("{} Task deleted locally!", icons.success)
-            .green()
-            .bold()
-    );
-    let all_ids = ctx.cache.all_task_ids()?;
-    let prefix_len = output::compute_min_prefix_len(&all_ids);
-    println!("  ID:    {}", output::format_full_id(&task.id, prefix_len));
-    println!("  Title: {}", task.display_title(&icons));
+    // Ensure task is available locally
+    ctx.load_task(&client, &full_id).await?;
 
     if recursive {
-        // Cascade delete to all descendants
+        // Recursive delete: tombstone task + all descendants (CLI-specific)
+        let mut task = ctx.storage.load_task(&full_id)?;
+        let now = Utc::now();
+
+        task.deleted = Some(now.to_rfc3339());
+        task.modified = now.to_rfc3339();
+        task.version += 1;
+
+        ctx.storage.update_task(&task)?;
+        ctx.cache.upsert_task(&task, true)?;
+
+        println!(
+            "{}",
+            format!("{} Task deleted locally!", icons.success)
+                .green()
+                .bold()
+        );
+        let all_ids = ctx.cache.all_task_ids()?;
+        let prefix_len = output::compute_min_prefix_len(&all_ids);
+        println!("  ID:    {}", output::format_full_id(&task.id, prefix_len));
+        println!("  Title: {}", task.display_title(&icons));
+
         let descendants = ctx.cache.get_all_descendants(&full_id)?;
         let count = descendants.len();
         for desc_id in descendants {
@@ -95,31 +95,37 @@ pub async fn run(config: &Config, task_id: &str, recursive: bool, no_sync: bool)
             );
         }
     } else {
-        // Promote direct children to the deleted task's parent
-        let children = ctx.cache.get_children(&full_id)?;
-        let count = children.len();
-        for child_summary in &children {
-            match ctx.storage.load_task(&child_summary.id) {
-                Ok(mut child_task) => {
-                    child_task.parent_id = deleted_parent_id.clone();
-                    child_task.modified = now.to_rfc3339();
-                    child_task.version += 1;
-                    ctx.storage.update_task(&child_task)?;
-                    ctx.cache.upsert_task(&child_task, true)?;
-                }
-                Err(e) => {
-                    warn!(task_id = %child_summary.id, error = %e, "failed to promote child");
-                }
-            }
-        }
-        if count > 0 {
-            let target = deleted_parent_id
+        // Non-recursive: tombstone + promote children (shared logic)
+        let result = mutations::delete_task(&ctx.storage, &ctx.cache, &full_id)?;
+
+        println!(
+            "{}",
+            format!("{} Task deleted locally!", icons.success)
+                .green()
+                .bold()
+        );
+        let all_ids = ctx.cache.all_task_ids()?;
+        let prefix_len = output::compute_min_prefix_len(&all_ids);
+        println!(
+            "  ID:    {}",
+            output::format_full_id(&result.task.id, prefix_len)
+        );
+        println!("  Title: {}", result.task.display_title(&icons));
+
+        if result.children_promoted > 0 {
+            let target = result
+                .task
+                .parent_id
                 .as_deref()
                 .map(|id| &id[..8])
                 .unwrap_or("root");
             println!(
                 "  {}",
-                format!("{} child(ren) promoted to {}", count, target).dimmed()
+                format!(
+                    "{} child(ren) promoted to {}",
+                    result.children_promoted, target
+                )
+                .dimmed()
             );
         }
     }

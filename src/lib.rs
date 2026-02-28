@@ -32,6 +32,7 @@ pub mod local;
 pub mod logging;
 pub mod markdown;
 pub mod models;
+pub mod mutations;
 pub mod output;
 pub mod promotion;
 pub mod references;
