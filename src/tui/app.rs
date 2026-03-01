@@ -40,6 +40,7 @@ use crate::tui::command_bar::CommandBarState;
 use crate::tui::confirm::ConfirmState;
 use crate::tui::create_form::{FormField, TaskFormState};
 use crate::tui::doc_detail::DocumentDetailState;
+use crate::tui::doc_form::{DocFormField, DocFormState};
 use crate::tui::doc_list::DocumentListState;
 use crate::tui::feels::FeelsDialogState;
 use crate::tui::help::HelpOverlayState;
@@ -130,6 +131,7 @@ pub struct AppState {
     pub main_view: MainView,
     pub confirm: Option<ConfirmState>,
     pub create_form: Option<TaskFormState>,
+    pub doc_form: Option<DocFormState>,
     pub command_bar: Option<CommandBarState>,
     pub search: Option<SearchOverlayState>,
     pub feels: Option<FeelsDialogState>,
@@ -160,6 +162,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         main_view: MainView::Dashboard,
         confirm: None,
         create_form: None,
+        doc_form: None,
         command_bar: None,
         search: None,
         feels: None,
@@ -247,6 +250,9 @@ fn render(
         confirm.render(theme, area, buf);
     }
     if let Some(ref form) = state.create_form {
+        form.render(theme, area, buf);
+    }
+    if let Some(ref form) = state.doc_form {
         form.render(theme, area, buf);
     }
 
@@ -354,6 +360,11 @@ fn handle_event(
     // Create form intercepts all input when active.
     if state.create_form.is_some() {
         return handle_create_form_input(key, state, ctx);
+    }
+
+    // Document form intercepts all input when active.
+    if state.doc_form.is_some() {
+        return handle_doc_form_input(key, state, ctx);
     }
 
     // Command bar intercepts all input when active.
@@ -1623,6 +1634,162 @@ fn resolve_parent_if_needed(form: &mut TaskFormState, cache: &TaskCache) {
                 .ok()
                 .flatten()
                 .map(|s| s.title);
+            form.set_resolved_parent(title);
+            form.set_parent_id(Some(full_id));
+        }
+        Err(_) => {
+            form.set_resolved_parent(None);
+            form.set_parent_id(None);
+        }
+    }
+}
+
+// -- Document form handlers --
+
+fn handle_doc_form_input(
+    key: &crossterm::event::KeyEvent,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let code = key.code;
+
+    match code {
+        KeyCode::Esc => {
+            state.doc_form = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            let focused = state.doc_form.as_ref().unwrap().focused();
+
+            // Cancel button
+            if focused == DocFormField::Cancel {
+                state.doc_form = None;
+                return Ok(Control::Changed);
+            }
+
+            // When focused on Labels with pending input, commit the label
+            if let Some(ref mut form) = state.doc_form
+                && focused == DocFormField::Labels
+                && form.has_pending_label()
+            {
+                form.commit_label();
+                return Ok(Control::Changed);
+            }
+
+            let form = state.doc_form.as_ref().unwrap();
+            if !form.can_submit() {
+                return Ok(Control::Continue);
+            }
+
+            match form.doc_id() {
+                Some(_) => submit_doc_update_form(state, ctx),
+                None => submit_doc_create_form(state, ctx),
+            }
+        }
+        KeyCode::Tab => {
+            if let Some(ref mut form) = state.doc_form {
+                form.focus_next();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::BackTab => {
+            if let Some(ref mut form) = state.doc_form {
+                form.focus_prev();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Backspace => {
+            if let Some(ref mut form) = state.doc_form {
+                form.backspace();
+                resolve_doc_parent_if_needed(form, &ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(c) => {
+            if let Some(ref mut form) = state.doc_form {
+                form.char_input(c);
+                resolve_doc_parent_if_needed(form, &ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
+fn submit_doc_create_form(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let form = state.doc_form.as_ref().unwrap();
+    let namespace_id = match form.mode() {
+        crate::tui::doc_form::DocFormMode::Create { namespace_id } => namespace_id.clone(),
+        crate::tui::doc_form::DocFormMode::Update { .. } => unreachable!(),
+    };
+    let title = form.title().to_string();
+    let labels = form.labels().to_vec();
+    let parent_id = form.parent_id().map(String::from);
+    state.doc_form = None;
+
+    crate::mutations::create_document(
+        &ctx.storage,
+        &ctx.cache,
+        &namespace_id,
+        &title,
+        String::new(),
+        labels,
+        parent_id,
+    )?;
+
+    refresh_current_view(state, ctx);
+    trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+fn submit_doc_update_form(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let form = state.doc_form.as_ref().unwrap();
+    let doc_id = form.doc_id().unwrap().to_string();
+
+    if !form.has_changes() {
+        state.doc_form = None;
+        return Ok(Control::Changed);
+    }
+
+    let changed_title = form.changed_title();
+    let changed_labels = form.changed_labels();
+    let changed_parent_id = form.changed_parent_id();
+    state.doc_form = None;
+
+    crate::mutations::update_document_metadata(
+        &ctx.storage,
+        &ctx.cache,
+        &doc_id,
+        changed_title,
+        changed_labels,
+        changed_parent_id,
+    )?;
+
+    refresh_current_view(state, ctx);
+    trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+/// Attempt to resolve a document parent ID after typing in the parent field.
+fn resolve_doc_parent_if_needed(form: &mut DocFormState, cache: &TaskCache) {
+    if form.focused() != DocFormField::Parent {
+        return;
+    }
+    let input = form.parent_input();
+    if input.is_empty() {
+        form.set_resolved_parent(None);
+        form.set_parent_id(None);
+        return;
+    }
+    match crate::utils::resolve_document_id(cache, input) {
+        Ok(full_id) => {
+            let title = cache.get_document(&full_id).ok().flatten().map(|d| d.title);
             form.set_resolved_parent(title);
             form.set_parent_id(Some(full_id));
         }

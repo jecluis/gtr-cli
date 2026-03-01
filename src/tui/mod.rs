@@ -26,6 +26,7 @@ pub mod command_bar;
 pub mod confirm;
 pub mod create_form;
 pub mod doc_detail;
+pub mod doc_form;
 pub mod doc_list;
 pub mod feels;
 pub mod help;
