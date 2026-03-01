@@ -27,7 +27,7 @@ use ratatui::widgets::{Block, Clear, Tabs, Widget};
 use crate::display;
 use crate::icons::{Glyphs, IconTheme};
 use crate::models::Task;
-use crate::tui::theme::Theme;
+use crate::tui::theme::{LABEL_PALETTE, Theme};
 
 const SIZES: [&str; 4] = ["S", "M", "L", "XL"];
 
@@ -702,21 +702,6 @@ impl TaskFormState {
 
     fn render_labels_field(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
         use crate::display::LABEL_PALETTE_LEN;
-
-        const LABEL_PALETTE: [Color; 12] = [
-            Color::Cyan,
-            Color::Yellow,
-            Color::Green,
-            Color::Magenta,
-            Color::Blue,
-            Color::Red,
-            Color::LightCyan,
-            Color::LightYellow,
-            Color::LightGreen,
-            Color::LightMagenta,
-            Color::LightBlue,
-            Color::LightRed,
-        ];
 
         let label_style = field_label_style(self.focused == FormField::Labels, theme);
 

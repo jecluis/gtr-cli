@@ -31,31 +31,15 @@ use ratatui::widgets::{
     Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
 };
 
-use super::theme::Theme;
+use super::theme::{LABEL_PALETTE, Theme};
 use crate::cache::TaskCache;
 use crate::config::Config;
-use crate::display::{self, DeadlineUrgency, LABEL_PALETTE_LEN, LabelColorIndex};
+use crate::display::{self, DeadlineUrgency, LabelColorIndex};
 use crate::icons::{Glyphs, IconTheme};
 use crate::models::{LogEntryType, Task};
 use crate::output::compute_min_prefix_len;
 use crate::promotion;
 use crate::threshold_cache::CachedThresholds;
-
-/// TUI label palette matching CLI's 12-colour palette order.
-const LABEL_PALETTE: [Color; LABEL_PALETTE_LEN] = [
-    Color::Cyan,
-    Color::Yellow,
-    Color::Green,
-    Color::Magenta,
-    Color::Blue,
-    Color::Red,
-    Color::LightCyan,
-    Color::LightYellow,
-    Color::LightGreen,
-    Color::LightMagenta,
-    Color::LightBlue,
-    Color::LightRed,
-];
 
 /// Resolved subtask with its title and done status.
 struct SubtaskInfo {

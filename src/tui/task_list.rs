@@ -30,7 +30,7 @@ use ratatui::widgets::{
     Table, TableState, Widget,
 };
 
-use super::theme::Theme;
+use super::theme::{LABEL_PALETTE, Theme};
 use crate::cache::{TaskCache, TaskSummary};
 use crate::config::Config;
 use crate::display::{self, DeadlineUrgency, LabelColorIndex};
@@ -1010,22 +1010,6 @@ impl TaskListState {
 
     /// Build labels subtitle: "  🏷 label1, label2, label3"
     fn build_label_subtitle<'a>(&self, task: &TaskSummary, base: Style, theme: &Theme) -> Line<'a> {
-        // TUI label palette matching CLI's 12-colour palette order.
-        const LABEL_PALETTE: [Color; display::LABEL_PALETTE_LEN] = [
-            Color::Cyan,
-            Color::Yellow,
-            Color::Green,
-            Color::Magenta,
-            Color::Blue,
-            Color::Red,
-            Color::LightCyan,
-            Color::LightYellow,
-            Color::LightGreen,
-            Color::LightMagenta,
-            Color::LightBlue,
-            Color::LightRed,
-        ];
-
         let mut spans: Vec<Span<'_>> = vec![
             Span::styled("  ", base),
             Span::styled(format!("{} ", self.glyphs.label), base.patch(theme.danger)),

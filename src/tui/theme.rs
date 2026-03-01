@@ -23,6 +23,24 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
+use crate::display::LABEL_PALETTE_LEN;
+
+/// TUI label palette matching CLI's 12-colour palette order.
+pub const LABEL_PALETTE: [Color; LABEL_PALETTE_LEN] = [
+    Color::Cyan,
+    Color::Yellow,
+    Color::Green,
+    Color::Magenta,
+    Color::Blue,
+    Color::Red,
+    Color::LightCyan,
+    Color::LightYellow,
+    Color::LightGreen,
+    Color::LightMagenta,
+    Color::LightBlue,
+    Color::LightRed,
+];
+
 /// Semantic colour theme for the TUI.
 pub struct Theme {
     /// Primary accent (identifiers, keys, links, project names).
