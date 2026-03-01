@@ -310,6 +310,9 @@ fn handle_event(
         } else {
             SyncStatus::Failed
         };
+        if *success {
+            refresh_current_view(state, ctx);
+        }
         return Ok(Control::Changed);
     }
 
@@ -1129,6 +1132,10 @@ fn execute_command(
             open_search(state, ctx, SearchFilter::All, &query);
             Ok(Control::Changed)
         }
+        Command::Sync => {
+            trigger_full_sync(state, ctx);
+            Ok(Control::Changed)
+        }
         Command::Unknown(_) => {
             // Silently ignore unknown commands
             Ok(Control::Changed)
@@ -1833,6 +1840,32 @@ fn navigate_to_entity(
 }
 
 /// Spawn a background sync to push local mutations to the server.
+/// Bidirectional sync (push + pull) for the `:sync` command.
+fn trigger_full_sync(state: &mut AppState, ctx: &mut Global) {
+    state.sync_status = SyncStatus::Syncing;
+    let config = ctx.config.clone();
+    let cache_path = ctx.config.cache_dir.join("index.db");
+    let storage_config = ctx.storage.config().clone();
+    let _ = ctx.spawn(move || {
+        let success = (|| -> crate::Result<bool> {
+            let cache = crate::cache::TaskCache::open(&cache_path)?;
+            let storage = crate::storage::TaskStorage::new(storage_config);
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(crate::Error::Io)?;
+            rt.block_on(async {
+                let sync = crate::sync::SyncManager::new(&config, storage, cache)?;
+                sync.sync_full().await?;
+                Ok::<bool, crate::Error>(true)
+            })
+        })()
+        .unwrap_or(false);
+        Ok(Control::Event(AppEvent::SyncComplete(success)))
+    });
+}
+
+/// Push-only sync for automatic sync after local mutations.
 fn trigger_background_sync(state: &mut AppState, ctx: &mut Global) {
     state.sync_status = SyncStatus::Syncing;
     let config = ctx.config.clone();

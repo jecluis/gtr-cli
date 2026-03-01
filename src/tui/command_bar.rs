@@ -33,6 +33,8 @@ pub enum Command {
     Quit,
     /// Open search overlay with an optional initial query.
     Search { query: String },
+    /// Trigger a sync with the server.
+    Sync,
     /// Unrecognised command.
     Unknown(String),
 }
@@ -92,6 +94,10 @@ impl CommandBarState {
             if !title.is_empty() {
                 return Command::New { title };
             }
+        }
+
+        if trimmed == "sync" {
+            return Command::Sync;
         }
 
         if trimmed == "search" || trimmed == "s" {
