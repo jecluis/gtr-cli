@@ -323,13 +323,13 @@ impl TaskDetailState {
 
     /// Render all metadata fields with styled values.
     fn build_metadata_fields(&self, t: &Task, theme: &Theme, lines: &mut Vec<Line<'static>>) {
-        // ID: cyan prefix | dim suffix
+        // ID: cyan prefix | gray suffix
         let (prefix, suffix) = display::split_id(&t.id, self.prefix_len);
         styled_field(
             "  ID",
             vec![
                 Span::styled(format!("{prefix}\u{2502}"), theme.accent),
-                Span::styled(suffix.to_string(), theme.muted),
+                Span::styled(suffix.to_string(), Style::default().fg(Color::Gray)),
             ],
             theme,
             lines,
@@ -467,12 +467,15 @@ impl TaskDetailState {
             let mut ref_spans: Vec<Span<'static>> = Vec::new();
             for (i, r) in t.references.iter().enumerate() {
                 if i > 0 {
-                    ref_spans.push(Span::styled(", ", theme.muted));
+                    ref_spans.push(Span::raw(", "));
                 }
                 let (rp, rs) = display::split_id(&r.target_id, self.prefix_len);
                 ref_spans.push(Span::styled(format!("{rp}\u{2502}"), theme.accent));
-                ref_spans.push(Span::styled(rs.to_string(), theme.muted));
-                ref_spans.push(Span::styled(format!(" ({})", r.ref_type), theme.muted));
+                ref_spans.push(Span::styled(
+                    rs.to_string(),
+                    Style::default().fg(Color::Gray),
+                ));
+                ref_spans.push(Span::raw(format!(" ({})", r.ref_type)));
             }
             styled_field("  Refs", ref_spans, theme, lines);
         }
@@ -646,7 +649,7 @@ impl TaskDetailState {
             lines.push(Line::from(vec![
                 done_marker,
                 Span::styled(format!("{sp}\u{2502}"), theme.accent),
-                Span::styled(ss.to_string(), theme.muted),
+                Span::styled(ss.to_string(), Style::default().fg(Color::Gray)),
                 Span::raw("  "),
                 Span::styled(sub.title.clone(), title_style),
             ]));

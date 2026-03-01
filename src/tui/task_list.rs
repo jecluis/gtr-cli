@@ -717,11 +717,11 @@ impl TaskListState {
             &self.thresholds,
         );
 
-        // ── ID cell: cyan prefix │ dim suffix ──
+        // ── ID cell: cyan prefix │ gray suffix ──
         let (prefix, suffix) = display::split_id(&task.id, self.prefix_len);
         let id_cell = Cell::from(Line::from(vec![
             Span::styled(format!("  {prefix}\u{2502}"), base.patch(theme.accent)),
-            Span::styled(suffix.to_string(), base.patch(theme.muted)),
+            Span::styled(suffix.to_string(), base.fg(Color::Gray)),
         ]));
 
         // ── Title cell: multi-line with word-wrapped title + subtitles ──
@@ -976,10 +976,7 @@ impl TaskListState {
                 format!("{pid_prefix}\u{2502}"),
                 base.patch(theme.accent),
             ));
-            spans.push(Span::styled(
-                pid_suffix.to_string(),
-                base.patch(theme.muted),
-            ));
+            spans.push(Span::styled(pid_suffix.to_string(), base.fg(Color::Gray)));
         }
 
         let child_count = self.subtask_counts.get(&task.id).copied().unwrap_or(0);
