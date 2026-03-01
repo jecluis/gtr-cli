@@ -161,18 +161,98 @@ impl DocumentListState {
         })
     }
 
+    /// Build a document list showing all documents across all namespaces.
+    pub fn from_all_namespaces(cache: &TaskCache, config: &Config) -> crate::Result<Self> {
+        let _ = config;
+
+        let namespaces = cache.list_namespaces()?;
+
+        // Load documents from every namespace.
+        let mut all_docs = Vec::new();
+        for ns in &namespaces {
+            if let Ok(docs) = cache.list_documents(&ns.id, false) {
+                all_docs.extend(docs);
+            }
+        }
+
+        let all_ids = cache.all_document_ids().unwrap_or_default();
+        let prefix_len = compute_min_prefix_len(&all_ids);
+
+        let (flattened, depths, last_child_flags, rails) = tree_flatten(&all_docs);
+
+        let label_color_map =
+            display::assign_label_colors(flattened.iter().map(|d| d.labels.as_slice()))
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+
+        // Build namespace path and colour lookups.
+        let mut namespace_paths = HashMap::new();
+        let mut namespace_colors = HashMap::new();
+        for (idx, ns) in namespaces.iter().enumerate() {
+            let path_ids = cache.get_namespace_path(&ns.id).unwrap_or_default();
+            let path_names: Vec<String> = path_ids
+                .iter()
+                .map(|id| {
+                    cache
+                        .get_namespace(id)
+                        .ok()
+                        .flatten()
+                        .map(|n| n.name)
+                        .unwrap_or_else(|| id[..8.min(id.len())].to_string())
+                })
+                .collect();
+            namespace_paths.insert(ns.id.clone(), path_names);
+            namespace_colors.insert(
+                ns.id.clone(),
+                NAMESPACE_PALETTE[idx % NAMESPACE_PALETTE.len()],
+            );
+        }
+
+        let filtered_indices = (0..flattened.len()).collect();
+        let mut table_state = TableState::default();
+        if !flattened.is_empty() {
+            table_state.select(Some(0));
+        }
+
+        Ok(Self {
+            namespace_id: String::new(),
+            namespace_name: "All Namespaces".to_string(),
+            breadcrumb: "All Namespaces".to_string(),
+            documents: flattened,
+            depth_map: depths,
+            is_last_child: last_child_flags,
+            guide_rails: rails,
+            selected: 0,
+            prefix_len,
+            label_color_map,
+            filter: None,
+            filtered_indices,
+            recursive: true,
+            namespace_paths,
+            namespace_colors,
+            table_state,
+        })
+    }
+
     /// Reload documents from cache, preserving the current selection by ID.
     pub fn refresh(&mut self, cache: &TaskCache, config: &Config) {
         let prev_id = self.selected_id().map(String::from);
         let was_recursive = self.recursive;
 
-        if let Ok(new) = Self::from_cache(cache, &self.namespace_id, &self.namespace_name, config) {
+        if self.namespace_id.is_empty() {
+            // "All Namespaces" mode — reload from all.
+            if let Ok(new) = Self::from_all_namespaces(cache, config) {
+                *self = new;
+            }
+        } else if let Ok(new) =
+            Self::from_cache(cache, &self.namespace_id, &self.namespace_name, config)
+        {
             *self = new;
-        }
-
-        // Restore recursive mode if it was active.
-        if was_recursive {
-            self.toggle_recursive(cache);
+            // Restore recursive mode if it was active.
+            if was_recursive {
+                self.toggle_recursive(cache);
+            }
         }
 
         // Restore selection by ID if possible.

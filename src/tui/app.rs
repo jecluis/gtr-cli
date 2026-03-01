@@ -638,6 +638,23 @@ fn handle_sidebar_select(
             state.nav_history.clear();
             Ok(Control::Changed)
         }
+        Some(TreeItemKind::SectionHeader) if name == "Projects" => {
+            let meta_root = TaskCache::meta_root_id();
+            let mut task_list =
+                TaskListState::from_cache(&ctx.cache, meta_root, "All Projects", &ctx.config)?;
+            task_list.toggle_recursive(&ctx.cache, &ctx.config);
+            state.main_view = MainView::TaskList(Box::new(task_list));
+            state.focus = FocusPanel::Main;
+            state.nav_history.clear();
+            Ok(Control::Changed)
+        }
+        Some(TreeItemKind::SectionHeader) if name == "Namespaces" => {
+            let doc_list = DocumentListState::from_all_namespaces(&ctx.cache, &ctx.config)?;
+            state.main_view = MainView::DocList(Box::new(doc_list));
+            state.focus = FocusPanel::Main;
+            state.nav_history.clear();
+            Ok(Control::Changed)
+        }
         _ => Ok(Control::Continue),
     }
 }
