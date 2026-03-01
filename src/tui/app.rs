@@ -625,6 +625,9 @@ fn handle_event(
                     doc_list.toggle_recursive(&ctx.cache);
                     return Ok(Control::Changed);
                 }
+                KeyCode::Char('e') => {
+                    return handle_editor_from_doc_list(state, ctx);
+                }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
                     state.nav_history.clear();
@@ -659,6 +662,9 @@ fn handle_event(
                 }
                 KeyCode::Enter => {
                     return handle_follow_link_from_doc_detail(state, ctx);
+                }
+                KeyCode::Char('e') => {
+                    return handle_editor_from_doc_detail(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     return handle_back_from_doc_detail(state);
@@ -969,6 +975,49 @@ fn handle_editor_from_detail(
         detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
         list.refresh(&ctx.cache, &ctx.config);
     }
+    trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+fn handle_editor_from_doc_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = detail.doc_id().to_string();
+    let doc = ctx.storage.load_document(&doc_id)?;
+
+    let result = run_editor(&doc.title, &doc.content, ctx)?;
+    if let crate::editor::EditorResult::Changed { title, body } = result {
+        crate::mutations::update_document_content(&ctx.storage, &ctx.cache, &doc_id, title, body)?;
+    }
+
+    refresh_current_view(state, ctx);
+    trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+fn handle_editor_from_doc_list(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocList(ref doc_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(doc_id) = doc_list.selected_id() else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = doc_id.to_string();
+    let doc = ctx.storage.load_document(&doc_id)?;
+
+    let result = run_editor(&doc.title, &doc.content, ctx)?;
+    if let crate::editor::EditorResult::Changed { title, body } = result {
+        crate::mutations::update_document_content(&ctx.storage, &ctx.cache, &doc_id, title, body)?;
+    }
+
+    refresh_current_view(state, ctx);
     trigger_background_sync(state, ctx);
     Ok(Control::Changed)
 }
@@ -2089,6 +2138,10 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                     Span::styled(" follow", theme.status_desc),
                 ]);
             }
+            hints.extend([
+                Span::styled("  e", theme.status_key),
+                Span::styled(" edit", theme.status_desc),
+            ]);
         }
         (MainView::DocList(dl), FocusPanel::Main) if dl.is_filtering() => {
             hints.extend([
@@ -2111,6 +2164,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" filter", theme.status_desc),
                 Span::styled("  r", theme.status_key),
                 Span::styled(" recursive", theme.status_desc),
+                Span::styled("  e", theme.status_key),
+                Span::styled(" edit", theme.status_desc),
             ]);
         }
         (MainView::TaskList(tl), FocusPanel::Main) if tl.is_filtering() => {
