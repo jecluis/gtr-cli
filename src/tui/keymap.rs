@@ -39,6 +39,12 @@ pub enum Action {
     GotoDocuments,
     GotoProjects,
     Help,
+    /// Search everything (tasks + documents).
+    SearchAll,
+    /// Search tasks only.
+    SearchTasks,
+    /// Search documents only.
+    SearchDocuments,
 }
 
 /// A node in the keybinding trie.
@@ -157,6 +163,11 @@ pub fn default_keymap() -> Keymap {
         .bind(key('d'), KeyTrie::Action(Action::GotoDocuments))
         .bind(key('p'), KeyTrie::Action(Action::GotoProjects));
 
+    let search = KeyTrieNode::new("search")
+        .bind(key('s'), KeyTrie::Action(Action::SearchAll))
+        .bind(key('t'), KeyTrie::Action(Action::SearchTasks))
+        .bind(key('d'), KeyTrie::Action(Action::SearchDocuments));
+
     let root = KeyTrieNode::new("root")
         .bind(key('q'), KeyTrie::Action(Action::Quit))
         .bind(
@@ -164,6 +175,7 @@ pub fn default_keymap() -> Keymap {
             KeyTrie::Action(Action::Quit),
         )
         .bind(key('g'), KeyTrie::Node(goto))
+        .bind(key('S'), KeyTrie::Node(search))
         .bind(key('?'), KeyTrie::Action(Action::Help));
 
     Keymap::new(root)
@@ -203,6 +215,9 @@ fn entry_label(entry: &KeyTrie) -> &str {
             Action::GotoDocuments => "documents",
             Action::GotoProjects => "projects",
             Action::Help => "help",
+            Action::SearchAll => "all",
+            Action::SearchTasks => "tasks",
+            Action::SearchDocuments => "documents",
         },
         KeyTrie::Node(node) => node.name,
     }

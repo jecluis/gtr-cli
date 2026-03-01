@@ -29,6 +29,7 @@ pub mod doc_detail;
 pub mod doc_list;
 pub mod keymap;
 pub mod nav;
+pub mod search;
 pub mod sidebar;
 pub mod task_detail;
 pub mod task_list;

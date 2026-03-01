@@ -2078,6 +2078,65 @@ impl TaskCache {
             })
     }
 
+    /// Search tasks by title (case-insensitive substring match), excluding
+    /// done/deleted items. Returns up to `limit` results across all projects.
+    pub fn search_tasks_by_title(&self, query: &str, limit: usize) -> Result<Vec<TaskSummary>> {
+        let pattern = format!("%{query}%");
+        let mut stmt = self
+            .conn
+            .prepare(
+                r#"
+            SELECT id, project_id, title, priority, size, created, modified,
+                   done, deleted, deadline, needs_push, is_bookmark, labels,
+                   impact, joy, parent_id, progress, current_work_state
+            FROM tasks
+            WHERE title LIKE ?1 COLLATE NOCASE
+              AND done IS NULL AND deleted IS NULL
+            ORDER BY modified DESC
+            LIMIT ?2
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let tasks = stmt
+            .query_map(params![pattern, limit as i64], Self::row_to_summary)
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(tasks)
+    }
+
+    /// Search documents by title (case-insensitive substring match), excluding
+    /// deleted items. Returns up to `limit` results across all namespaces.
+    pub fn search_documents_by_title(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<CachedDocument>> {
+        let pattern = format!("%{query}%");
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, namespace_id, title, created, modified, deleted, \
+                        version, needs_push, last_synced, parent_id, labels, \
+                        slug, slug_aliases \
+                 FROM documents \
+                 WHERE title LIKE ?1 COLLATE NOCASE AND deleted IS NULL \
+                 ORDER BY modified DESC \
+                 LIMIT ?2",
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let docs = stmt
+            .query_map(params![pattern, limit as i64], Self::row_to_cached_document)
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(docs)
+    }
+
     /// Find a namespace by name (case-insensitive).
     pub fn find_namespace_by_name(&self, name: &str) -> Result<Option<CachedNamespace>> {
         self.conn

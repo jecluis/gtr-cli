@@ -30,7 +30,7 @@ use ratatui::widgets::{
     Table, TableState, Widget,
 };
 
-use super::theme::{LABEL_PALETTE, Theme};
+use super::theme::{ENTITY_PALETTE, LABEL_PALETTE, Theme};
 use crate::cache::{TaskCache, TaskSummary};
 use crate::config::Config;
 use crate::display::{self, DeadlineUrgency, LabelColorIndex};
@@ -40,18 +40,6 @@ use crate::threshold_cache::CachedThresholds;
 
 /// Fallback title wrap width when layout width is unavailable.
 const TITLE_WRAP_FALLBACK: usize = 60;
-
-/// 8-colour palette for distinguishing projects (matches CLI order).
-const PROJECT_PALETTE: [Color; 8] = [
-    Color::Cyan,
-    Color::Green,
-    Color::Yellow,
-    Color::Magenta,
-    Color::Blue,
-    Color::LightCyan,
-    Color::LightGreen,
-    Color::LightYellow,
-];
 
 /// State for the task list view.
 pub struct TaskListState {
@@ -216,7 +204,7 @@ impl TaskListState {
                     self.project_paths.insert(pid.clone(), path);
                 }
                 self.project_colors
-                    .insert(pid.clone(), PROJECT_PALETTE[idx % PROJECT_PALETTE.len()]);
+                    .insert(pid.clone(), ENTITY_PALETTE[idx % ENTITY_PALETTE.len()]);
             }
 
             // Load tasks from all projects.

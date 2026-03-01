@@ -31,6 +31,8 @@ pub enum Command {
     New { title: String },
     /// Quit the TUI.
     Quit,
+    /// Open search overlay with an optional initial query.
+    Search { query: String },
     /// Unrecognised command.
     Unknown(String),
 }
@@ -90,6 +92,20 @@ impl CommandBarState {
             if !title.is_empty() {
                 return Command::New { title };
             }
+        }
+
+        if trimmed == "search" || trimmed == "s" {
+            return Command::Search {
+                query: String::new(),
+            };
+        }
+        if let Some(rest) = trimmed
+            .strip_prefix("search ")
+            .or_else(|| trimmed.strip_prefix("s "))
+        {
+            return Command::Search {
+                query: rest.trim().to_string(),
+            };
         }
 
         Command::Unknown(trimmed.to_string())

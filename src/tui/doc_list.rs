@@ -33,23 +33,11 @@ use ratatui::widgets::{
     Table, TableState, Widget,
 };
 
-use super::theme::{LABEL_PALETTE, Theme};
+use super::theme::{ENTITY_PALETTE, LABEL_PALETTE, Theme};
 use crate::cache::{CachedDocument, TaskCache};
 use crate::config::Config;
 use crate::display::{self, LabelColorIndex};
 use crate::output::compute_min_prefix_len;
-
-/// Palette for namespace colours in recursive mode.
-const NAMESPACE_PALETTE: [Color; 8] = [
-    Color::Cyan,
-    Color::Green,
-    Color::Yellow,
-    Color::Magenta,
-    Color::Blue,
-    Color::LightCyan,
-    Color::LightGreen,
-    Color::LightYellow,
-];
 
 /// State for the document list view.
 pub struct DocumentListState {
@@ -203,10 +191,7 @@ impl DocumentListState {
                 })
                 .collect();
             namespace_paths.insert(ns.id.clone(), path_names);
-            namespace_colors.insert(
-                ns.id.clone(),
-                NAMESPACE_PALETTE[idx % NAMESPACE_PALETTE.len()],
-            );
+            namespace_colors.insert(ns.id.clone(), ENTITY_PALETTE[idx % ENTITY_PALETTE.len()]);
         }
 
         let filtered_indices = (0..flattened.len()).collect();
@@ -399,10 +384,8 @@ impl DocumentListState {
                     })
                     .collect();
                 self.namespace_paths.insert(nsid.clone(), path_names);
-                self.namespace_colors.insert(
-                    nsid.clone(),
-                    NAMESPACE_PALETTE[idx % NAMESPACE_PALETTE.len()],
-                );
+                self.namespace_colors
+                    .insert(nsid.clone(), ENTITY_PALETTE[idx % ENTITY_PALETTE.len()]);
             }
 
             // Load documents from all namespaces.

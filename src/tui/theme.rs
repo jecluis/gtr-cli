@@ -41,6 +41,18 @@ pub const LABEL_PALETTE: [Color; LABEL_PALETTE_LEN] = [
     Color::LightRed,
 ];
 
+/// 8-colour palette for distinguishing projects and namespaces.
+pub const ENTITY_PALETTE: [Color; 8] = [
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Magenta,
+    Color::Blue,
+    Color::LightCyan,
+    Color::LightGreen,
+    Color::LightYellow,
+];
+
 /// Semantic colour theme for the TUI.
 pub struct Theme {
     /// Primary accent (identifiers, keys, links, project names).

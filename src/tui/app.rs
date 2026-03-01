@@ -43,6 +43,7 @@ use crate::tui::doc_detail::DocumentDetailState;
 use crate::tui::doc_list::DocumentListState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::nav::NavTarget;
+use crate::tui::search::{SearchFilter, SearchOverlayState, SearchResultKind};
 use crate::tui::sidebar::{ActiveItem, SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
 use crate::tui::task_list::TaskListState;
@@ -128,6 +129,7 @@ pub struct AppState {
     pub confirm: Option<ConfirmState>,
     pub create_form: Option<TaskFormState>,
     pub command_bar: Option<CommandBarState>,
+    pub search: Option<SearchOverlayState>,
     pub sync_status: SyncStatus,
     /// Navigation history for detail-to-detail link following.
     pub nav_history: Vec<MainView>,
@@ -155,6 +157,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         confirm: None,
         create_form: None,
         command_bar: None,
+        search: None,
         sync_status: SyncStatus::Idle,
         nav_history: Vec::new(),
     };
@@ -216,6 +219,11 @@ fn render(
         cmd_bar.render(theme, layout[1], buf);
     } else {
         render_status_bar(state, layout[1], buf);
+    }
+
+    // Search overlay (full-screen, above content)
+    if let Some(ref mut search) = state.search {
+        search.render(theme, area, buf);
     }
 
     // Overlay dialogs (above content, below which-key)
@@ -332,6 +340,11 @@ fn handle_event(
     // Command bar intercepts all input when active.
     if state.command_bar.is_some() {
         return handle_command_bar_input(key.code, state, ctx);
+    }
+
+    // Search overlay intercepts all input when active.
+    if state.search.is_some() {
+        return handle_search_input(key.code, state, ctx);
     }
 
     // Tab toggles focus between sidebar and main panel.
@@ -648,8 +661,41 @@ fn handle_event(
                 MainView::Dashboard => Ok(Control::Quit),
             }
         }
-        KeymapResult::Matched(_action) => {
-            // Other actions will be handled in later commits.
+        KeymapResult::Matched(Action::GotoTasks) => {
+            let meta_root = TaskCache::meta_root_id();
+            let mut task_list =
+                TaskListState::from_cache(&ctx.cache, meta_root, "All Projects", &ctx.config)?;
+            task_list.toggle_recursive(&ctx.cache, &ctx.config);
+            state.main_view = MainView::TaskList(Box::new(task_list));
+            state.focus = FocusPanel::Main;
+            state.nav_history.clear();
+            Ok(Control::Changed)
+        }
+        KeymapResult::Matched(Action::GotoDocuments) => {
+            let doc_list = DocumentListState::from_all_namespaces(&ctx.cache, &ctx.config)?;
+            state.main_view = MainView::DocList(Box::new(doc_list));
+            state.focus = FocusPanel::Main;
+            state.nav_history.clear();
+            Ok(Control::Changed)
+        }
+        KeymapResult::Matched(Action::GotoProjects) => {
+            state.focus = FocusPanel::Sidebar;
+            Ok(Control::Changed)
+        }
+        KeymapResult::Matched(Action::SearchAll) => {
+            open_search(state, ctx, SearchFilter::All, "");
+            Ok(Control::Changed)
+        }
+        KeymapResult::Matched(Action::SearchTasks) => {
+            open_search(state, ctx, SearchFilter::Tasks, "");
+            Ok(Control::Changed)
+        }
+        KeymapResult::Matched(Action::SearchDocuments) => {
+            open_search(state, ctx, SearchFilter::Documents, "");
+            Ok(Control::Changed)
+        }
+        KeymapResult::Matched(Action::Help) => {
+            // Help overlay will be added in a later commit.
             Ok(Control::Changed)
         }
         KeymapResult::Pending(_) => Ok(Control::Changed),
@@ -1079,6 +1125,10 @@ fn execute_command(
             trigger_background_sync(state, ctx);
             Ok(Control::Changed)
         }
+        Command::Search { query } => {
+            open_search(state, ctx, SearchFilter::All, &query);
+            Ok(Control::Changed)
+        }
         Command::Unknown(_) => {
             // Silently ignore unknown commands
             Ok(Control::Changed)
@@ -1414,6 +1464,80 @@ fn resolve_parent_if_needed(form: &mut TaskFormState, cache: &TaskCache) {
             form.set_resolved_parent(None);
             form.set_parent_id(None);
         }
+    }
+}
+
+// -- Search overlay handlers --
+
+/// Open the search overlay with the given filter and optional initial query.
+fn open_search(state: &mut AppState, ctx: &Global, filter: SearchFilter, query: &str) {
+    let mut search = SearchOverlayState::new(filter, query);
+    if !query.is_empty() {
+        search.update_results(&ctx.cache);
+    }
+    state.search = Some(search);
+}
+
+/// Handle key input while the search overlay is active.
+fn handle_search_input(
+    code: KeyCode,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match code {
+        KeyCode::Esc => {
+            state.search = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            let result = state
+                .search
+                .as_ref()
+                .and_then(|s| s.selected_result())
+                .cloned();
+            state.search = None;
+
+            if let Some(result) = result {
+                let target = match result.kind {
+                    SearchResultKind::Task => NavTarget::Task { id: result.id },
+                    SearchResultKind::Document => NavTarget::Document { id: result.id },
+                };
+                state.focus = FocusPanel::Main;
+                navigate_to_entity(state, ctx, &target)
+            } else {
+                Ok(Control::Changed)
+            }
+        }
+        KeyCode::Up => {
+            if let Some(ref mut search) = state.search {
+                search.select_prev();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Down => {
+            if let Some(ref mut search) = state.search {
+                search.select_next();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Backspace => {
+            let should_close = state.search.as_ref().map(|s| s.is_empty()).unwrap_or(false);
+            if should_close {
+                state.search = None;
+            } else if let Some(ref mut search) = state.search {
+                search.backspace();
+                search.update_results(&ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(c) => {
+            if let Some(ref mut search) = state.search {
+                search.char_input(c);
+                search.update_results(&ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
     }
 }
 
@@ -1865,6 +1989,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" quit", theme.status_desc),
                 Span::styled("  g", theme.status_key),
                 Span::styled(" goto", theme.status_desc),
+                Span::styled("  S", theme.status_key),
+                Span::styled(" search", theme.status_desc),
             ]);
         }
     }
