@@ -1673,12 +1673,16 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
             hints.extend([
                 Span::styled(" Esc", theme.status_key),
                 Span::styled(" back", theme.status_desc),
-                Span::styled("  j/k", theme.status_key),
+                Span::styled("  j", theme.status_key),
+                Span::styled("/", theme.status_desc),
+                Span::styled("k", theme.status_key),
                 Span::styled(" scroll", theme.status_desc),
             ]);
             if detail.has_nav_links() {
                 hints.extend([
-                    Span::styled("  ]/[", theme.status_key),
+                    Span::styled("  ]", theme.status_key),
+                    Span::styled("/", theme.status_desc),
+                    Span::styled("[", theme.status_key),
                     Span::styled(" links", theme.status_desc),
                     Span::styled("  Enter", theme.status_key),
                     Span::styled(" follow", theme.status_desc),
@@ -1703,12 +1707,16 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
             hints.extend([
                 Span::styled(" Esc", theme.status_key),
                 Span::styled(" back", theme.status_desc),
-                Span::styled("  j/k", theme.status_key),
+                Span::styled("  j", theme.status_key),
+                Span::styled("/", theme.status_desc),
+                Span::styled("k", theme.status_key),
                 Span::styled(" scroll", theme.status_desc),
             ]);
             if detail.has_nav_links() {
                 hints.extend([
-                    Span::styled("  ]/[", theme.status_key),
+                    Span::styled("  ]", theme.status_key),
+                    Span::styled("/", theme.status_desc),
+                    Span::styled("[", theme.status_key),
                     Span::styled(" links", theme.status_desc),
                     Span::styled("  Enter", theme.status_key),
                     Span::styled(" follow", theme.status_desc),
@@ -1726,7 +1734,9 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
             hints.extend([
                 Span::styled(" Esc", theme.status_key),
                 Span::styled(" back", theme.status_desc),
-                Span::styled("  j/k", theme.status_key),
+                Span::styled("  j", theme.status_key),
+                Span::styled("/", theme.status_desc),
+                Span::styled("k", theme.status_key),
                 Span::styled(" nav", theme.status_desc),
                 Span::styled("  Enter", theme.status_key),
                 Span::styled(" open", theme.status_desc),
@@ -1745,7 +1755,9 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
             hints.extend([
                 Span::styled(" Esc", theme.status_key),
                 Span::styled(" back", theme.status_desc),
-                Span::styled("  j/k", theme.status_key),
+                Span::styled("  j", theme.status_key),
+                Span::styled("/", theme.status_desc),
+                Span::styled("k", theme.status_key),
                 Span::styled(" nav", theme.status_desc),
             ]);
             if !tl.is_empty() {
@@ -1792,7 +1804,9 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
 
     if state.focus == FocusPanel::Sidebar {
         hints.extend([
-            Span::styled("  j/k", theme.status_key),
+            Span::styled("  j", theme.status_key),
+            Span::styled("/", theme.status_desc),
+            Span::styled("k", theme.status_key),
             Span::styled(" nav", theme.status_desc),
             Span::styled("  Enter", theme.status_key),
             Span::styled(" open", theme.status_desc),
