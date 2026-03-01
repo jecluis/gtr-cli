@@ -22,9 +22,9 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Block, List, ListItem, ListState, StatefulWidget};
 
 use super::theme::Theme;
 use crate::cache::{CachedNamespace, CachedProject, TaskCache};
@@ -72,12 +72,27 @@ pub enum SidebarSection {
     Namespaces,
 }
 
+/// Describes which sidebar item corresponds to the current main view.
+pub enum ActiveItem<'a> {
+    Dashboard,
+    /// All projects (the "Projects" section header was selected).
+    AllProjects,
+    /// A specific project by ID.
+    Project(&'a str),
+    /// All namespaces (the "Namespaces" section header was selected).
+    AllNamespaces,
+    /// A specific namespace by ID.
+    Namespace(&'a str),
+}
+
 /// State for the sidebar widget.
 pub struct SidebarState {
     /// Flattened list of renderable items.
     items: Vec<TreeItem>,
     /// Index of the currently selected item.
     pub selected: usize,
+    /// Ratatui list state for scroll offset and selection tracking.
+    list_state: ListState,
 }
 
 impl SidebarState {
@@ -121,7 +136,17 @@ impl SidebarState {
         });
         flatten_namespaces(&namespaces, None, 1, &mut items);
 
-        Ok(Self { items, selected: 0 })
+        Ok(Self {
+            items,
+            selected: 0,
+            list_state: ListState::default().with_selected(Some(0)),
+        })
+    }
+
+    /// Set selection to the given index, updating both fields.
+    fn set_selected(&mut self, index: usize) {
+        self.selected = index;
+        self.list_state.select(Some(index));
     }
 
     /// Move selection up, skipping dividers.
@@ -130,7 +155,7 @@ impl SidebarState {
         while target > 0 {
             target -= 1;
             if self.items[target].kind != TreeItemKind::Divider {
-                self.selected = target;
+                self.set_selected(target);
                 return;
             }
         }
@@ -142,7 +167,17 @@ impl SidebarState {
         while target + 1 < self.items.len() {
             target += 1;
             if self.items[target].kind != TreeItemKind::Divider {
-                self.selected = target;
+                self.set_selected(target);
+                return;
+            }
+        }
+    }
+
+    /// Snap the selection to the item matching the given active view.
+    pub fn select_active(&mut self, active: &ActiveItem<'_>) {
+        for (i, item) in self.items.iter().enumerate() {
+            if item_matches_active(item, active) {
+                self.set_selected(i);
                 return;
             }
         }
@@ -170,60 +205,96 @@ impl SidebarState {
     }
 
     /// Render the sidebar into the given area.
-    pub fn render(&self, theme: &Theme, focused: bool, area: Rect, buf: &mut Buffer) {
+    pub fn render(
+        &mut self,
+        theme: &Theme,
+        focused: bool,
+        active: &ActiveItem<'_>,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
         let border_style = if focused {
             theme.border_focused
         } else {
             theme.border_unfocused
         };
 
-        let block = ratatui::widgets::Block::bordered()
+        let block = Block::bordered()
             .title(" sidebar ")
             .border_style(border_style);
-        let inner = block.inner(area);
-        block.render(area, buf);
 
-        for (i, item) in self.items.iter().enumerate() {
-            let y = i as u16;
-            if y >= inner.height {
-                break;
-            }
+        let selected = self.selected;
+        let list_items: Vec<ListItem<'_>> = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let is_active = item_matches_active(item, active);
+                render_item(item, theme, is_active, i == selected)
+            })
+            .collect();
 
-            let is_selected = i == self.selected && focused;
-            let line = render_item(item, theme, is_selected, inner.width);
-            let row = Rect::new(inner.x, inner.y + y, inner.width, 1);
-            line.render(row, buf);
-        }
+        // Only set background so item foreground colors are preserved.
+        let highlight_style = Style::default().bg(Color::DarkGray);
+
+        let list = List::new(list_items)
+            .block(block)
+            .highlight_style(highlight_style);
+
+        StatefulWidget::render(list, area, buf, &mut self.list_state);
     }
 }
 
-/// Render a single tree item as a styled Line.
-fn render_item<'a>(item: &TreeItem, theme: &Theme, selected: bool, width: u16) -> Line<'a> {
+/// Check whether a tree item matches the currently active main view.
+fn item_matches_active(item: &TreeItem, active: &ActiveItem<'_>) -> bool {
+    match (active, item.kind) {
+        (ActiveItem::Dashboard, TreeItemKind::Dashboard) => true,
+        (ActiveItem::AllProjects, TreeItemKind::SectionHeader) => item.name == "Projects",
+        (ActiveItem::Project(id), TreeItemKind::Project) => item.id == *id,
+        (ActiveItem::AllNamespaces, TreeItemKind::SectionHeader) => item.name == "Namespaces",
+        (ActiveItem::Namespace(id), TreeItemKind::Namespace) => item.id == *id,
+        _ => false,
+    }
+}
+
+/// Render a single tree item as a ListItem.
+fn render_item<'a>(item: &TreeItem, theme: &Theme, active: bool, selected: bool) -> ListItem<'a> {
     if item.kind == TreeItemKind::Divider {
-        let line = "\u{2500}".repeat(width as usize);
-        return Line::from(Span::styled(line, theme.muted));
+        // Dividers: a long horizontal rule (will be clipped to width).
+        let line = " \u{2500}".repeat(60);
+        return ListItem::new(Line::from(Span::styled(
+            line,
+            Style::default().fg(Color::Gray),
+        )));
     }
 
-    let indent = "  ".repeat(item.depth as usize);
+    // Base indent (2 cols) + tree depth; active items get ">" marker.
+    let depth_indent = "  ".repeat(item.depth as usize);
+    let prefix = if active {
+        format!("> {depth_indent}")
+    } else {
+        format!("  {depth_indent}")
+    };
 
-    let base_style = if selected {
-        theme.selected
+    let style = if active && selected {
+        // Slightly darker, redder tone for contrast on the gray highlight row.
+        Style::default()
+            .fg(Color::Rgb(200, 100, 30))
+            .add_modifier(Modifier::BOLD)
+    } else if active {
+        Style::default()
+            .fg(Color::Rgb(220, 150, 50))
+            .add_modifier(Modifier::BOLD)
+    } else if item.is_section_header || item.kind == TreeItemKind::Dashboard {
+        theme.emphasis
     } else {
         Style::default()
     };
 
-    if item.is_section_header {
-        let header_style = base_style
-            .patch(theme.emphasis)
-            .add_modifier(Modifier::UNDERLINED);
-        Line::from(Span::styled(format!("{indent}{}", item.name), header_style))
-    } else if item.kind == TreeItemKind::Dashboard {
-        let style = base_style.patch(theme.emphasis);
-        Line::from(Span::styled(format!("{indent}{}", item.name), style))
-    } else {
-        let name_style = base_style.patch(theme.accent);
-        Line::from(Span::styled(format!("{indent}{}", item.name), name_style))
-    }
+    ListItem::new(Line::from(Span::styled(
+        format!("{prefix}{}", item.name),
+        style,
+    )))
 }
 
 /// Recursively flatten projects into the tree item list.

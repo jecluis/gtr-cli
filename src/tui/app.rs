@@ -43,7 +43,7 @@ use crate::tui::doc_detail::DocumentDetailState;
 use crate::tui::doc_list::DocumentListState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::nav::NavTarget;
-use crate::tui::sidebar::{SidebarState, TreeItemKind};
+use crate::tui::sidebar::{ActiveItem, SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
 use crate::tui::task_list::TaskListState;
 use crate::tui::theme::Theme;
@@ -190,10 +190,13 @@ fn render(
     let sidebar_focused = state.focus == FocusPanel::Sidebar;
     let main_focused = state.focus == FocusPanel::Main;
 
+    // Derive which sidebar item corresponds to the current main view.
+    let active = derive_active_item(&state.main_view);
+
     // Sidebar
     state
         .sidebar
-        .render(theme, sidebar_focused, columns[0], buf);
+        .render(theme, sidebar_focused, &active, columns[0], buf);
 
     // Main area — dispatch based on current view
     match &mut state.main_view {
@@ -229,6 +232,41 @@ fn render(
     }
 
     Ok(())
+}
+
+/// Map the current main view to the corresponding sidebar active item.
+fn derive_active_item(view: &MainView) -> ActiveItem<'_> {
+    match view {
+        MainView::Dashboard => ActiveItem::Dashboard,
+        MainView::TaskList(tl) => {
+            if tl.project_id == TaskCache::meta_root_id() {
+                ActiveItem::AllProjects
+            } else {
+                ActiveItem::Project(&tl.project_id)
+            }
+        }
+        MainView::TaskDetail { list, .. } => {
+            if list.project_id == TaskCache::meta_root_id() {
+                ActiveItem::AllProjects
+            } else {
+                ActiveItem::Project(&list.project_id)
+            }
+        }
+        MainView::DocList(dl) => {
+            if dl.namespace_id.is_empty() {
+                ActiveItem::AllNamespaces
+            } else {
+                ActiveItem::Namespace(&dl.namespace_id)
+            }
+        }
+        MainView::DocDetail { list, .. } => {
+            if list.namespace_id.is_empty() {
+                ActiveItem::AllNamespaces
+            } else {
+                ActiveItem::Namespace(&list.namespace_id)
+            }
+        }
+    }
 }
 
 /// Render the dashboard placeholder in the main area.
@@ -299,7 +337,12 @@ fn handle_event(
     // Tab toggles focus between sidebar and main panel.
     if key.code == KeyCode::Tab {
         state.focus = match state.focus {
-            FocusPanel::Sidebar => FocusPanel::Main,
+            FocusPanel::Sidebar => {
+                // Snap sidebar selection back to the active item.
+                let active = derive_active_item(&state.main_view);
+                state.sidebar.select_active(&active);
+                FocusPanel::Main
+            }
             FocusPanel::Main => FocusPanel::Sidebar,
         };
         return Ok(Control::Changed);
