@@ -1261,6 +1261,22 @@ impl TaskCache {
         Ok(ns)
     }
 
+    /// Get all descendant namespace IDs (recursive BFS).
+    pub fn get_namespace_descendants(&self, id: &str) -> Result<Vec<String>> {
+        let mut result = Vec::new();
+        let mut queue = vec![id.to_string()];
+
+        while let Some(parent) = queue.pop() {
+            let subs = self.get_subnamespaces(&parent)?;
+            for sub in &subs {
+                queue.push(sub.id.clone());
+                result.push(sub.id.clone());
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Get the ancestor chain for a namespace (root-first).
     pub fn get_namespace_path(&self, id: &str) -> Result<Vec<String>> {
         let mut chain = vec![id.to_string()];

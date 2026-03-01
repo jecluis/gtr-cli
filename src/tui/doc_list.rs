@@ -39,6 +39,18 @@ use crate::config::Config;
 use crate::display::{self, LabelColorIndex};
 use crate::output::compute_min_prefix_len;
 
+/// Palette for namespace colours in recursive mode.
+const NAMESPACE_PALETTE: [Color; 8] = [
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Magenta,
+    Color::Blue,
+    Color::LightCyan,
+    Color::LightGreen,
+    Color::LightYellow,
+];
+
 /// State for the document list view.
 pub struct DocumentListState {
     /// Namespace ID whose documents are being shown.
@@ -53,6 +65,9 @@ pub struct DocumentListState {
     depth_map: Vec<u16>,
     /// Whether each document is the last child at its level.
     is_last_child: Vec<bool>,
+    /// Per-document guide rails: for each ancestor depth, whether to
+    /// draw a `│` continuation line (true = ancestor has more siblings).
+    guide_rails: Vec<Vec<bool>>,
     /// Currently selected visible row index.
     selected: usize,
     /// Minimum unique ID prefix length.
@@ -63,6 +78,12 @@ pub struct DocumentListState {
     filter: Option<String>,
     /// Indices into `documents` that pass the current filter.
     filtered_indices: Vec<usize>,
+    /// Whether recursive listing is active (shows descendant namespaces).
+    recursive: bool,
+    /// Maps namespace_id → ancestor path names (populated in recursive mode).
+    namespace_paths: HashMap<String, Vec<String>>,
+    /// Maps namespace_id → palette colour (populated in recursive mode).
+    namespace_colors: HashMap<String, Color>,
     /// Table widget state (tracks scroll offset).
     table_state: TableState,
 }
@@ -105,7 +126,7 @@ impl DocumentListState {
         };
 
         // Tree-flatten documents (depth-first, alphabetical within each level).
-        let (flattened, depths, last_child_flags) = tree_flatten(&docs);
+        let (flattened, depths, last_child_flags, rails) = tree_flatten(&docs);
 
         // Assign label colours by first appearance in display order.
         let label_color_map =
@@ -127,11 +148,15 @@ impl DocumentListState {
             documents: flattened,
             depth_map: depths,
             is_last_child: last_child_flags,
+            guide_rails: rails,
             selected: 0,
             prefix_len,
             label_color_map,
             filter: None,
             filtered_indices,
+            recursive: false,
+            namespace_paths: HashMap::new(),
+            namespace_colors: HashMap::new(),
             table_state,
         })
     }
@@ -139,9 +164,15 @@ impl DocumentListState {
     /// Reload documents from cache, preserving the current selection by ID.
     pub fn refresh(&mut self, cache: &TaskCache, config: &Config) {
         let prev_id = self.selected_id().map(String::from);
+        let was_recursive = self.recursive;
 
         if let Ok(new) = Self::from_cache(cache, &self.namespace_id, &self.namespace_name, config) {
             *self = new;
+        }
+
+        // Restore recursive mode if it was active.
+        if was_recursive {
+            self.toggle_recursive(cache);
         }
 
         // Restore selection by ID if possible.
@@ -253,6 +284,130 @@ impl DocumentListState {
             });
     }
 
+    /// Toggle recursive mode (show documents from descendant namespaces).
+    pub fn toggle_recursive(&mut self, cache: &TaskCache) {
+        self.recursive = !self.recursive;
+
+        let docs = if self.recursive {
+            // Gather all descendant namespace IDs.
+            let descendants = cache
+                .get_namespace_descendants(&self.namespace_id)
+                .unwrap_or_default();
+
+            let mut all_ns_ids = vec![self.namespace_id.clone()];
+            all_ns_ids.extend(descendants);
+
+            // Build namespace path and colour lookups.
+            self.namespace_paths.clear();
+            self.namespace_colors.clear();
+            for (idx, nsid) in all_ns_ids.iter().enumerate() {
+                let path_ids = cache.get_namespace_path(nsid).unwrap_or_default();
+                // Trim to start from the recursion root namespace.
+                let start = path_ids
+                    .iter()
+                    .position(|id| id == &self.namespace_id)
+                    .unwrap_or(0);
+                let path_names: Vec<String> = path_ids[start..]
+                    .iter()
+                    .map(|id| {
+                        cache
+                            .get_namespace(id)
+                            .ok()
+                            .flatten()
+                            .map(|n| n.name)
+                            .unwrap_or_else(|| id[..8.min(id.len())].to_string())
+                    })
+                    .collect();
+                self.namespace_paths.insert(nsid.clone(), path_names);
+                self.namespace_colors.insert(
+                    nsid.clone(),
+                    NAMESPACE_PALETTE[idx % NAMESPACE_PALETTE.len()],
+                );
+            }
+
+            // Load documents from all namespaces.
+            let mut all_docs = Vec::new();
+            for nsid in &all_ns_ids {
+                if let Ok(list) = cache.list_documents(nsid, false) {
+                    all_docs.extend(list);
+                }
+            }
+            all_docs
+        } else {
+            self.namespace_paths.clear();
+            self.namespace_colors.clear();
+            cache
+                .list_documents(&self.namespace_id, false)
+                .unwrap_or_default()
+        };
+
+        // Re-flatten and rebuild state.
+        let (flattened, depths, last_child_flags, rails) = tree_flatten(&docs);
+
+        self.label_color_map =
+            display::assign_label_colors(flattened.iter().map(|d| d.labels.as_slice()))
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+
+        self.documents = flattened;
+        self.depth_map = depths;
+        self.is_last_child = last_child_flags;
+        self.guide_rails = rails;
+        self.filter = None;
+        self.filtered_indices = (0..self.documents.len()).collect();
+        self.selected = 0;
+        self.table_state.select(if self.documents.is_empty() {
+            None
+        } else {
+            Some(0)
+        });
+    }
+
+    /// Build the namespace cell for recursive mode.
+    ///
+    /// Returns `(Cell, line_count)`.
+    fn build_namespace_cell<'a>(&self, namespace_id: &str, base: Style) -> (Cell<'a>, usize) {
+        let color = self
+            .namespace_colors
+            .get(namespace_id)
+            .copied()
+            .unwrap_or(Color::White);
+
+        let path = self.namespace_paths.get(namespace_id);
+
+        match path {
+            Some(p) if p.len() > 1 => {
+                let mut lines: Vec<Line<'_>> = Vec::new();
+                for (i, segment) in p.iter().enumerate() {
+                    let is_last = i == p.len() - 1;
+                    if i == 0 {
+                        lines.push(Line::styled(segment.clone(), base.fg(color)));
+                    } else {
+                        let connector = if is_last { "\u{2514} " } else { "\u{251c} " };
+                        let indent = "  ".repeat(i.saturating_sub(1));
+                        lines.push(Line::from(vec![
+                            Span::styled(indent, base),
+                            Span::styled(connector.to_string(), base.fg(color)),
+                            Span::styled(segment.clone(), base.fg(color)),
+                        ]));
+                    }
+                }
+                let count = lines.len();
+                (Cell::from(Text::from(lines)), count)
+            }
+            Some(p) if !p.is_empty() => {
+                let line = Line::styled(p[0].clone(), base.fg(color));
+                (Cell::from(line), 1)
+            }
+            _ => {
+                let short = &namespace_id[..8.min(namespace_id.len())];
+                let line = Line::styled(short.to_string(), base.fg(color));
+                (Cell::from(line), 1)
+            }
+        }
+    }
+
     /// Render the document list table.
     pub fn render(&mut self, theme: &Theme, focused: bool, area: Rect, buf: &mut Buffer) {
         let border_style = if focused {
@@ -281,30 +436,30 @@ impl DocumentListState {
             return;
         }
 
-        // Column widths: ID, Title (fill), Labels, Modified.
-        let widths = [
-            Constraint::Length(13),
-            Constraint::Fill(1),
-            Constraint::Length(20),
-            Constraint::Length(10),
-        ];
+        // Column widths: ID, Title (fill), [Namespace if recursive], Labels, Modified.
+        let mut widths: Vec<Constraint> = vec![Constraint::Length(13), Constraint::Fill(1)];
+        if self.recursive {
+            widths.push(Constraint::Length(14));
+        }
+        widths.extend([Constraint::Length(20), Constraint::Length(10)]);
 
         // Build header.
-        let header = Row::new([
-            Cell::from("  ID"),
-            Cell::from("Title"),
-            Cell::from("Labels"),
-            Cell::from("Modified"),
-        ])
-        .style(theme.emphasis)
-        .bottom_margin(0);
+        let mut header_cells: Vec<Cell<'_>> = vec![Cell::from("  ID"), Cell::from("Title")];
+        if self.recursive {
+            header_cells.push(Cell::from("Namespace"));
+        }
+        header_cells.extend([Cell::from("Labels"), Cell::from("Modified")]);
+        let header = Row::new(header_cells)
+            .style(theme.emphasis)
+            .bottom_margin(0);
 
         // Resolve the Labels column's actual width for wrapping.
+        let labels_col_idx = if self.recursive { 3 } else { 2 };
         let labels_width = {
-            let col_rects = ratatui::layout::Layout::horizontal(widths)
+            let col_rects = ratatui::layout::Layout::horizontal(&widths)
                 .spacing(2)
                 .split(inner);
-            col_rects[2].width as usize
+            col_rects[labels_col_idx].width as usize
         };
 
         // Build rows.
@@ -325,7 +480,7 @@ impl DocumentListState {
             rows.push(row);
         }
 
-        let table = Table::new(rows, widths).header(header).column_spacing(2);
+        let table = Table::new(rows, &widths).header(header).column_spacing(2);
         StatefulWidget::render(table, inner, buf, &mut self.table_state);
 
         // Scrollbar when content overflows.
@@ -390,20 +545,62 @@ impl DocumentListState {
             Span::styled(suffix.to_string(), base.fg(Color::Gray)),
         ]));
 
-        // Title cell: tree connector + title.
+        // Compute namespace cell first so we know the row height.
+        let mut max_lines: usize = 1;
+        let ns_cell = if self.recursive {
+            let (cell, ns_lines) = self.build_namespace_cell(&doc.namespace_id, base);
+            max_lines = max_lines.max(ns_lines);
+            Some(cell)
+        } else {
+            None
+        };
+
+        // Title cell: tree connector + title, with continuation lines
+        // to fill multi-line rows.
         let depth = self.depth_map.get(doc_idx).copied().unwrap_or(0);
+        let is_last = self.is_last_child.get(doc_idx).copied().unwrap_or(true);
+        // Check if this document has children (next in flattened order is deeper).
+        let has_children = self
+            .depth_map
+            .get(doc_idx + 1)
+            .is_some_and(|&next_d| next_d > depth);
+
         let title_cell = if depth > 0 {
-            let is_last = self.is_last_child.get(doc_idx).copied().unwrap_or(true);
             let connector = if is_last {
                 "\u{2514}\u{2500}\u{2500} "
             } else {
                 "\u{251c}\u{2500}\u{2500} "
             };
             let indent = "    ".repeat((depth - 1) as usize);
-            Cell::from(Line::from(vec![
+            let mut lines = vec![Line::from(vec![
                 Span::styled(format!("{indent}{connector}"), base.patch(theme.muted)),
                 Span::styled(doc.title.clone(), base),
-            ]))
+            ])];
+
+            // Add continuation lines with │ guide rails for multi-line rows.
+            if max_lines > 1 {
+                let rails = self.guide_rails.get(doc_idx).cloned().unwrap_or_default();
+                let continuation =
+                    build_continuation_line(&rails, depth, is_last, has_children, base, theme);
+                for _ in 1..max_lines {
+                    lines.push(continuation.clone());
+                }
+            }
+
+            Cell::from(Text::from(lines))
+        } else if max_lines > 1 {
+            // Depth-0 document: no tree connector, but may need │ if it
+            // has children that will draw connectors below.
+            let mut lines = vec![Line::styled(doc.title.clone(), base)];
+            let continuation = if has_children {
+                Line::styled("\u{2502}   ", base.patch(theme.muted))
+            } else {
+                Line::from("")
+            };
+            for _ in 1..max_lines {
+                lines.push(continuation.clone());
+            }
+            Cell::from(Text::from(lines))
         } else {
             Cell::from(Line::styled(doc.title.clone(), base))
         };
@@ -452,14 +649,66 @@ impl DocumentListState {
         let modified_text = format_relative_time_str(&doc.modified);
         let modified_cell = Cell::from(Line::styled(modified_text, base));
 
-        Row::new([id_cell, title_cell, labels_cell, modified_cell])
+        let mut cells: Vec<Cell<'a>> = vec![id_cell, title_cell];
+        if let Some(cell) = ns_cell {
+            cells.push(cell);
+        }
+        cells.extend([labels_cell, modified_cell]);
+        Row::new(cells).height(max_lines as u16)
     }
+}
+
+/// Build a continuation line for a multi-line row's title cell.
+///
+/// Draws `│` at each ancestor depth where the ancestor has more siblings,
+/// `│` at the node's own depth if it is not the last child, and `│` below
+/// the connector if the node has children.
+fn build_continuation_line<'a>(
+    rails: &[bool],
+    depth: u16,
+    is_last: bool,
+    has_children: bool,
+    base: Style,
+    theme: &Theme,
+) -> Line<'a> {
+    let mut s = String::new();
+    // Ancestor levels: draw │ where the ancestor has more siblings.
+    // Skip the immediate parent level (depth-1) when this node is the
+    // last child — the └── connector already terminates that line.
+    for d in 0..depth as usize {
+        let suppressed = is_last && d + 1 == depth as usize;
+        let has_rail = !suppressed && rails.get(d).copied().unwrap_or(false);
+        if has_rail {
+            s.push_str("\u{2502}   "); // │ + 3 spaces (matches "    " indent)
+        } else {
+            s.push_str("    ");
+        }
+    }
+    // Node's own level: draw │ if not last child (more siblings follow).
+    if depth > 0 && !is_last {
+        s.push_str("\u{2502}   ");
+    }
+    // One level deeper: draw │ if node has children (connector comes next row).
+    if has_children {
+        s.push_str("\u{2502}   ");
+    }
+    Line::styled(s, base.patch(theme.muted))
+}
+
+/// Accumulator for tree-flattening output.
+struct TreeFlattenOut {
+    docs: Vec<CachedDocument>,
+    depths: Vec<u16>,
+    is_last_child: Vec<bool>,
+    guide_rails: Vec<Vec<bool>>,
 }
 
 /// Tree-flatten documents depth-first, alphabetically within each level.
 ///
-/// Returns `(flattened_docs, depths, is_last_child_flags)`.
-fn tree_flatten(docs: &[CachedDocument]) -> (Vec<CachedDocument>, Vec<u16>, Vec<bool>) {
+/// Returns `(flattened_docs, depths, is_last_child_flags, guide_rails)`.
+fn tree_flatten(
+    docs: &[CachedDocument],
+) -> (Vec<CachedDocument>, Vec<u16>, Vec<bool>, Vec<Vec<bool>>) {
     let doc_ids: std::collections::HashSet<&str> = docs.iter().map(|d| d.id.as_str()).collect();
 
     let mut children_map: HashMap<Option<&str>, Vec<&CachedDocument>> = HashMap::new();
@@ -475,25 +724,20 @@ fn tree_flatten(docs: &[CachedDocument]) -> (Vec<CachedDocument>, Vec<u16>, Vec<
         group.sort_by(|a, b| a.title.cmp(&b.title));
     }
 
-    let mut flattened = Vec::new();
-    let mut depths = Vec::new();
-    let mut last_child_flags = Vec::new();
+    let mut out = TreeFlattenOut {
+        docs: Vec::new(),
+        depths: Vec::new(),
+        is_last_child: Vec::new(),
+        guide_rails: Vec::new(),
+    };
 
     let roots = children_map.get(&None).cloned().unwrap_or_default();
     for (i, doc) in roots.iter().enumerate() {
         let is_last = i == roots.len() - 1;
-        flatten_recurse(
-            doc,
-            0,
-            is_last,
-            &children_map,
-            &mut flattened,
-            &mut depths,
-            &mut last_child_flags,
-        );
+        flatten_recurse(doc, 0, is_last, &[], &children_map, &mut out);
     }
 
-    (flattened, depths, last_child_flags)
+    (out.docs, out.depths, out.is_last_child, out.guide_rails)
 }
 
 /// Recursive helper for tree-flattening.
@@ -501,19 +745,24 @@ fn flatten_recurse(
     doc: &CachedDocument,
     depth: u16,
     is_last: bool,
+    parent_rails: &[bool],
     children_map: &HashMap<Option<&str>, Vec<&CachedDocument>>,
-    out: &mut Vec<CachedDocument>,
-    depths: &mut Vec<u16>,
-    last_child_flags: &mut Vec<bool>,
+    out: &mut TreeFlattenOut,
 ) {
-    out.push(doc.clone());
-    depths.push(depth);
-    last_child_flags.push(is_last);
+    out.docs.push(doc.clone());
+    out.depths.push(depth);
+    out.is_last_child.push(is_last);
+    out.guide_rails.push(parent_rails.to_vec());
 
     let children = children_map
         .get(&Some(doc.id.as_str()))
         .cloned()
         .unwrap_or_default();
+
+    // Build guide rails for children: inherit parent's rails + whether
+    // this node has more siblings after it (draw │ if not last).
+    let mut child_rails: Vec<bool> = parent_rails.to_vec();
+    child_rails.push(!is_last);
 
     for (i, child) in children.iter().enumerate() {
         let child_is_last = i == children.len() - 1;
@@ -521,10 +770,9 @@ fn flatten_recurse(
             child,
             depth + 1,
             child_is_last,
+            &child_rails,
             children_map,
             out,
-            depths,
-            last_child_flags,
         );
     }
 }

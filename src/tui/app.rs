@@ -536,6 +536,10 @@ fn handle_event(
                     doc_list.start_filter();
                     return Ok(Control::Changed);
                 }
+                KeyCode::Char('r') => {
+                    doc_list.toggle_recursive(&ctx.cache);
+                    return Ok(Control::Changed);
+                }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
                     state.nav_history.clear();
@@ -1742,6 +1746,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" open", theme.status_desc),
                 Span::styled("  /", theme.status_key),
                 Span::styled(" filter", theme.status_desc),
+                Span::styled("  r", theme.status_key),
+                Span::styled(" recursive", theme.status_desc),
             ]);
         }
         (MainView::TaskList(tl), FocusPanel::Main) if tl.is_filtering() => {
