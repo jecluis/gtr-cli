@@ -31,6 +31,7 @@ use ratatui::widgets::{
     Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
 };
 
+use super::nav::{NavLink, NavTarget};
 use super::theme::{LABEL_PALETTE, Theme};
 use crate::cache::TaskCache;
 use crate::config::Config;
@@ -82,6 +83,10 @@ pub struct TaskDetailState {
     impact_label: String,
     /// Stable label -> colour index mapping.
     label_color_map: HashMap<String, LabelColorIndex>,
+    /// Navigable links in the detail content.
+    nav_links: Vec<NavLink>,
+    /// Currently selected link index (if any).
+    selected_link: Option<usize>,
 }
 
 impl TaskDetailState {
@@ -168,6 +173,8 @@ impl TaskDetailState {
             thresholds,
             impact_label,
             label_color_map,
+            nav_links: Vec::new(),
+            selected_link: None,
         }
     }
 
@@ -194,6 +201,46 @@ impl TaskDetailState {
     /// Scroll down by a page.
     pub fn scroll_page_down(&mut self, page_size: u16) {
         self.scroll = self.scroll.saturating_add(page_size);
+    }
+
+    /// Select the next navigable link (wraps around).
+    pub fn select_next_link(&mut self) {
+        if self.nav_links.is_empty() {
+            return;
+        }
+        self.selected_link = Some(match self.selected_link {
+            Some(i) => (i + 1) % self.nav_links.len(),
+            None => 0,
+        });
+    }
+
+    /// Select the previous navigable link (wraps around).
+    pub fn select_prev_link(&mut self) {
+        if self.nav_links.is_empty() {
+            return;
+        }
+        self.selected_link = Some(match self.selected_link {
+            Some(0) => self.nav_links.len() - 1,
+            Some(i) => i - 1,
+            None => self.nav_links.len() - 1,
+        });
+    }
+
+    /// Deselect the current link. Returns true if a link was deselected.
+    pub fn deselect_link(&mut self) -> bool {
+        self.selected_link.take().is_some()
+    }
+
+    /// Get the navigation target of the currently selected link.
+    pub fn selected_nav_target(&self) -> Option<&NavTarget> {
+        self.selected_link
+            .and_then(|i| self.nav_links.get(i))
+            .map(|link| &link.target)
+    }
+
+    /// Whether this detail view has any navigable links.
+    pub fn has_nav_links(&self) -> bool {
+        !self.nav_links.is_empty()
     }
 
     /// Reload the task from storage, preserving scroll position.
@@ -227,8 +274,34 @@ impl TaskDetailState {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let lines = self.build_content(theme);
+        let mut lines = self.build_content(theme);
         self.content_height = lines.len() as u16;
+
+        // Highlight the currently selected nav link line.
+        if let Some(sel) = self.selected_link
+            && let Some(link) = self.nav_links.get(sel)
+        {
+            let idx = link.line_index;
+            if idx < lines.len() {
+                let original = std::mem::take(&mut lines[idx]);
+                let mut spans = vec![Span::styled("> ", theme.accent)];
+                spans.extend(
+                    original.spans.into_iter().map(|s| {
+                        Span::styled(s.content.to_string(), theme.selected.patch(s.style))
+                    }),
+                );
+                lines[idx] = Line::from(spans);
+            }
+
+            // Auto-scroll to keep selected link visible.
+            let link_line = idx as u16;
+            if link_line < self.scroll {
+                self.scroll = link_line;
+            } else if link_line >= self.scroll + inner.height {
+                self.scroll = link_line.saturating_sub(inner.height - 1);
+            }
+        }
+
         let text = Text::from(lines);
 
         Paragraph::new(text)
@@ -256,9 +329,10 @@ impl TaskDetailState {
         }
     }
 
-    /// Build the full content as styled lines.
-    fn build_content(&self, theme: &Theme) -> Vec<Line<'static>> {
-        let t = &self.task;
+    /// Build the full content as styled lines, recording navigable links.
+    fn build_content(&mut self, theme: &Theme) -> Vec<Line<'static>> {
+        self.nav_links.clear();
+        let t = &self.task.clone();
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // ── Title Block ──
@@ -269,6 +343,9 @@ impl TaskDetailState {
 
         // ── Body (markdown) ──
         self.build_body_section(t, theme, &mut lines);
+
+        // ── References ──
+        self.build_references_section(t, theme, &mut lines);
 
         // ── Subtasks ──
         self.build_subtasks_section(theme, &mut lines);
@@ -337,7 +414,7 @@ impl TaskDetailState {
     }
 
     /// Render all metadata fields with styled values.
-    fn build_metadata_fields(&self, t: &Task, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+    fn build_metadata_fields(&mut self, t: &Task, theme: &Theme, lines: &mut Vec<Line<'static>>) {
         // ID: cyan prefix | gray suffix
         let (prefix, suffix) = display::split_id(&t.id, self.prefix_len);
         styled_field(
@@ -379,6 +456,12 @@ impl TaskDetailState {
         // Parent: ID + title (only if this task has a parent).
         if let Some(ref parent) = self.parent_info {
             let (pp, ps) = display::split_id(&parent.id, self.prefix_len);
+            self.nav_links.push(NavLink {
+                target: NavTarget::Task {
+                    id: parent.id.clone(),
+                },
+                line_index: lines.len(),
+            });
             styled_field(
                 "  Parent",
                 vec![
@@ -492,24 +575,6 @@ impl TaskDetailState {
             theme,
             lines,
         );
-
-        // References
-        if !t.references.is_empty() {
-            let mut ref_spans: Vec<Span<'static>> = Vec::new();
-            for (i, r) in t.references.iter().enumerate() {
-                if i > 0 {
-                    ref_spans.push(Span::raw(", "));
-                }
-                let (rp, rs) = display::split_id(&r.target_id, self.prefix_len);
-                ref_spans.push(Span::styled(format!("{rp}\u{2502}"), theme.accent));
-                ref_spans.push(Span::styled(
-                    rs.to_string(),
-                    Style::default().fg(Color::Gray),
-                ));
-                ref_spans.push(Span::raw(format!(" ({})", r.ref_type)));
-            }
-            styled_field("  Refs", ref_spans, theme, lines);
-        }
     }
 
     /// Render the deadline field with absolute date, relative text, and urgency color.
@@ -654,8 +719,53 @@ impl TaskDetailState {
         }
     }
 
+    /// Render the references section (one line per reference, with nav links).
+    fn build_references_section(
+        &mut self,
+        t: &Task,
+        theme: &Theme,
+        lines: &mut Vec<Line<'static>>,
+    ) {
+        if t.references.is_empty() {
+            return;
+        }
+
+        lines.push(Line::default());
+        lines.push(section_header(
+            &format!("References ({})", t.references.len()),
+            theme,
+        ));
+
+        for r in &t.references {
+            let (rp, rs) = display::split_id(&r.target_id, self.prefix_len);
+            let target = match r.target_type.as_str() {
+                "document" => NavTarget::Document {
+                    id: r.target_id.clone(),
+                },
+                _ => NavTarget::Task {
+                    id: r.target_id.clone(),
+                },
+            };
+            self.nav_links.push(NavLink {
+                target,
+                line_index: lines.len(),
+            });
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(r.ref_type.clone(), ref_type_style(&r.ref_type)),
+                Span::raw(" "),
+                Span::styled(format!("{rp}\u{2502}"), theme.accent),
+                Span::styled(rs.to_string(), Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!(" ({})", r.target_type),
+                    entity_type_style(&r.target_type),
+                ),
+            ]));
+        }
+    }
+
     /// Render the subtasks section with titles and done markers.
-    fn build_subtasks_section(&self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+    fn build_subtasks_section(&mut self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
         if self.subtask_info.is_empty() {
             return;
         }
@@ -680,6 +790,10 @@ impl TaskDetailState {
                 Style::default()
             };
 
+            self.nav_links.push(NavLink {
+                target: NavTarget::Task { id: sub.id.clone() },
+                line_index: lines.len(),
+            });
             lines.push(Line::from(vec![
                 done_marker,
                 Span::styled(format!("{sp}\u{2502}"), theme.accent),
@@ -796,6 +910,27 @@ fn log_entry_style(entry: &LogEntryType, theme: &Theme) -> Style {
         LogEntryType::ImpactChanged { .. } => Style::default().fg(Color::Magenta),
         LogEntryType::JoyChanged { .. } => Style::default().fg(Color::Magenta),
     }
+}
+
+/// Style for a reference type based on its kind.
+fn ref_type_style(ref_type: &str) -> Style {
+    let color = match ref_type {
+        "inline" | "wiki-link" => Color::Magenta,
+        "related" => Color::Yellow,
+        "parent" | "child" | "parent-child" => Color::Green,
+        _ => Color::Cyan,
+    };
+    Style::default().fg(color)
+}
+
+/// Style for an entity type indicator (e.g. "document", "task").
+fn entity_type_style(entity_type: &str) -> Style {
+    let color = match entity_type {
+        "document" => Color::Blue,
+        "task" => Color::Green,
+        _ => return Style::default(),
+    };
+    Style::default().fg(color)
 }
 
 /// Format a log entry type as a human-readable description.

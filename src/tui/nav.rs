@@ -15,26 +15,20 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Terminal user interface for gtr.
-//!
-//! Launched when `gtr` is invoked with no subcommand. Provides an
-//! interactive, keyboard-driven interface for browsing and managing
-//! tasks and documents.
+//! Navigation types for cross-entity link following in detail views.
 
-mod app;
-pub mod command_bar;
-pub mod confirm;
-pub mod create_form;
-pub mod doc_detail;
-pub mod doc_list;
-pub mod keymap;
-pub mod nav;
-pub mod sidebar;
-pub mod task_detail;
-pub mod task_list;
-pub mod theme;
+/// Target entity for a navigable link.
+#[derive(Debug, Clone)]
+pub enum NavTarget {
+    Task { id: String },
+    Document { id: String },
+}
 
-/// Launch the TUI, taking over the terminal until the user quits.
-pub fn run(config: crate::config::Config) -> crate::Result<()> {
-    app::run(config)
+/// A navigable link within a detail view's content.
+#[derive(Debug, Clone)]
+pub struct NavLink {
+    /// The entity this link points to.
+    pub target: NavTarget,
+    /// The line index in the built content where this link appears.
+    pub line_index: usize,
 }
