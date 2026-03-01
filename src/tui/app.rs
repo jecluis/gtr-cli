@@ -642,6 +642,9 @@ fn handle_event(
                 KeyCode::Char('x') => {
                     return handle_delete_document_from_list(state, ctx);
                 }
+                KeyCode::Char('u') => {
+                    return handle_update_document_from_list(state, ctx);
+                }
                 KeyCode::Char('n') => {
                     return handle_new_document(state);
                 }
@@ -685,6 +688,9 @@ fn handle_event(
                 }
                 KeyCode::Char('x') => {
                     return handle_delete_document_from_detail(state, ctx);
+                }
+                KeyCode::Char('u') => {
+                    return handle_update_document(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     return handle_back_from_doc_detail(state);
@@ -1026,6 +1032,47 @@ fn handle_new_document(state: &mut AppState) -> Result<Control<AppEvent>, crate:
     let namespace_id = doc_list.namespace_id.clone();
     let namespace_name = doc_list.namespace_name.clone();
     state.doc_form = Some(DocFormState::new(namespace_id, namespace_name));
+    Ok(Control::Changed)
+}
+
+fn handle_update_document_from_list(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocList(ref doc_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(doc_id) = doc_list.selected_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    let namespace_name = doc_list.namespace_name.clone();
+    open_update_doc_form(state, ctx, &doc_id, &namespace_name)
+}
+
+fn handle_update_document(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocDetail {
+        ref detail,
+        ref list,
+    } = state.main_view
+    else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = detail.doc_id().to_string();
+    let namespace_name = list.namespace_name.clone();
+    open_update_doc_form(state, ctx, &doc_id, &namespace_name)
+}
+
+fn open_update_doc_form(
+    state: &mut AppState,
+    ctx: &Global,
+    doc_id: &str,
+    namespace_name: &str,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let doc = ctx.storage.load_document(doc_id)?;
+    state.doc_form = Some(DocFormState::for_update(doc, namespace_name.to_string()));
     Ok(Control::Changed)
 }
 
@@ -2406,6 +2453,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 ]);
             }
             hints.extend([
+                Span::styled("  u", theme.status_key),
+                Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
                 Span::styled("  x", theme.status_key),
@@ -2435,6 +2484,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" recursive", theme.status_desc),
                 Span::styled("  n", theme.status_key),
                 Span::styled(" new", theme.status_desc),
+                Span::styled("  u", theme.status_key),
+                Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
                 Span::styled("  x", theme.status_key),

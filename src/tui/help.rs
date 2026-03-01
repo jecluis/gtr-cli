@@ -179,7 +179,11 @@ fn help_sections() -> Vec<HelpSection> {
         },
         HelpSection {
             title: "Document List",
-            bindings: vec![("/", "Filter by title"), ("r", "Toggle recursive")],
+            bindings: vec![
+                ("/", "Filter by title"),
+                ("r", "Toggle recursive"),
+                ("u", "Update fields"),
+            ],
         },
         HelpSection {
             title: "Commands (:)",
