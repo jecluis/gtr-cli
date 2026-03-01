@@ -45,6 +45,7 @@ use crate::tui::doc_list::DocumentListState;
 use crate::tui::feels::FeelsDialogState;
 use crate::tui::help::HelpOverlayState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
+use crate::tui::move_form::MoveFormState;
 use crate::tui::nav::NavTarget;
 use crate::tui::search::{SearchFilter, SearchOverlayState, SearchResultKind};
 use crate::tui::sidebar::{ActiveItem, SidebarState, TreeItemKind};
@@ -132,6 +133,7 @@ pub struct AppState {
     pub confirm: Option<ConfirmState>,
     pub create_form: Option<TaskFormState>,
     pub doc_form: Option<DocFormState>,
+    pub move_form: Option<MoveFormState>,
     pub command_bar: Option<CommandBarState>,
     pub search: Option<SearchOverlayState>,
     pub feels: Option<FeelsDialogState>,
@@ -163,6 +165,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         confirm: None,
         create_form: None,
         doc_form: None,
+        move_form: None,
         command_bar: None,
         search: None,
         feels: None,
@@ -253,6 +256,9 @@ fn render(
         form.render(theme, area, buf);
     }
     if let Some(ref form) = state.doc_form {
+        form.render(theme, area, buf);
+    }
+    if let Some(ref form) = state.move_form {
         form.render(theme, area, buf);
     }
 
@@ -365,6 +371,11 @@ fn handle_event(
     // Document form intercepts all input when active.
     if state.doc_form.is_some() {
         return handle_doc_form_input(key, state, ctx);
+    }
+
+    // Move form intercepts all input when active.
+    if state.move_form.is_some() {
+        return handle_move_form_input(key, state, ctx);
     }
 
     // Command bar intercepts all input when active.
@@ -691,6 +702,9 @@ fn handle_event(
                 }
                 KeyCode::Char('u') => {
                     return handle_update_document(state, ctx);
+                }
+                KeyCode::Char('m') => {
+                    return handle_move_document(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     return handle_back_from_doc_detail(state);
@@ -1879,6 +1893,156 @@ fn resolve_doc_parent_if_needed(form: &mut DocFormState, cache: &TaskCache) {
     }
 }
 
+// -- Move form handlers --
+
+fn handle_move_document(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocDetail {
+        ref detail,
+        ref list,
+    } = state.main_view
+    else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = detail.doc_id().to_string();
+    let doc = ctx.storage.load_document(&doc_id)?;
+    let ns_name = list.namespace_name.clone();
+
+    state.move_form = Some(MoveFormState::new(doc_id, doc.title, ns_name));
+    Ok(Control::Changed)
+}
+
+fn handle_move_form_input(
+    key: &crossterm::event::KeyEvent,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let code = key.code;
+
+    match code {
+        KeyCode::Esc => {
+            state.move_form = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            let form = state.move_form.as_ref().unwrap();
+
+            if form.is_cancel_focused() {
+                state.move_form = None;
+                return Ok(Control::Changed);
+            }
+
+            if form.is_move_focused() && form.can_submit() {
+                return submit_move_form(state, ctx);
+            }
+
+            Ok(Control::Continue)
+        }
+        KeyCode::Tab => {
+            if let Some(ref mut form) = state.move_form {
+                form.focus_next();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::BackTab => {
+            if let Some(ref mut form) = state.move_form {
+                form.focus_prev();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Backspace => {
+            if let Some(ref mut form) = state.move_form {
+                form.backspace();
+                resolve_move_namespace(form, &ctx.cache);
+                resolve_move_parent(form, &ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(c) => {
+            if let Some(ref mut form) = state.move_form {
+                form.char_input(c);
+                resolve_move_namespace(form, &ctx.cache);
+                resolve_move_parent(form, &ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
+fn submit_move_form(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let form = state.move_form.as_ref().unwrap();
+    let doc_id = form.doc_id().to_string();
+    let namespace_id = form.resolved_namespace_id().map(String::from);
+    let parent_id = if form.parent_cleared() {
+        if form.resolved_namespace_id().is_some() {
+            // Moving to a new namespace with no parent: un-parent.
+            Some(None)
+        } else {
+            // No namespace change and empty parent: no change.
+            None
+        }
+    } else {
+        form.resolved_parent_id().map(|pid| Some(pid.to_string()))
+    };
+    state.move_form = None;
+
+    crate::mutations::move_document(&ctx.storage, &ctx.cache, &doc_id, namespace_id, parent_id)?;
+
+    refresh_current_view(state, ctx);
+    trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+fn resolve_move_namespace(form: &mut MoveFormState, cache: &TaskCache) {
+    if !form.is_namespace_focused() {
+        return;
+    }
+    let input = form.namespace_input();
+    if input.is_empty() {
+        form.set_resolved_namespace(None, None);
+        return;
+    }
+    match crate::resolve::resolve_namespace(cache, input) {
+        Ok(full_id) => {
+            let name = cache
+                .get_namespace(&full_id)
+                .ok()
+                .flatten()
+                .map(|ns| ns.name);
+            form.set_resolved_namespace(Some(full_id), name);
+        }
+        Err(_) => {
+            form.set_resolved_namespace(None, None);
+        }
+    }
+}
+
+fn resolve_move_parent(form: &mut MoveFormState, cache: &TaskCache) {
+    if !form.is_parent_focused() {
+        return;
+    }
+    let input = form.parent_input();
+    if input.is_empty() {
+        form.set_resolved_parent(None, None);
+        return;
+    }
+    match crate::utils::resolve_document_id(cache, input) {
+        Ok(full_id) => {
+            let title = cache.get_document(&full_id).ok().flatten().map(|d| d.title);
+            form.set_resolved_parent(Some(full_id), title);
+        }
+        Err(_) => {
+            form.set_resolved_parent(None, None);
+        }
+    }
+}
+
 // -- Search overlay handlers --
 
 /// Open the search overlay with the given filter and optional initial query.
@@ -2455,6 +2619,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
             hints.extend([
                 Span::styled("  u", theme.status_key),
                 Span::styled(" update", theme.status_desc),
+                Span::styled("  m", theme.status_key),
+                Span::styled(" move", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
                 Span::styled("  x", theme.status_key),
