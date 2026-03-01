@@ -42,6 +42,7 @@ use crate::tui::create_form::{FormField, TaskFormState};
 use crate::tui::doc_detail::DocumentDetailState;
 use crate::tui::doc_list::DocumentListState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
+use crate::tui::nav::NavTarget;
 use crate::tui::sidebar::{SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
 use crate::tui::task_list::TaskListState;
@@ -114,6 +115,9 @@ pub enum MainView {
     },
 }
 
+/// Maximum number of entries in the navigation history stack.
+const NAV_HISTORY_LIMIT: usize = 20;
+
 /// UI widget state tree.
 pub struct AppState {
     pub keymap: Keymap,
@@ -125,6 +129,8 @@ pub struct AppState {
     pub create_form: Option<TaskFormState>,
     pub command_bar: Option<CommandBarState>,
     pub sync_status: SyncStatus,
+    /// Navigation history for detail-to-detail link following.
+    pub nav_history: Vec<MainView>,
 }
 
 /// Enter the TUI event loop. Returns when the user quits.
@@ -150,6 +156,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         create_form: None,
         command_bar: None,
         sync_status: SyncStatus::Idle,
+        nav_history: Vec::new(),
     };
 
     run_tui(
@@ -267,8 +274,10 @@ fn handle_event(
         return Ok(Control::Continue);
     }
 
-    // Ctrl-c always quits regardless of keymap state.
-    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+    // Ctrl-c / Ctrl-q always quit regardless of keymap state.
+    if (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('q'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
         return Ok(Control::Quit);
     }
 
@@ -447,6 +456,7 @@ fn handle_event(
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
+                    state.nav_history.clear();
                     return Ok(Control::Changed);
                 }
                 _ => {}
@@ -467,6 +477,17 @@ fn handle_event(
                 KeyCode::PageDown => {
                     detail.scroll_page_down(10);
                     return Ok(Control::Changed);
+                }
+                KeyCode::Char(']') => {
+                    detail.select_next_link();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Char('[') => {
+                    detail.select_prev_link();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Enter => {
+                    return handle_follow_link_from_task_detail(state, ctx);
                 }
                 KeyCode::Char('s') => {
                     return handle_toggle_work_state_from_detail(state, ctx);
@@ -517,6 +538,7 @@ fn handle_event(
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
+                    state.nav_history.clear();
                     return Ok(Control::Changed);
                 }
                 _ => {}
@@ -537,6 +559,17 @@ fn handle_event(
                 KeyCode::PageDown => {
                     detail.scroll_page_down(10);
                     return Ok(Control::Changed);
+                }
+                KeyCode::Char(']') => {
+                    detail.select_next_link();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Char('[') => {
+                    detail.select_prev_link();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Enter => {
+                    return handle_follow_link_from_doc_detail(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     return handle_back_from_doc_detail(state);
@@ -562,6 +595,7 @@ fn handle_event(
                 MainView::DocDetail { .. } => handle_back_from_doc_detail(state),
                 MainView::TaskList(_) | MainView::DocList(_) => {
                     state.main_view = MainView::Dashboard;
+                    state.nav_history.clear();
                     Ok(Control::Changed)
                 }
                 MainView::Dashboard => Ok(Control::Quit),
@@ -590,12 +624,14 @@ fn handle_sidebar_select(
             let task_list = TaskListState::from_cache(&ctx.cache, &id, &name, &ctx.config)?;
             state.main_view = MainView::TaskList(Box::new(task_list));
             state.focus = FocusPanel::Main;
+            state.nav_history.clear();
             Ok(Control::Changed)
         }
         Some(TreeItemKind::Namespace) if !id.is_empty() => {
             let doc_list = DocumentListState::from_cache(&ctx.cache, &id, &name, &ctx.config)?;
             state.main_view = MainView::DocList(Box::new(doc_list));
             state.focus = FocusPanel::Main;
+            state.nav_history.clear();
             Ok(Control::Changed)
         }
         _ => Ok(Control::Continue),
@@ -1402,8 +1438,22 @@ fn execute_confirmed_action(
     Ok(Control::Changed)
 }
 
-/// Navigate back from task detail to the task list.
+/// Navigate back from task detail: deselect link, pop history, or restore list.
 fn handle_back_from_detail(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+    // 1. If a link is selected, deselect it first.
+    if let MainView::TaskDetail { ref mut detail, .. } = state.main_view
+        && detail.deselect_link()
+    {
+        return Ok(Control::Changed);
+    }
+
+    // 2. If nav_history has entries, pop and restore.
+    if let Some(prev_view) = state.nav_history.pop() {
+        state.main_view = prev_view;
+        return Ok(Control::Changed);
+    }
+
+    // 3. Fall back to restoring the list.
     let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
     if let MainView::TaskDetail { list, .. } = prev {
         state.main_view = MainView::TaskList(list);
@@ -1447,13 +1497,145 @@ fn handle_doc_list_select(
     Ok(Control::Changed)
 }
 
-/// Navigate back from document detail to the document list.
+/// Navigate back from document detail: deselect link, pop history, or restore list.
 fn handle_back_from_doc_detail(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+    // 1. If a link is selected, deselect it first.
+    if let MainView::DocDetail { ref mut detail, .. } = state.main_view
+        && detail.deselect_link()
+    {
+        return Ok(Control::Changed);
+    }
+
+    // 2. If nav_history has entries, pop and restore.
+    if let Some(prev_view) = state.nav_history.pop() {
+        state.main_view = prev_view;
+        return Ok(Control::Changed);
+    }
+
+    // 3. Fall back to restoring the list.
     let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
     if let MainView::DocDetail { list, .. } = prev {
         state.main_view = MainView::DocList(list);
     }
     Ok(Control::Changed)
+}
+
+/// Follow the selected link in the task detail view.
+fn handle_follow_link_from_task_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(target) = detail.selected_nav_target().cloned() else {
+        return Ok(Control::Continue);
+    };
+    navigate_to_entity(state, ctx, &target)
+}
+
+/// Follow the selected link in the document detail view.
+fn handle_follow_link_from_doc_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(target) = detail.selected_nav_target().cloned() else {
+        return Ok(Control::Continue);
+    };
+    navigate_to_entity(state, ctx, &target)
+}
+
+/// Navigate to a target entity, pushing the current view onto the history stack.
+fn navigate_to_entity(
+    state: &mut AppState,
+    ctx: &mut Global,
+    target: &NavTarget,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match target {
+        NavTarget::Task { id } => {
+            let task = match ctx.storage.load_task(id) {
+                Ok(t) => t,
+                Err(_) => return Ok(Control::Continue),
+            };
+
+            // Resolve project name for the detail view.
+            let project_name = ctx
+                .cache
+                .get_project(&task.project_id)
+                .ok()
+                .flatten()
+                .map(|p| p.name)
+                .unwrap_or_else(|| task.project_id.clone());
+
+            let detail = Box::new(TaskDetailState::new(
+                task.clone(),
+                project_name.clone(),
+                &ctx.cache,
+                &ctx.config,
+            ));
+
+            // Build a minimal list for back-navigation context.
+            let list = Box::new(TaskListState::from_cache(
+                &ctx.cache,
+                &task.project_id,
+                &project_name,
+                &ctx.config,
+            )?);
+
+            // Push current view onto history (bounded).
+            let current =
+                std::mem::replace(&mut state.main_view, MainView::TaskDetail { detail, list });
+            state.nav_history.push(current);
+            if state.nav_history.len() > NAV_HISTORY_LIMIT {
+                state.nav_history.remove(0);
+            }
+
+            Ok(Control::Changed)
+        }
+        NavTarget::Document { id } => {
+            let doc = match ctx.storage.load_document(id) {
+                Ok(d) => d,
+                Err(_) => return Ok(Control::Continue),
+            };
+
+            // Resolve namespace name for the detail view.
+            let namespace_name = ctx
+                .cache
+                .get_namespace(&doc.namespace_id)
+                .ok()
+                .flatten()
+                .map(|n| n.name)
+                .unwrap_or_else(|| doc.namespace_id.clone());
+
+            let detail = Box::new(DocumentDetailState::new(
+                doc.clone(),
+                namespace_name.clone(),
+                &ctx.cache,
+                &ctx.config,
+            ));
+
+            // Build a minimal list for back-navigation context.
+            let list = Box::new(DocumentListState::from_cache(
+                &ctx.cache,
+                &doc.namespace_id,
+                &namespace_name,
+                &ctx.config,
+            )?);
+
+            // Push current view onto history (bounded).
+            let current =
+                std::mem::replace(&mut state.main_view, MainView::DocDetail { detail, list });
+            state.nav_history.push(current);
+            if state.nav_history.len() > NAV_HISTORY_LIMIT {
+                state.nav_history.remove(0);
+            }
+
+            Ok(Control::Changed)
+        }
+    }
 }
 
 /// Spawn a background sync to push local mutations to the server.
@@ -1487,12 +1669,22 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
     let mut hints: Vec<Span<'_>> = Vec::new();
 
     match (&state.main_view, state.focus) {
-        (MainView::TaskDetail { .. }, FocusPanel::Main) => {
+        (MainView::TaskDetail { detail, .. }, FocusPanel::Main) => {
             hints.extend([
                 Span::styled(" Esc", theme.status_key),
                 Span::styled(" back", theme.status_desc),
                 Span::styled("  j/k", theme.status_key),
                 Span::styled(" scroll", theme.status_desc),
+            ]);
+            if detail.has_nav_links() {
+                hints.extend([
+                    Span::styled("  ]/[", theme.status_key),
+                    Span::styled(" links", theme.status_desc),
+                    Span::styled("  Enter", theme.status_key),
+                    Span::styled(" follow", theme.status_desc),
+                ]);
+            }
+            hints.extend([
                 Span::styled("  s", theme.status_key),
                 Span::styled(" start/stop", theme.status_desc),
                 Span::styled("  p", theme.status_key),
@@ -1507,13 +1699,21 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" edit", theme.status_desc),
             ]);
         }
-        (MainView::DocDetail { .. }, FocusPanel::Main) => {
+        (MainView::DocDetail { detail, .. }, FocusPanel::Main) => {
             hints.extend([
                 Span::styled(" Esc", theme.status_key),
                 Span::styled(" back", theme.status_desc),
                 Span::styled("  j/k", theme.status_key),
                 Span::styled(" scroll", theme.status_desc),
             ]);
+            if detail.has_nav_links() {
+                hints.extend([
+                    Span::styled("  ]/[", theme.status_key),
+                    Span::styled(" links", theme.status_desc),
+                    Span::styled("  Enter", theme.status_key),
+                    Span::styled(" follow", theme.status_desc),
+                ]);
+            }
         }
         (MainView::DocList(dl), FocusPanel::Main) if dl.is_filtering() => {
             hints.extend([
