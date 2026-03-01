@@ -937,7 +937,10 @@ fn handle_editor_from_list(
         return Ok(Control::Continue);
     };
     let task = ctx.storage.load_task(&task_id)?;
-    run_editor_for_task(&task, ctx)?;
+    let result = run_editor(&task.title, &task.body, ctx)?;
+    if let crate::editor::EditorResult::Changed { title, body } = result {
+        crate::mutations::update_body(&ctx.storage, &ctx.cache, &task_id, title, body)?;
+    }
     if let MainView::TaskList(ref mut list) = state.main_view {
         list.refresh(&ctx.cache, &ctx.config);
     }
@@ -954,7 +957,10 @@ fn handle_editor_from_detail(
     };
     let task_id = detail.task.id.clone();
     let task = ctx.storage.load_task(&task_id)?;
-    run_editor_for_task(&task, ctx)?;
+    let result = run_editor(&task.title, &task.body, ctx)?;
+    if let crate::editor::EditorResult::Changed { title, body } = result {
+        crate::mutations::update_body(&ctx.storage, &ctx.cache, &task_id, title, body)?;
+    }
     if let MainView::TaskDetail {
         ref mut detail,
         ref mut list,
@@ -967,13 +973,20 @@ fn handle_editor_from_detail(
     Ok(Control::Changed)
 }
 
-/// Suspend TUI, launch external editor, resume TUI.
-fn run_editor_for_task(task: &crate::models::Task, ctx: &mut Global) -> crate::Result<()> {
+/// Suspend the TUI, launch $EDITOR, resume TUI.
+///
+/// Returns the editor result (Changed/Unchanged/Cancelled).
+/// Callers handle persistence based on entity type.
+fn run_editor(
+    title: &str,
+    body: &str,
+    ctx: &mut Global,
+) -> crate::Result<crate::editor::EditorResult> {
     // Suspend TUI
     stdout().execute(LeaveAlternateScreen)?;
     disable_raw_mode()?;
 
-    let result = crate::editor::edit_body(&ctx.config, &task.title, &task.body);
+    let result = crate::editor::edit_body(&ctx.config, title, body);
 
     // Resume TUI
     enable_raw_mode()?;
@@ -982,17 +995,7 @@ fn run_editor_for_task(task: &crate::models::Task, ctx: &mut Global) -> crate::R
     // editor used the terminal, so clear it to avoid a blank screen.
     ctx.clear_terminal();
 
-    match result {
-        Ok(crate::editor::EditorResult::Changed { title, body }) => {
-            crate::mutations::update_body(&ctx.storage, &ctx.cache, &task.id, title, body)?;
-        }
-        Ok(crate::editor::EditorResult::Unchanged | crate::editor::EditorResult::Cancelled) => {}
-        Err(_) => {
-            // Editor errors are non-fatal in TUI context
-        }
-    }
-
-    Ok(())
+    result
 }
 
 // -- Task detail mutation handlers --
