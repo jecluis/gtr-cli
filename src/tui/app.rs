@@ -628,6 +628,9 @@ fn handle_event(
                 KeyCode::Char('e') => {
                     return handle_editor_from_doc_list(state, ctx);
                 }
+                KeyCode::Char('x') => {
+                    return handle_delete_document_from_list(state, ctx);
+                }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
                     state.nav_history.clear();
@@ -665,6 +668,9 @@ fn handle_event(
                 }
                 KeyCode::Char('e') => {
                     return handle_editor_from_doc_detail(state, ctx);
+                }
+                KeyCode::Char('x') => {
+                    return handle_delete_document_from_detail(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     return handle_back_from_doc_detail(state);
@@ -1019,6 +1025,51 @@ fn handle_editor_from_doc_list(
 
     refresh_current_view(state, ctx);
     trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+fn handle_delete_document_from_detail(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::confirm::PendingAction;
+
+    let MainView::DocDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = detail.doc_id().to_string();
+    let doc = ctx.storage.load_document(&doc_id)?;
+    let child_count = ctx.cache.get_document_children(&doc_id)?.len();
+
+    state.confirm = Some(ConfirmState::new(PendingAction::DeleteDocument {
+        doc_id,
+        title: doc.title,
+        child_count,
+    }));
+    Ok(Control::Changed)
+}
+
+fn handle_delete_document_from_list(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::confirm::PendingAction;
+
+    let MainView::DocList(ref doc_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(doc_id) = doc_list.selected_id() else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = doc_id.to_string();
+    let doc = ctx.storage.load_document(&doc_id)?;
+    let child_count = ctx.cache.get_document_children(&doc_id)?.len();
+
+    state.confirm = Some(ConfirmState::new(PendingAction::DeleteDocument {
+        doc_id,
+        title: doc.title,
+        child_count,
+    }));
     Ok(Control::Changed)
 }
 
@@ -1787,6 +1838,9 @@ fn execute_confirmed_action(
         PendingAction::Delete { ref task_id, .. } => {
             mutations::delete_task(&ctx.storage, &ctx.cache, task_id)?;
         }
+        PendingAction::DeleteDocument { ref doc_id, .. } => {
+            mutations::delete_document(&ctx.storage, &ctx.cache, doc_id)?;
+        }
     }
 
     // If we're in detail view for the affected task, go back to list
@@ -1794,6 +1848,7 @@ fn execute_confirmed_action(
         PendingAction::Done { task_id, .. } | PendingAction::Delete { task_id, .. } => {
             task_id.clone()
         }
+        PendingAction::DeleteDocument { doc_id, .. } => doc_id.clone(),
     };
 
     match &state.main_view {
@@ -1821,6 +1876,19 @@ fn execute_confirmed_action(
                 list.refresh(&ctx.cache, &ctx.config);
             }
         }
+        MainView::DocDetail { detail, .. } if detail.doc_id() == affected_id => {
+            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+            if let MainView::DocDetail { mut list, .. } = prev {
+                list.refresh(&ctx.cache, &ctx.config);
+                state.main_view = MainView::DocList(list);
+            }
+        }
+        MainView::DocList(_) => {
+            if let MainView::DocList(ref mut list) = state.main_view {
+                list.refresh(&ctx.cache, &ctx.config);
+            }
+        }
+        MainView::DocDetail { .. } => {}
         _ => {}
     }
 
@@ -2141,6 +2209,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
             hints.extend([
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
+                Span::styled("  x", theme.status_key),
+                Span::styled(" delete", theme.status_desc),
             ]);
         }
         (MainView::DocList(dl), FocusPanel::Main) if dl.is_filtering() => {
@@ -2166,6 +2236,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" recursive", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
+                Span::styled("  x", theme.status_key),
+                Span::styled(" delete", theme.status_desc),
             ]);
         }
         (MainView::TaskList(tl), FocusPanel::Main) if tl.is_filtering() => {

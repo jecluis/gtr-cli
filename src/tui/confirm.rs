@@ -37,6 +37,11 @@ pub enum PendingAction {
         title: String,
         child_count: usize,
     },
+    DeleteDocument {
+        doc_id: String,
+        title: String,
+        child_count: usize,
+    },
 }
 
 /// Which button is highlighted.
@@ -94,6 +99,16 @@ impl ConfirmState {
                     String::new()
                 };
                 ("Delete task?", format!("\"{}\"", title), warn)
+            }
+            PendingAction::DeleteDocument {
+                title, child_count, ..
+            } => {
+                let warn = if *child_count > 0 {
+                    format!("{} child document(s) will be orphaned.", child_count)
+                } else {
+                    String::new()
+                };
+                ("Delete document?", format!("\"{}\"", title), warn)
             }
         };
 
