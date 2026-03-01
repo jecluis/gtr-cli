@@ -624,6 +624,12 @@ fn handle_sidebar_select(
     let name = state.sidebar.selected_name().to_string();
 
     match kind {
+        Some(TreeItemKind::Dashboard) => {
+            state.main_view = MainView::Dashboard;
+            state.focus = FocusPanel::Main;
+            state.nav_history.clear();
+            Ok(Control::Changed)
+        }
         Some(TreeItemKind::Project) if !id.is_empty() => {
             let task_list = TaskListState::from_cache(&ctx.cache, &id, &name, &ctx.config)?;
             state.main_view = MainView::TaskList(Box::new(task_list));

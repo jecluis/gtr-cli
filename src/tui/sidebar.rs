@@ -35,9 +35,12 @@ const META_ROOT_UUID: &str = "00000000-0000-0000-0000-000000000000";
 /// The kind of entity a sidebar item represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreeItemKind {
+    Dashboard,
     SectionHeader,
     Project,
     Namespace,
+    /// Non-selectable horizontal divider.
+    Divider,
 }
 
 /// A flattened, renderable tree item.
@@ -48,6 +51,18 @@ struct TreeItem {
     depth: u16,
     kind: TreeItemKind,
     is_section_header: bool,
+}
+
+impl TreeItem {
+    fn divider() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            depth: 0,
+            kind: TreeItemKind::Divider,
+            is_section_header: false,
+        }
+    }
 }
 
 /// Which section of the sidebar is focused.
@@ -73,6 +88,17 @@ impl SidebarState {
 
         let mut items = Vec::new();
 
+        // Dashboard entry at the top.
+        items.push(TreeItem {
+            id: String::new(),
+            name: "Dashboard".to_string(),
+            depth: 0,
+            kind: TreeItemKind::Dashboard,
+            is_section_header: false,
+        });
+
+        items.push(TreeItem::divider());
+
         // Projects section
         items.push(TreeItem {
             id: String::new(),
@@ -82,6 +108,8 @@ impl SidebarState {
             is_section_header: true,
         });
         flatten_projects(&projects, Some(META_ROOT_UUID), 1, &mut items);
+
+        items.push(TreeItem::divider());
 
         // Namespaces section
         items.push(TreeItem {
@@ -96,17 +124,27 @@ impl SidebarState {
         Ok(Self { items, selected: 0 })
     }
 
-    /// Move selection up.
+    /// Move selection up, skipping dividers.
     pub fn select_prev(&mut self) {
-        if self.selected > 0 {
-            self.selected -= 1;
+        let mut target = self.selected;
+        while target > 0 {
+            target -= 1;
+            if self.items[target].kind != TreeItemKind::Divider {
+                self.selected = target;
+                return;
+            }
         }
     }
 
-    /// Move selection down.
+    /// Move selection down, skipping dividers.
     pub fn select_next(&mut self) {
-        if self.selected + 1 < self.items.len() {
-            self.selected += 1;
+        let mut target = self.selected;
+        while target + 1 < self.items.len() {
+            target += 1;
+            if self.items[target].kind != TreeItemKind::Divider {
+                self.selected = target;
+                return;
+            }
         }
     }
 
@@ -152,7 +190,7 @@ impl SidebarState {
             }
 
             let is_selected = i == self.selected && focused;
-            let line = render_item(item, theme, is_selected);
+            let line = render_item(item, theme, is_selected, inner.width);
             let row = Rect::new(inner.x, inner.y + y, inner.width, 1);
             line.render(row, buf);
         }
@@ -160,7 +198,12 @@ impl SidebarState {
 }
 
 /// Render a single tree item as a styled Line.
-fn render_item<'a>(item: &TreeItem, theme: &Theme, selected: bool) -> Line<'a> {
+fn render_item<'a>(item: &TreeItem, theme: &Theme, selected: bool, width: u16) -> Line<'a> {
+    if item.kind == TreeItemKind::Divider {
+        let line = "\u{2500}".repeat(width as usize);
+        return Line::from(Span::styled(line, theme.muted));
+    }
+
     let indent = "  ".repeat(item.depth as usize);
 
     let base_style = if selected {
@@ -174,6 +217,9 @@ fn render_item<'a>(item: &TreeItem, theme: &Theme, selected: bool) -> Line<'a> {
             .patch(theme.emphasis)
             .add_modifier(Modifier::UNDERLINED);
         Line::from(Span::styled(format!("{indent}{}", item.name), header_style))
+    } else if item.kind == TreeItemKind::Dashboard {
+        let style = base_style.patch(theme.emphasis);
+        Line::from(Span::styled(format!("{indent}{}", item.name), style))
     } else {
         let name_style = base_style.patch(theme.accent);
         Line::from(Span::styled(format!("{indent}{}", item.name), name_style))
