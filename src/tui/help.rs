@@ -182,7 +182,19 @@ fn help_sections() -> Vec<HelpSection> {
             bindings: vec![
                 ("/", "Filter by title"),
                 ("r", "Toggle recursive"),
+                ("n", "New document"),
                 ("u", "Update fields"),
+                ("e", "Edit in $EDITOR"),
+                ("x", "Delete"),
+            ],
+        },
+        HelpSection {
+            title: "Document Detail",
+            bindings: vec![
+                ("e", "Edit in $EDITOR"),
+                ("u", "Update fields"),
+                ("x", "Delete"),
+                ("m", "Move to namespace"),
             ],
         },
         HelpSection {
@@ -190,6 +202,7 @@ fn help_sections() -> Vec<HelpSection> {
             bindings: vec![
                 (":q / :quit", "Quit"),
                 (":new <title>", "Create task"),
+                (":doc new <title>", "Create document"),
                 (":search <query>", "Search (or :s)"),
                 (":sync", "Sync with server"),
                 (":feels [E F]", "Set feels or dialog"),
