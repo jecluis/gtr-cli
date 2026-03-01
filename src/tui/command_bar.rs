@@ -42,6 +42,8 @@ pub enum Command {
     },
     /// Show the help overlay.
     Help,
+    /// Create a document with the given title in the current namespace.
+    DocNew { title: String },
     /// Unrecognised command.
     Unknown(String),
 }
@@ -147,6 +149,13 @@ impl CommandBarState {
             return Command::Search {
                 query: rest.trim().to_string(),
             };
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("doc new ") {
+            let title = rest.trim().to_string();
+            if !title.is_empty() {
+                return Command::DocNew { title };
+            }
         }
 
         Command::Unknown(trimmed.to_string())

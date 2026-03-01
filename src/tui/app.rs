@@ -642,6 +642,9 @@ fn handle_event(
                 KeyCode::Char('x') => {
                     return handle_delete_document_from_list(state, ctx);
                 }
+                KeyCode::Char('n') => {
+                    return handle_new_document(state);
+                }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = MainView::Dashboard;
                     state.nav_history.clear();
@@ -1016,6 +1019,16 @@ fn handle_editor_from_doc_detail(
     Ok(Control::Changed)
 }
 
+fn handle_new_document(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocList(ref doc_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let namespace_id = doc_list.namespace_id.clone();
+    let namespace_name = doc_list.namespace_name.clone();
+    state.doc_form = Some(DocFormState::new(namespace_id, namespace_name));
+    Ok(Control::Changed)
+}
+
 fn handle_editor_from_doc_list(
     state: &mut AppState,
     ctx: &mut Global,
@@ -1304,6 +1317,25 @@ fn execute_command(
         }
         Command::Help => {
             state.help = Some(HelpOverlayState::new());
+            Ok(Control::Changed)
+        }
+        Command::DocNew { title } => {
+            let namespace_id = match &state.main_view {
+                MainView::DocList(dl) => dl.namespace_id.clone(),
+                MainView::DocDetail { list, .. } => list.namespace_id.clone(),
+                _ => return Ok(Control::Changed),
+            };
+            crate::mutations::create_document(
+                &ctx.storage,
+                &ctx.cache,
+                &namespace_id,
+                &title,
+                String::new(),
+                vec![],
+                None,
+            )?;
+            refresh_current_view(state, ctx);
+            trigger_background_sync(state, ctx);
             Ok(Control::Changed)
         }
         Command::Unknown(_) => {
@@ -2401,6 +2433,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" filter", theme.status_desc),
                 Span::styled("  r", theme.status_key),
                 Span::styled(" recursive", theme.status_desc),
+                Span::styled("  n", theme.status_key),
+                Span::styled(" new", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
                 Span::styled("  x", theme.status_key),
