@@ -39,6 +39,8 @@ use crate::storage::{StorageConfig, TaskStorage};
 use crate::tui::command_bar::CommandBarState;
 use crate::tui::confirm::ConfirmState;
 use crate::tui::create_form::{FormField, TaskFormState};
+use crate::tui::doc_detail::DocumentDetailState;
+use crate::tui::doc_list::DocumentListState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::sidebar::{SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
@@ -103,6 +105,12 @@ pub enum MainView {
         detail: Box<TaskDetailState>,
         /// Preserved list state so we can go back.
         list: Box<TaskListState>,
+    },
+    DocList(Box<DocumentListState>),
+    DocDetail {
+        detail: Box<DocumentDetailState>,
+        /// Preserved list state so we can go back.
+        list: Box<DocumentListState>,
     },
 }
 
@@ -185,6 +193,10 @@ fn render(
         MainView::Dashboard => render_dashboard(theme, main_focused, columns[1], buf),
         MainView::TaskList(task_list) => task_list.render(theme, main_focused, columns[1], buf),
         MainView::TaskDetail { detail, .. } => {
+            detail.render(theme, main_focused, columns[1], buf);
+        }
+        MainView::DocList(doc_list) => doc_list.render(theme, main_focused, columns[1], buf),
+        MainView::DocDetail { detail, .. } => {
             detail.render(theme, main_focused, columns[1], buf);
         }
     }
@@ -345,6 +357,44 @@ fn handle_event(
             }
         }
 
+        // Document list filter mode.
+        if let MainView::DocList(ref mut doc_list) = state.main_view
+            && doc_list.is_filtering()
+        {
+            match key.code {
+                KeyCode::Esc => {
+                    doc_list.cancel_filter();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Enter => return Ok(Control::Changed),
+                KeyCode::Backspace => {
+                    doc_list.filter_pop();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Char(c) => {
+                    doc_list.filter_push(c);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Up => {
+                    doc_list.select_prev();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Down => {
+                    doc_list.select_next();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageUp => {
+                    doc_list.select_page_up(10);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageDown => {
+                    doc_list.select_page_down(10);
+                    return Ok(Control::Changed);
+                }
+                _ => return Ok(Control::Continue),
+            }
+        }
+
         match &mut state.main_view {
             MainView::TaskList(task_list) => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -441,6 +491,58 @@ fn handle_event(
                 }
                 _ => {}
             },
+            MainView::DocList(doc_list) => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    doc_list.select_prev();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    doc_list.select_next();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageUp => {
+                    doc_list.select_page_up(10);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageDown => {
+                    doc_list.select_page_down(10);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                    return handle_doc_list_select(state, ctx);
+                }
+                KeyCode::Char('/') => {
+                    doc_list.start_filter();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
+                    state.main_view = MainView::Dashboard;
+                    return Ok(Control::Changed);
+                }
+                _ => {}
+            },
+            MainView::DocDetail { detail, .. } => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    detail.scroll_up();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    detail.scroll_down();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageUp => {
+                    detail.scroll_page_up(10);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::PageDown => {
+                    detail.scroll_page_down(10);
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
+                    return handle_back_from_doc_detail(state);
+                }
+                _ => {}
+            },
             MainView::Dashboard => {}
         }
     }
@@ -457,7 +559,8 @@ fn handle_event(
             // q navigates back through the view stack before quitting.
             match &state.main_view {
                 MainView::TaskDetail { .. } => handle_back_from_detail(state),
-                MainView::TaskList(_) => {
+                MainView::DocDetail { .. } => handle_back_from_doc_detail(state),
+                MainView::TaskList(_) | MainView::DocList(_) => {
                     state.main_view = MainView::Dashboard;
                     Ok(Control::Changed)
                 }
@@ -486,6 +589,12 @@ fn handle_sidebar_select(
         Some(TreeItemKind::Project) if !id.is_empty() => {
             let task_list = TaskListState::from_cache(&ctx.cache, &id, &name, &ctx.config)?;
             state.main_view = MainView::TaskList(Box::new(task_list));
+            state.focus = FocusPanel::Main;
+            Ok(Control::Changed)
+        }
+        Some(TreeItemKind::Namespace) if !id.is_empty() => {
+            let doc_list = DocumentListState::from_cache(&ctx.cache, &id, &name, &ctx.config)?;
+            state.main_view = MainView::DocList(Box::new(doc_list));
             state.focus = FocusPanel::Main;
             Ok(Control::Changed)
         }
@@ -835,7 +944,9 @@ fn execute_command(
             let project_id = match &state.main_view {
                 MainView::TaskList(list) => list.project_id.clone(),
                 MainView::TaskDetail { list, .. } => list.project_id.clone(),
-                MainView::Dashboard => return Ok(Control::Changed),
+                MainView::Dashboard | MainView::DocList(_) | MainView::DocDetail { .. } => {
+                    return Ok(Control::Changed);
+                }
             };
 
             crate::mutations::create_task(
@@ -1049,6 +1160,11 @@ fn refresh_current_view(state: &mut AppState, ctx: &mut Global) {
     match &mut state.main_view {
         MainView::TaskList(list) => list.refresh(&ctx.cache, &ctx.config),
         MainView::TaskDetail { detail, list } => {
+            detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
+            list.refresh(&ctx.cache, &ctx.config);
+        }
+        MainView::DocList(list) => list.refresh(&ctx.cache, &ctx.config),
+        MainView::DocDetail { detail, list } => {
             detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
             list.refresh(&ctx.cache, &ctx.config);
         }
@@ -1295,6 +1411,51 @@ fn handle_back_from_detail(state: &mut AppState) -> Result<Control<AppEvent>, cr
     Ok(Control::Changed)
 }
 
+/// Handle Enter on a document in the document list.
+fn handle_doc_list_select(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocList(ref doc_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+
+    let Some(doc_id) = doc_list.selected_id() else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = doc_id.to_string();
+    let ns_name = doc_list.namespace_name.clone();
+
+    let doc = match ctx.storage.load_document(&doc_id) {
+        Ok(doc) => doc,
+        Err(_) => return Ok(Control::Continue),
+    };
+
+    let detail = Box::new(DocumentDetailState::new(
+        doc,
+        ns_name,
+        &ctx.cache,
+        &ctx.config,
+    ));
+
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+    let MainView::DocList(list) = prev else {
+        unreachable!();
+    };
+    state.main_view = MainView::DocDetail { detail, list };
+
+    Ok(Control::Changed)
+}
+
+/// Navigate back from document detail to the document list.
+fn handle_back_from_doc_detail(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+    if let MainView::DocDetail { list, .. } = prev {
+        state.main_view = MainView::DocList(list);
+    }
+    Ok(Control::Changed)
+}
+
 /// Spawn a background sync to push local mutations to the server.
 fn trigger_background_sync(state: &mut AppState, ctx: &mut Global) {
     state.sync_status = SyncStatus::Syncing;
@@ -1344,6 +1505,33 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
+            ]);
+        }
+        (MainView::DocDetail { .. }, FocusPanel::Main) => {
+            hints.extend([
+                Span::styled(" Esc", theme.status_key),
+                Span::styled(" back", theme.status_desc),
+                Span::styled("  j/k", theme.status_key),
+                Span::styled(" scroll", theme.status_desc),
+            ]);
+        }
+        (MainView::DocList(dl), FocusPanel::Main) if dl.is_filtering() => {
+            hints.extend([
+                Span::styled(" Esc", theme.status_key),
+                Span::styled(" cancel", theme.status_desc),
+                Span::styled("  type to filter", theme.status_desc),
+            ]);
+        }
+        (MainView::DocList(_), FocusPanel::Main) => {
+            hints.extend([
+                Span::styled(" Esc", theme.status_key),
+                Span::styled(" back", theme.status_desc),
+                Span::styled("  j/k", theme.status_key),
+                Span::styled(" nav", theme.status_desc),
+                Span::styled("  Enter", theme.status_key),
+                Span::styled(" open", theme.status_desc),
+                Span::styled("  /", theme.status_key),
+                Span::styled(" filter", theme.status_desc),
             ]);
         }
         (MainView::TaskList(tl), FocusPanel::Main) if tl.is_filtering() => {
