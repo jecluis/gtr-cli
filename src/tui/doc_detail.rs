@@ -30,6 +30,7 @@ use ratatui::widgets::{
     Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
 };
 
+use super::nav::{NavLink, NavTarget};
 use super::theme::{LABEL_PALETTE, Theme};
 use crate::cache::{ReferenceRow, TaskCache};
 use crate::config::Config;
@@ -39,6 +40,18 @@ use crate::output::compute_min_prefix_len;
 
 /// Padding width for field labels (e.g. "Namespace:  value").
 const FIELD_LABEL_WIDTH: usize = 14;
+
+/// Resolved child document info.
+struct ChildInfo {
+    id: String,
+    title: String,
+}
+
+/// Resolved parent document info.
+struct ParentDocInfo {
+    id: String,
+    title: String,
+}
 
 /// State for the document detail view.
 pub struct DocumentDetailState {
@@ -60,6 +73,14 @@ pub struct DocumentDetailState {
     forward_refs: Vec<ReferenceRow>,
     /// Back-references pointing at this document.
     back_refs: Vec<ReferenceRow>,
+    /// Resolved parent document info.
+    parent_doc_info: Option<ParentDocInfo>,
+    /// Resolved child documents.
+    children: Vec<ChildInfo>,
+    /// Navigable links in the detail content.
+    nav_links: Vec<NavLink>,
+    /// Currently selected link index (if any).
+    selected_link: Option<usize>,
 }
 
 impl DocumentDetailState {
@@ -105,6 +126,29 @@ impl DocumentDetailState {
             .unwrap_or_default();
         let back_refs = cache.get_back_refs(&doc.id, "document").unwrap_or_default();
 
+        // Resolve parent document info.
+        let parent_doc_info = doc.parent_id.as_ref().and_then(|pid| {
+            cache
+                .get_document(pid)
+                .ok()
+                .flatten()
+                .map(|d| ParentDocInfo {
+                    id: d.id,
+                    title: d.title,
+                })
+        });
+
+        // Resolve child documents.
+        let children: Vec<ChildInfo> = cache
+            .get_document_children(&doc.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| ChildInfo {
+                id: d.id,
+                title: d.title,
+            })
+            .collect();
+
         Self {
             doc,
             namespace_name,
@@ -115,6 +159,10 @@ impl DocumentDetailState {
             label_color_map,
             forward_refs,
             back_refs,
+            parent_doc_info,
+            children,
+            nav_links: Vec::new(),
+            selected_link: None,
         }
     }
 
@@ -141,6 +189,46 @@ impl DocumentDetailState {
     /// Scroll down by a page.
     pub fn scroll_page_down(&mut self, page_size: u16) {
         self.scroll = self.scroll.saturating_add(page_size);
+    }
+
+    /// Select the next navigable link (wraps around).
+    pub fn select_next_link(&mut self) {
+        if self.nav_links.is_empty() {
+            return;
+        }
+        self.selected_link = Some(match self.selected_link {
+            Some(i) => (i + 1) % self.nav_links.len(),
+            None => 0,
+        });
+    }
+
+    /// Select the previous navigable link (wraps around).
+    pub fn select_prev_link(&mut self) {
+        if self.nav_links.is_empty() {
+            return;
+        }
+        self.selected_link = Some(match self.selected_link {
+            Some(0) => self.nav_links.len() - 1,
+            Some(i) => i - 1,
+            None => self.nav_links.len() - 1,
+        });
+    }
+
+    /// Deselect the current link. Returns true if a link was deselected.
+    pub fn deselect_link(&mut self) -> bool {
+        self.selected_link.take().is_some()
+    }
+
+    /// Get the navigation target of the currently selected link.
+    pub fn selected_nav_target(&self) -> Option<&NavTarget> {
+        self.selected_link
+            .and_then(|i| self.nav_links.get(i))
+            .map(|link| &link.target)
+    }
+
+    /// Whether this detail view has any navigable links.
+    pub fn has_nav_links(&self) -> bool {
+        !self.nav_links.is_empty()
     }
 
     /// Reload the document from storage, preserving scroll position.
@@ -174,8 +262,34 @@ impl DocumentDetailState {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let lines = self.build_content(theme);
+        let mut lines = self.build_content(theme);
         self.content_height = lines.len() as u16;
+
+        // Highlight the currently selected nav link line.
+        if let Some(sel) = self.selected_link
+            && let Some(link) = self.nav_links.get(sel)
+        {
+            let idx = link.line_index;
+            if idx < lines.len() {
+                let original = std::mem::take(&mut lines[idx]);
+                let mut spans = vec![Span::styled("> ", theme.accent)];
+                spans.extend(
+                    original.spans.into_iter().map(|s| {
+                        Span::styled(s.content.to_string(), theme.selected.patch(s.style))
+                    }),
+                );
+                lines[idx] = Line::from(spans);
+            }
+
+            // Auto-scroll to keep selected link visible.
+            let link_line = idx as u16;
+            if link_line < self.scroll {
+                self.scroll = link_line;
+            } else if link_line >= self.scroll + inner.height {
+                self.scroll = link_line.saturating_sub(inner.height - 1);
+            }
+        }
+
         let text = Text::from(lines);
 
         Paragraph::new(text)
@@ -203,8 +317,9 @@ impl DocumentDetailState {
         }
     }
 
-    /// Build the full content as styled lines.
-    fn build_content(&self, theme: &Theme) -> Vec<Line<'static>> {
+    /// Build the full content as styled lines, recording navigable links.
+    fn build_content(&mut self, theme: &Theme) -> Vec<Line<'static>> {
+        self.nav_links.clear();
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // ── Title Block ──
@@ -215,6 +330,9 @@ impl DocumentDetailState {
 
         // ── Content (markdown) ──
         self.build_content_section(theme, &mut lines);
+
+        // ── Children ──
+        self.build_children_section(theme, &mut lines);
 
         // ── References ──
         self.build_references_section(theme, &mut lines);
@@ -246,7 +364,7 @@ impl DocumentDetailState {
     }
 
     /// Render all metadata fields.
-    fn build_metadata_fields(&self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+    fn build_metadata_fields(&mut self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
         let d = &self.doc;
 
         // ID: cyan prefix | gray suffix
@@ -319,13 +437,21 @@ impl DocumentDetailState {
         }
 
         // Parent (only if set)
-        if let Some(ref pid) = d.parent_id {
-            let (pp, ps) = display::split_id(pid, self.prefix_len);
+        if let Some(ref parent) = self.parent_doc_info {
+            let (pp, ps) = display::split_id(&parent.id, self.prefix_len);
+            self.nav_links.push(NavLink {
+                target: NavTarget::Document {
+                    id: parent.id.clone(),
+                },
+                line_index: lines.len(),
+            });
             styled_field(
                 "  Parent",
                 vec![
                     Span::styled(format!("{pp}\u{2502}"), theme.accent),
                     Span::styled(ps.to_string(), Style::default().fg(Color::Gray)),
+                    Span::raw("  "),
+                    Span::raw(parent.title.clone()),
                 ],
                 theme,
                 lines,
@@ -380,8 +506,38 @@ impl DocumentDetailState {
         }
     }
 
+    /// Render child documents section.
+    fn build_children_section(&mut self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+        if self.children.is_empty() {
+            return;
+        }
+
+        lines.push(Line::default());
+        lines.push(section_header(
+            &format!("Children ({})", self.children.len()),
+            theme,
+        ));
+
+        for child in &self.children {
+            let (cp, cs) = display::split_id(&child.id, self.prefix_len);
+            self.nav_links.push(NavLink {
+                target: NavTarget::Document {
+                    id: child.id.clone(),
+                },
+                line_index: lines.len(),
+            });
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{cp}\u{2502}"), theme.accent),
+                Span::styled(cs.to_string(), Style::default().fg(Color::Gray)),
+                Span::raw("  "),
+                Span::raw(child.title.clone()),
+            ]));
+        }
+    }
+
     /// Render forward references section.
-    fn build_references_section(&self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+    fn build_references_section(&mut self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
         if self.forward_refs.is_empty() {
             return;
         }
@@ -391,6 +547,18 @@ impl DocumentDetailState {
 
         for r in &self.forward_refs {
             let (tp, ts) = display::split_id(&r.target_id, self.prefix_len);
+            let target = match r.target_type.as_str() {
+                "document" => NavTarget::Document {
+                    id: r.target_id.clone(),
+                },
+                _ => NavTarget::Task {
+                    id: r.target_id.clone(),
+                },
+            };
+            self.nav_links.push(NavLink {
+                target,
+                line_index: lines.len(),
+            });
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(r.ref_type.clone(), ref_type_style(&r.ref_type)),
@@ -406,7 +574,7 @@ impl DocumentDetailState {
     }
 
     /// Render back-links section.
-    fn build_backlinks_section(&self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+    fn build_backlinks_section(&mut self, theme: &Theme, lines: &mut Vec<Line<'static>>) {
         if self.back_refs.is_empty() {
             return;
         }
@@ -416,6 +584,18 @@ impl DocumentDetailState {
 
         for r in &self.back_refs {
             let (sp, ss) = display::split_id(&r.source_id, self.prefix_len);
+            let target = match r.source_type.as_str() {
+                "document" => NavTarget::Document {
+                    id: r.source_id.clone(),
+                },
+                _ => NavTarget::Task {
+                    id: r.source_id.clone(),
+                },
+            };
+            self.nav_links.push(NavLink {
+                target,
+                line_index: lines.len(),
+            });
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(r.ref_type.clone(), ref_type_style(&r.ref_type)),
