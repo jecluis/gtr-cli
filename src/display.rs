@@ -308,6 +308,38 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
+// ── Feels descriptions ──────────────────────────────────────────────
+
+/// Human-readable energy level labels.
+pub const ENERGY_LABELS: [&str; 5] = ["very low", "low", "moderate", "good", "high"];
+
+/// Human-readable focus level labels.
+pub const FOCUS_LABELS: [&str; 5] = ["scattered", "limited", "moderate", "good", "deep"];
+
+/// Describe an energy level (1–5) with context for task selection.
+pub fn energy_description(level: u8) -> &'static str {
+    match level {
+        1 => "very low \u{2014} need easy wins",
+        2 => "low \u{2014} prefer enjoyable tasks",
+        3 => "moderate",
+        4 => "good \u{2014} can handle some tedium",
+        5 => "high \u{2014} bring on anything",
+        _ => "unknown",
+    }
+}
+
+/// Describe a focus level (1–5) with context for task selection.
+pub fn focus_description(level: u8) -> &'static str {
+    match level {
+        1 => "scattered \u{2014} small tasks only",
+        2 => "limited \u{2014} prefer small/medium",
+        3 => "moderate",
+        4 => "good \u{2014} can tackle large tasks",
+        5 => "deep \u{2014} ready for anything",
+        _ => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

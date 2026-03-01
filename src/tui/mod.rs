@@ -27,6 +27,7 @@ pub mod confirm;
 pub mod create_form;
 pub mod doc_detail;
 pub mod doc_list;
+pub mod feels;
 pub mod keymap;
 pub mod nav;
 pub mod search;

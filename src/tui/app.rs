@@ -41,6 +41,7 @@ use crate::tui::confirm::ConfirmState;
 use crate::tui::create_form::{FormField, TaskFormState};
 use crate::tui::doc_detail::DocumentDetailState;
 use crate::tui::doc_list::DocumentListState;
+use crate::tui::feels::FeelsDialogState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::nav::NavTarget;
 use crate::tui::search::{SearchFilter, SearchOverlayState, SearchResultKind};
@@ -130,6 +131,7 @@ pub struct AppState {
     pub create_form: Option<TaskFormState>,
     pub command_bar: Option<CommandBarState>,
     pub search: Option<SearchOverlayState>,
+    pub feels: Option<FeelsDialogState>,
     pub sync_status: SyncStatus,
     /// Navigation history for detail-to-detail link following.
     pub nav_history: Vec<MainView>,
@@ -158,6 +160,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         create_form: None,
         command_bar: None,
         search: None,
+        feels: None,
         sync_status: SyncStatus::Idle,
         nav_history: Vec::new(),
     };
@@ -224,6 +227,11 @@ fn render(
     // Search overlay (full-screen, above content)
     if let Some(ref mut search) = state.search {
         search.render(theme, area, buf);
+    }
+
+    // Feels dialog
+    if let Some(ref feels) = state.feels {
+        feels.render(theme, area, buf);
     }
 
     // Overlay dialogs (above content, below which-key)
@@ -348,6 +356,11 @@ fn handle_event(
     // Search overlay intercepts all input when active.
     if state.search.is_some() {
         return handle_search_input(key.code, state, ctx);
+    }
+
+    // Feels dialog intercepts all input when active.
+    if state.feels.is_some() {
+        return handle_feels_input(key.code, state, ctx);
     }
 
     // Tab toggles focus between sidebar and main panel.
@@ -646,6 +659,18 @@ fn handle_event(
     // ':' opens command bar from anywhere (not during filter/overlay/mid-chord).
     if key.code == KeyCode::Char(':') && !state.keymap.is_pending() {
         state.command_bar = Some(CommandBarState::new());
+        return Ok(Control::Changed);
+    }
+
+    // 'f' opens the feels dialog from anywhere (not mid-chord).
+    if key.code == KeyCode::Char('f') && !state.keymap.is_pending() {
+        let today = chrono::Local::now().date_naive();
+        let dialog = if let Ok(Some(row)) = ctx.cache.get_today_feels(&today) {
+            FeelsDialogState::with_values(row.energy, row.focus)
+        } else {
+            FeelsDialogState::new()
+        };
+        state.feels = Some(dialog);
         return Ok(Control::Changed);
     }
 
@@ -1136,6 +1161,20 @@ fn execute_command(
             trigger_full_sync(state, ctx);
             Ok(Control::Changed)
         }
+        Command::Feels { energy, focus } => {
+            if let (Some(e), Some(f)) = (energy, focus) {
+                save_feels(e, f, ctx);
+            } else {
+                let today = chrono::Local::now().date_naive();
+                let dialog = if let Ok(Some(row)) = ctx.cache.get_today_feels(&today) {
+                    FeelsDialogState::with_values(row.energy, row.focus)
+                } else {
+                    FeelsDialogState::new()
+                };
+                state.feels = Some(dialog);
+            }
+            Ok(Control::Changed)
+        }
         Command::Unknown(_) => {
             // Silently ignore unknown commands
             Ok(Control::Changed)
@@ -1546,6 +1585,59 @@ fn handle_search_input(
         }
         _ => Ok(Control::Continue),
     }
+}
+
+// -- Feels dialog handlers --
+
+/// Handle key input while the feels dialog is active.
+fn handle_feels_input(
+    code: KeyCode,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match code {
+        KeyCode::Esc => {
+            state.feels = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            if let Some(feels) = state.feels.take() {
+                save_feels(feels.energy, feels.focus, ctx);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Tab | KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(ref mut feels) = state.feels {
+                feels.next_field();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(ref mut feels) = state.feels {
+                feels.prev_field();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            if let Some(ref mut feels) = state.feels {
+                feels.increment();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            if let Some(ref mut feels) = state.feels {
+                feels.decrement();
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
+/// Save feels to the cache.
+fn save_feels(energy: u8, focus: u8, ctx: &Global) {
+    let today = chrono::Local::now().date_naive();
+    let _ = ctx.cache.upsert_feels(&today, energy, focus);
 }
 
 /// Handle key input while the confirmation dialog is active.
@@ -2045,6 +2137,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
     }
 
     hints.extend([
+        Span::styled("  f", theme.status_key),
+        Span::styled(" feels", theme.status_desc),
         Span::styled("  ?", theme.status_key),
         Span::styled(" help", theme.status_desc),
     ]);

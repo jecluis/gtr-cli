@@ -25,6 +25,7 @@ use crate::Result;
 use crate::cache::TaskCache;
 use crate::client::Client;
 use crate::config::Config;
+use crate::display::{energy_description, focus_description};
 use crate::icons::Icons;
 
 /// Entry point: interactive picker when no args, direct set otherwise.
@@ -115,26 +116,4 @@ pub(crate) fn prompt_energy_focus() -> Result<(u8, u8)> {
     };
 
     Ok((energy_idx as u8 + 1, focus_idx as u8 + 1))
-}
-
-pub(crate) fn energy_description(level: u8) -> &'static str {
-    match level {
-        1 => "very low — need easy wins",
-        2 => "low — prefer enjoyable tasks",
-        3 => "moderate",
-        4 => "good — can handle some tedium",
-        5 => "high — bring on anything",
-        _ => "unknown",
-    }
-}
-
-pub(crate) fn focus_description(level: u8) -> &'static str {
-    match level {
-        1 => "scattered — small tasks only",
-        2 => "limited — prefer small/medium",
-        3 => "moderate",
-        4 => "good — can tackle large tasks",
-        5 => "deep — ready for anything",
-        _ => "unknown",
-    }
 }

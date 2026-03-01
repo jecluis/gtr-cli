@@ -22,8 +22,8 @@ use colored::Colorize;
 
 use crate::Result;
 use crate::cache::{ActiveTask, FeelsState, TaskCache};
-use crate::commands::feels::{energy_description, focus_description};
 use crate::config::Config;
+use crate::display::{energy_description, focus_description};
 use crate::output;
 
 /// Show a quick status dashboard.

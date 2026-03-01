@@ -35,6 +35,11 @@ pub enum Command {
     Search { query: String },
     /// Trigger a sync with the server.
     Sync,
+    /// Set feels directly (both values given) or open the feels dialog.
+    Feels {
+        energy: Option<u8>,
+        focus: Option<u8>,
+    },
     /// Unrecognised command.
     Unknown(String),
 }
@@ -98,6 +103,30 @@ impl CommandBarState {
 
         if trimmed == "sync" {
             return Command::Sync;
+        }
+
+        if trimmed == "feels" {
+            return Command::Feels {
+                energy: None,
+                focus: None,
+            };
+        }
+        if let Some(rest) = trimmed.strip_prefix("feels ") {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() == 2
+                && let (Ok(e), Ok(f)) = (parts[0].parse::<u8>(), parts[1].parse::<u8>())
+                && (1..=5).contains(&e)
+                && (1..=5).contains(&f)
+            {
+                return Command::Feels {
+                    energy: Some(e),
+                    focus: Some(f),
+                };
+            }
+            return Command::Feels {
+                energy: None,
+                focus: None,
+            };
         }
 
         if trimmed == "search" || trimmed == "s" {
