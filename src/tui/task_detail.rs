@@ -370,7 +370,7 @@ impl TaskDetailState {
         };
         let mut pri_spans = vec![Span::styled(effective.to_string(), pri_style)];
         if is_promoted {
-            pri_spans.push(Span::styled(" (promoted)", theme.muted));
+            pri_spans.push(Span::styled(" (promoted)", theme.warning));
         }
         styled_field("  Priority", pri_spans, theme, lines);
 
@@ -393,7 +393,7 @@ impl TaskDetailState {
         } else {
             styled_field(
                 "  Status",
-                vec![Span::styled("pending", theme.muted)],
+                vec![Span::styled("pending", Style::default().fg(Color::Gray))],
                 theme,
                 lines,
             );
@@ -585,7 +585,7 @@ impl TaskDetailState {
         ));
         for (i, label) in t.labels.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::styled(", ", theme.muted));
+                spans.push(Span::raw(", "));
             }
             let idx = self
                 .label_color_map
@@ -604,7 +604,10 @@ impl TaskDetailState {
         lines.push(section_header("Description", theme));
 
         if t.body.is_empty() {
-            lines.push(Line::from(Span::styled("  (No description)", theme.muted)));
+            lines.push(Line::from(Span::styled(
+                "  (No description)",
+                Style::default().fg(Color::Gray),
+            )));
         } else {
             let md_text = tui_markdown::from_str(&t.body);
             for line in md_text.lines {
@@ -641,7 +644,7 @@ impl TaskDetailState {
 
             let (sp, ss) = display::split_id(&sub.id, self.prefix_len);
             let title_style = if sub.is_done {
-                theme.muted
+                Style::default().fg(Color::Gray)
             } else {
                 Style::default()
             };

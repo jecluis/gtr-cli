@@ -520,7 +520,11 @@ impl TaskListState {
             } else {
                 "  No open tasks"
             };
-            Paragraph::new(Line::from(Span::styled(msg, theme.muted))).render(inner, buf);
+            Paragraph::new(Line::from(Span::styled(
+                msg,
+                Style::default().fg(Color::Gray),
+            )))
+            .render(inner, buf);
             return;
         }
 
@@ -683,7 +687,8 @@ impl TaskListState {
             inner.width,
             1,
         );
-        Line::from(Span::styled(count_text, theme.muted)).render(footer_area, buf);
+        Line::from(Span::styled(count_text, Style::default().fg(Color::Gray)))
+            .render(footer_area, buf);
     }
 
     /// Render a single task row (mirrors the CLI's `build_task_row` layout).
@@ -984,7 +989,7 @@ impl TaskListState {
             if task.parent_id.is_some() {
                 spans.push(Span::styled(
                     format!(" {} ", self.glyphs.hierarchy_separator),
-                    base.patch(theme.muted),
+                    base.fg(Color::Gray),
                 ));
             }
             let noun = if child_count == 1 {
@@ -1014,7 +1019,7 @@ impl TaskListState {
 
         for (i, label) in task.labels.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::styled(", ", base.patch(theme.muted)));
+                spans.push(Span::raw(", "));
             }
             let idx = self
                 .label_color_map
