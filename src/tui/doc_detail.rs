@@ -53,6 +53,16 @@ struct ParentDocInfo {
     title: String,
 }
 
+/// A reference row enriched with resolved entity title and slug.
+struct ResolvedRef {
+    /// The underlying reference row.
+    row: ReferenceRow,
+    /// Resolved title of the linked entity (if found).
+    title: Option<String>,
+    /// Resolved slug (documents only).
+    slug: Option<String>,
+}
+
 /// State for the document detail view.
 pub struct DocumentDetailState {
     /// Full document loaded from CRDT storage.
@@ -69,10 +79,10 @@ pub struct DocumentDetailState {
     prefix_len: usize,
     /// Label colour assignments.
     label_color_map: HashMap<String, LabelColorIndex>,
-    /// Forward references from this document.
-    forward_refs: Vec<ReferenceRow>,
-    /// Back-references pointing at this document.
-    back_refs: Vec<ReferenceRow>,
+    /// Forward references with resolved titles.
+    forward_refs: Vec<ResolvedRef>,
+    /// Back-references with resolved titles.
+    back_refs: Vec<ResolvedRef>,
     /// Resolved parent document info.
     parent_doc_info: Option<ParentDocInfo>,
     /// Resolved child documents.
@@ -120,11 +130,25 @@ impl DocumentDetailState {
                 .map(|(label, idx)| (label.to_string(), idx))
                 .collect();
 
-        // References.
-        let forward_refs = cache
+        // References — resolve titles for display.
+        let forward_refs: Vec<ResolvedRef> = cache
             .get_forward_refs(&doc.id, "document")
-            .unwrap_or_default();
-        let back_refs = cache.get_back_refs(&doc.id, "document").unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| {
+                let (title, slug) = resolve_entity_info(cache, &row.target_id, &row.target_type);
+                ResolvedRef { row, title, slug }
+            })
+            .collect();
+        let back_refs: Vec<ResolvedRef> = cache
+            .get_back_refs(&doc.id, "document")
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| {
+                let (title, slug) = resolve_entity_info(cache, &row.source_id, &row.source_type);
+                ResolvedRef { row, title, slug }
+            })
+            .collect();
 
         // Resolve parent document info.
         let parent_doc_info = doc.parent_id.as_ref().and_then(|pid| {
@@ -545,7 +569,8 @@ impl DocumentDetailState {
         lines.push(Line::default());
         lines.push(section_header("References", theme));
 
-        for r in &self.forward_refs {
+        for rr in &self.forward_refs {
+            let r = &rr.row;
             let (tp, ts) = display::split_id(&r.target_id, self.prefix_len);
             let target = match r.target_type.as_str() {
                 "document" => NavTarget::Document {
@@ -559,7 +584,7 @@ impl DocumentDetailState {
                 target,
                 line_index: lines.len(),
             });
-            lines.push(Line::from(vec![
+            let mut spans = vec![
                 Span::raw("  "),
                 Span::styled(r.ref_type.clone(), ref_type_style(&r.ref_type)),
                 Span::raw(" "),
@@ -569,7 +594,16 @@ impl DocumentDetailState {
                     format!(" ({})", r.target_type),
                     entity_type_style(&r.target_type),
                 ),
-            ]));
+            ];
+            if let Some(ref slug) = rr.slug
+                && !slug.is_empty()
+            {
+                spans.push(Span::styled(format!("  @{slug}"), theme.accent));
+            }
+            if let Some(ref title) = rr.title {
+                spans.push(Span::raw(format!("  {title}")));
+            }
+            lines.push(Line::from(spans));
         }
     }
 
@@ -582,7 +616,8 @@ impl DocumentDetailState {
         lines.push(Line::default());
         lines.push(section_header("Back-links", theme));
 
-        for r in &self.back_refs {
+        for rr in &self.back_refs {
+            let r = &rr.row;
             let (sp, ss) = display::split_id(&r.source_id, self.prefix_len);
             let target = match r.source_type.as_str() {
                 "document" => NavTarget::Document {
@@ -596,7 +631,7 @@ impl DocumentDetailState {
                 target,
                 line_index: lines.len(),
             });
-            lines.push(Line::from(vec![
+            let mut spans = vec![
                 Span::raw("  "),
                 Span::styled(r.ref_type.clone(), ref_type_style(&r.ref_type)),
                 Span::raw(" "),
@@ -606,7 +641,16 @@ impl DocumentDetailState {
                     format!(" ({})", r.source_type),
                     entity_type_style(&r.source_type),
                 ),
-            ]));
+            ];
+            if let Some(ref slug) = rr.slug
+                && !slug.is_empty()
+            {
+                spans.push(Span::styled(format!("  @{slug}"), theme.accent));
+            }
+            if let Some(ref title) = rr.title {
+                spans.push(Span::raw(format!("  {title}")));
+            }
+            lines.push(Line::from(spans));
         }
     }
 }
@@ -643,6 +687,30 @@ fn format_local_datetime(rfc3339: &str) -> Option<String> {
             .format("%Y-%m-%d %H:%M")
             .to_string()
     })
+}
+
+/// Resolve title and slug for a referenced entity.
+fn resolve_entity_info(
+    cache: &TaskCache,
+    id: &str,
+    entity_type: &str,
+) -> (Option<String>, Option<String>) {
+    match entity_type {
+        "document" => {
+            let doc = cache.get_document(id).ok().flatten();
+            let title = doc.as_ref().map(|d| d.title.clone());
+            let slug = doc
+                .as_ref()
+                .map(|d| d.slug.clone())
+                .filter(|s| !s.is_empty());
+            (title, slug)
+        }
+        "task" => {
+            let title = cache.get_task_summary(id).ok().flatten().map(|s| s.title);
+            (title, None)
+        }
+        _ => (None, None),
+    }
 }
 
 /// Style for a reference type based on its kind.
