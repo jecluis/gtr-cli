@@ -42,6 +42,7 @@ use crate::tui::create_form::{FormField, TaskFormState};
 use crate::tui::doc_detail::DocumentDetailState;
 use crate::tui::doc_list::DocumentListState;
 use crate::tui::feels::FeelsDialogState;
+use crate::tui::help::HelpOverlayState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::nav::NavTarget;
 use crate::tui::search::{SearchFilter, SearchOverlayState, SearchResultKind};
@@ -132,6 +133,7 @@ pub struct AppState {
     pub command_bar: Option<CommandBarState>,
     pub search: Option<SearchOverlayState>,
     pub feels: Option<FeelsDialogState>,
+    pub help: Option<HelpOverlayState>,
     pub sync_status: SyncStatus,
     /// Navigation history for detail-to-detail link following.
     pub nav_history: Vec<MainView>,
@@ -161,6 +163,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         command_bar: None,
         search: None,
         feels: None,
+        help: None,
         sync_status: SyncStatus::Idle,
         nav_history: Vec::new(),
     };
@@ -232,6 +235,11 @@ fn render(
     // Feels dialog
     if let Some(ref feels) = state.feels {
         feels.render(theme, area, buf);
+    }
+
+    // Help overlay
+    if let Some(ref help) = state.help {
+        help.render(theme, area, buf);
     }
 
     // Overlay dialogs (above content, below which-key)
@@ -361,6 +369,11 @@ fn handle_event(
     // Feels dialog intercepts all input when active.
     if state.feels.is_some() {
         return handle_feels_input(key.code, state, ctx);
+    }
+
+    // Help overlay intercepts all input when active.
+    if state.help.is_some() {
+        return handle_help_input(key.code, state);
     }
 
     // Tab toggles focus between sidebar and main panel.
@@ -723,7 +736,7 @@ fn handle_event(
             Ok(Control::Changed)
         }
         KeymapResult::Matched(Action::Help) => {
-            // Help overlay will be added in a later commit.
+            state.help = Some(HelpOverlayState::new());
             Ok(Control::Changed)
         }
         KeymapResult::Pending(_) => Ok(Control::Changed),
@@ -1175,6 +1188,10 @@ fn execute_command(
             }
             Ok(Control::Changed)
         }
+        Command::Help => {
+            state.help = Some(HelpOverlayState::new());
+            Ok(Control::Changed)
+        }
         Command::Unknown(_) => {
             // Silently ignore unknown commands
             Ok(Control::Changed)
@@ -1580,6 +1597,34 @@ fn handle_search_input(
             if let Some(ref mut search) = state.search {
                 search.char_input(c);
                 search.update_results(&ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
+// -- Help overlay handlers --
+
+/// Handle key input while the help overlay is active.
+fn handle_help_input(
+    code: KeyCode,
+    state: &mut AppState,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match code {
+        KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+            state.help = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            if let Some(ref mut help) = state.help {
+                help.prev_page();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            if let Some(ref mut help) = state.help {
+                help.next_page();
             }
             Ok(Control::Changed)
         }

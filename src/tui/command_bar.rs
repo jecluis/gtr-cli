@@ -40,6 +40,8 @@ pub enum Command {
         energy: Option<u8>,
         focus: Option<u8>,
     },
+    /// Show the help overlay.
+    Help,
     /// Unrecognised command.
     Unknown(String),
 }
@@ -103,6 +105,10 @@ impl CommandBarState {
 
         if trimmed == "sync" {
             return Command::Sync;
+        }
+
+        if trimmed == "help" || trimmed == "h" {
+            return Command::Help;
         }
 
         if trimmed == "feels" {
