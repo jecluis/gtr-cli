@@ -48,6 +48,12 @@ struct SubtaskInfo {
     is_done: bool,
 }
 
+/// Resolved parent task info.
+struct ParentInfo {
+    id: String,
+    title: String,
+}
+
 /// State for the task detail view.
 pub struct TaskDetailState {
     /// The full task being displayed.
@@ -60,6 +66,8 @@ pub struct TaskDetailState {
     content_height: u16,
     /// Ancestor breadcrumb trail (e.g. "workspace > clyso > cbs").
     breadcrumb: String,
+    /// Resolved parent task info (if this task has a parent).
+    parent_info: Option<ParentInfo>,
     /// Resolved subtask info (title + done status).
     subtask_info: Vec<SubtaskInfo>,
     /// Minimum prefix length for unique ID display.
@@ -90,22 +98,28 @@ impl TaskDetailState {
             project_name.clone()
         };
 
-        // Resolve subtask titles and done status.
-        let subtask_info: Vec<SubtaskInfo> = task
-            .subtasks
-            .iter()
-            .map(|sub_id| {
-                let (title, is_done) = cache
-                    .get_task_summary(sub_id)
-                    .ok()
-                    .flatten()
-                    .map(|s| (s.title, s.done.is_some()))
-                    .unwrap_or_else(|| (String::new(), false));
-                SubtaskInfo {
-                    id: sub_id.clone(),
-                    title,
-                    is_done,
-                }
+        // Resolve parent task info.
+        let parent_info = task.parent_id.as_ref().and_then(|pid| {
+            cache
+                .get_task_summary(pid)
+                .ok()
+                .flatten()
+                .map(|s| ParentInfo {
+                    id: s.id,
+                    title: s.title,
+                })
+        });
+
+        // Resolve children from cache (queries by parent_id, more
+        // reliable than the task's subtasks vec).
+        let subtask_info: Vec<SubtaskInfo> = cache
+            .get_children(&task.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| SubtaskInfo {
+                id: s.id,
+                title: s.title,
+                is_done: s.done.is_some(),
             })
             .collect();
 
@@ -146,6 +160,7 @@ impl TaskDetailState {
             scroll: 0,
             content_height: 0,
             breadcrumb,
+            parent_info,
             subtask_info,
             prefix_len,
             glyphs,
@@ -356,6 +371,22 @@ impl TaskDetailState {
                     self.breadcrumb.clone(),
                     theme.accent.add_modifier(Modifier::BOLD),
                 )],
+                theme,
+                lines,
+            );
+        }
+
+        // Parent: ID + title (only if this task has a parent).
+        if let Some(ref parent) = self.parent_info {
+            let (pp, ps) = display::split_id(&parent.id, self.prefix_len);
+            styled_field(
+                "  Parent",
+                vec![
+                    Span::styled(format!("{pp}\u{2502}"), theme.accent),
+                    Span::styled(ps.to_string(), Style::default().fg(Color::Gray)),
+                    Span::raw("  "),
+                    Span::raw(parent.title.clone()),
+                ],
                 theme,
                 lines,
             );
@@ -738,17 +769,24 @@ fn format_relative_time(timestamp: &DateTime<Utc>) -> String {
 }
 
 /// Choose a style for a log entry based on what changed.
+///
+/// Each entry type gets a distinct color to avoid confusion:
+/// - Priority: red (now) / magenta (other)
+/// - Deadline: yellow (set and removed)
+/// - Status / WorkState: green
+/// - Progress: cyan
+/// - Impact / Joy: magenta
+/// - Size / Title / Body: default
 fn log_entry_style(entry: &LogEntryType, theme: &Theme) -> Style {
     match entry {
         LogEntryType::PriorityChanged { to, .. } => {
             if to == "now" {
                 theme.danger
             } else {
-                theme.accent
+                Style::default().fg(Color::Magenta)
             }
         }
-        LogEntryType::DeadlineChanged { to: None, .. } => theme.warning,
-        LogEntryType::DeadlineChanged { .. } => theme.accent,
+        LogEntryType::DeadlineChanged { .. } => theme.warning,
         LogEntryType::StatusChanged { .. } => theme.success,
         LogEntryType::WorkStateChanged { .. } => theme.success,
         LogEntryType::SizeChanged { .. } => Style::default(),
