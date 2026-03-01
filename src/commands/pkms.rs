@@ -20,7 +20,6 @@
 use colored::Colorize;
 
 use chrono::Utc;
-use uuid::Uuid;
 
 use crate::Result;
 use crate::cache::CachedDocument;
@@ -77,38 +76,15 @@ pub async fn create(
         None => None,
     };
 
-    let now = Utc::now().to_rfc3339();
-    let doc = Document {
-        id: Uuid::new_v4().to_string(),
-        namespace_id: ns_id.clone(),
-        title: title_str,
-        content,
-        created: now.clone(),
-        modified: now,
-        deleted: None,
-        version: 1,
-        parent_id: resolved_parent,
-        slug: String::new(),
-        slug_aliases: vec![],
-        labels,
-        references: vec![],
-        custom: serde_json::Value::Object(Default::default()),
-    };
-
-    // Save locally
-    ctx.storage.create_document(&doc)?;
-    ctx.cache.upsert_document(&doc, true)?;
-
-    // Rebuild inline references from content
-    let refs = crate::references::build_refs_for_document(
+    let doc = crate::mutations::create_document(
+        &ctx.storage,
         &ctx.cache,
-        &doc.id,
-        &doc.namespace_id,
-        &doc.references,
-        &doc.content,
+        &ns_id,
+        &title_str,
+        content,
+        labels,
+        resolved_parent,
     )?;
-    ctx.cache
-        .replace_refs_for_source(&doc.id, "document", &refs)?;
 
     let all_ids = ctx.cache.all_document_ids()?;
     let prefix_len = output::compute_min_prefix_len(&all_ids);
@@ -367,7 +343,7 @@ pub async fn update(
     let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
     // Load current document from local storage (or fetch from server)
-    let mut doc = ctx.load_document(&client, &doc_id).await?;
+    let doc = ctx.load_document(&client, &doc_id).await?;
 
     // Handle body editing (with title as H1 header)
     let (editor_title, new_content) = if body {
@@ -424,41 +400,45 @@ pub async fn update(
         return Ok(());
     }
 
-    // Apply changes to the document
-    if let Some(ref t) = effective_title {
-        doc.title = t.clone();
-    }
-    if let Some(ref c) = new_content {
-        doc.content = c.clone();
-    }
-    if let Some(ref pid) = parent_id {
-        if pid.is_empty() {
-            doc.parent_id = None;
+    // Resolve parent_id to the Option<Option<String>> form expected by
+    // the mutation: Some(None) = clear parent, Some(Some(id)) = set.
+    let resolved_parent = parent_id.map(|pid| if pid.is_empty() { None } else { Some(pid) });
+
+    // Apply changes via shared mutation functions
+    let has_metadata = merged_labels.is_some() || resolved_parent.is_some();
+    let doc = if let Some(content) = new_content {
+        // Content changed — fold title into content update
+        let doc = crate::mutations::update_document_content(
+            &ctx.storage,
+            &ctx.cache,
+            &doc.id,
+            effective_title,
+            content,
+        )?;
+        // If labels/parent also changed, apply as a follow-up
+        if has_metadata {
+            crate::mutations::update_document_metadata(
+                &ctx.storage,
+                &ctx.cache,
+                &doc.id,
+                None,
+                merged_labels,
+                resolved_parent,
+            )?
         } else {
-            doc.parent_id = Some(pid.clone());
+            doc
         }
-    }
-    if let Some(lbls) = merged_labels {
-        doc.labels = lbls;
-    }
-
-    doc.modified = Utc::now().to_rfc3339();
-    doc.version += 1;
-
-    // Save locally
-    ctx.storage.update_document(&doc)?;
-    ctx.cache.upsert_document(&doc, true)?;
-
-    // Rebuild inline references from content
-    let refs = crate::references::build_refs_for_document(
-        &ctx.cache,
-        &doc.id,
-        &doc.namespace_id,
-        &doc.references,
-        &doc.content,
-    )?;
-    ctx.cache
-        .replace_refs_for_source(&doc.id, "document", &refs)?;
+    } else {
+        // Metadata-only update (title, labels, parent)
+        crate::mutations::update_document_metadata(
+            &ctx.storage,
+            &ctx.cache,
+            &doc.id,
+            effective_title,
+            merged_labels,
+            resolved_parent,
+        )?
+    };
 
     println!(
         "{}",
@@ -497,13 +477,9 @@ pub async fn delete(config: &Config, doc_id: &str, _recursive: bool, no_sync: bo
     let ctx = LocalContext::new(config, !no_sync)?;
     let doc_id = &crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
 
-    let mut doc = ctx.load_document(&client, doc_id).await?;
-    doc.deleted = Some(Utc::now().to_rfc3339());
-    doc.modified = Utc::now().to_rfc3339();
-    doc.version += 1;
-
-    ctx.storage.update_document(&doc)?;
-    ctx.cache.upsert_document(&doc, true)?;
+    // Ensure document is available locally before deleting
+    let _doc = ctx.load_document(&client, doc_id).await?;
+    crate::mutations::delete_document(&ctx.storage, &ctx.cache, doc_id)?;
 
     println!(
         "{}",
@@ -571,24 +547,9 @@ pub async fn move_doc(config: &Config, doc_id: &str, namespace: &str, no_sync: b
     let doc_id = crate::utils::resolve_document_id(&ctx.cache, doc_id)?;
     let ns_id = resolve::resolve_namespace(&ctx.cache, namespace)?;
 
-    let mut doc = ctx.load_document(&client, &doc_id).await?;
-    doc.namespace_id = ns_id.clone();
-    doc.modified = Utc::now().to_rfc3339();
-    doc.version += 1;
-
-    ctx.storage.update_document(&doc)?;
-    ctx.cache.upsert_document(&doc, true)?;
-
-    // Rebuild references (namespace changed, re-resolve scoped links)
-    let refs = crate::references::build_refs_for_document(
-        &ctx.cache,
-        &doc.id,
-        &doc.namespace_id,
-        &doc.references,
-        &doc.content,
-    )?;
-    ctx.cache
-        .replace_refs_for_source(&doc.id, "document", &refs)?;
+    // Ensure document is available locally before moving
+    let _doc = ctx.load_document(&client, &doc_id).await?;
+    crate::mutations::move_document(&ctx.storage, &ctx.cache, &doc_id, Some(ns_id.clone()), None)?;
 
     println!(
         "{}",

@@ -15,7 +15,8 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Shared task mutation functions used by both CLI commands and TUI.
+//! Shared task and document mutation functions used by both CLI commands
+//! and TUI.
 //!
 //! Each function follows the pattern: load → mutate → persist to
 //! storage + cache. Callers handle sync, output, and UI concerns.
@@ -27,7 +28,7 @@ use uuid::Uuid;
 use crate::Result;
 use crate::cache::TaskCache;
 use crate::hierarchy;
-use crate::models::{LogEntry, LogEntryType, LogSource, Task, TaskStatus, WorkState};
+use crate::models::{Document, LogEntry, LogEntryType, LogSource, Task, TaskStatus, WorkState};
 use crate::storage::TaskStorage;
 
 /// Result of a start/stop/toggle work state mutation.
@@ -514,4 +515,168 @@ pub fn create_task(
     cache.upsert_task(&task, true)?;
 
     Ok(task)
+}
+
+// -- Document mutations --
+
+/// Rebuild inline + explicit references for a document.
+fn rebuild_document_refs(cache: &TaskCache, doc: &Document) -> Result<()> {
+    let refs = crate::references::build_refs_for_document(
+        cache,
+        &doc.id,
+        &doc.namespace_id,
+        &doc.references,
+        &doc.content,
+    )?;
+    cache.replace_refs_for_source(&doc.id, "document", &refs)?;
+    Ok(())
+}
+
+/// Create a new document.
+///
+/// Generates a UUID, builds the Document struct, persists to local
+/// storage and cache, and rebuilds inline references.
+pub fn create_document(
+    storage: &TaskStorage,
+    cache: &TaskCache,
+    namespace_id: &str,
+    title: &str,
+    content: String,
+    labels: Vec<String>,
+    parent_id: Option<String>,
+) -> Result<Document> {
+    let now = Utc::now().to_rfc3339();
+
+    let doc = Document {
+        id: Uuid::new_v4().to_string(),
+        namespace_id: namespace_id.to_string(),
+        title: title.to_string(),
+        content,
+        created: now.clone(),
+        modified: now,
+        deleted: None,
+        version: 1,
+        parent_id,
+        slug: String::new(),
+        slug_aliases: vec![],
+        labels,
+        references: vec![],
+        custom: serde_json::Value::Object(Default::default()),
+    };
+
+    storage.create_document(&doc)?;
+    cache.upsert_document(&doc, true)?;
+    rebuild_document_refs(cache, &doc)?;
+
+    Ok(doc)
+}
+
+/// Update a document's title and/or content.
+///
+/// Loads the document from storage, applies title/content changes,
+/// increments version, saves, and rebuilds references.
+pub fn update_document_content(
+    storage: &TaskStorage,
+    cache: &TaskCache,
+    doc_id: &str,
+    title: Option<String>,
+    content: String,
+) -> Result<Document> {
+    let mut doc = storage.load_document(doc_id)?;
+
+    if let Some(new_title) = title {
+        doc.title = new_title;
+    }
+    doc.content = content;
+    doc.modified = Utc::now().to_rfc3339();
+    doc.version += 1;
+
+    storage.update_document(&doc)?;
+    cache.upsert_document(&doc, true)?;
+    rebuild_document_refs(cache, &doc)?;
+
+    Ok(doc)
+}
+
+/// Update a document's metadata (title, labels, parent).
+///
+/// Only fields with `Some` values are modified. For `parent_id`,
+/// `Some(None)` clears the parent while `Some(Some(id))` sets a new
+/// parent.
+pub fn update_document_metadata(
+    storage: &TaskStorage,
+    cache: &TaskCache,
+    doc_id: &str,
+    title: Option<String>,
+    labels: Option<Vec<String>>,
+    parent_id: Option<Option<String>>,
+) -> Result<Document> {
+    let mut doc = storage.load_document(doc_id)?;
+
+    if let Some(new_title) = title {
+        doc.title = new_title;
+    }
+    if let Some(new_labels) = labels {
+        doc.labels = new_labels;
+    }
+    if let Some(new_parent) = parent_id {
+        doc.parent_id = new_parent;
+    }
+
+    doc.modified = Utc::now().to_rfc3339();
+    doc.version += 1;
+
+    storage.update_document(&doc)?;
+    cache.upsert_document(&doc, true)?;
+    rebuild_document_refs(cache, &doc)?;
+
+    Ok(doc)
+}
+
+/// Delete (tombstone) a document.
+///
+/// Sets the deleted timestamp, increments version, and saves.
+/// No reference rebuild is needed for deletions.
+pub fn delete_document(storage: &TaskStorage, cache: &TaskCache, doc_id: &str) -> Result<Document> {
+    let mut doc = storage.load_document(doc_id)?;
+
+    let now = Utc::now().to_rfc3339();
+    doc.deleted = Some(now.clone());
+    doc.modified = now;
+    doc.version += 1;
+
+    storage.update_document(&doc)?;
+    cache.upsert_document(&doc, true)?;
+
+    Ok(doc)
+}
+
+/// Move a document to a different namespace and/or parent.
+///
+/// Changes the namespace and/or parent, increments version, saves,
+/// and rebuilds references (namespace affects scoped link resolution).
+pub fn move_document(
+    storage: &TaskStorage,
+    cache: &TaskCache,
+    doc_id: &str,
+    namespace_id: Option<String>,
+    parent_id: Option<Option<String>>,
+) -> Result<Document> {
+    let mut doc = storage.load_document(doc_id)?;
+
+    if let Some(ns_id) = namespace_id {
+        doc.namespace_id = ns_id;
+    }
+    if let Some(new_parent) = parent_id {
+        doc.parent_id = new_parent;
+    }
+
+    doc.modified = Utc::now().to_rfc3339();
+    doc.version += 1;
+
+    storage.update_document(&doc)?;
+    cache.upsert_document(&doc, true)?;
+    rebuild_document_refs(cache, &doc)?;
+
+    Ok(doc)
 }
