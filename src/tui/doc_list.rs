@@ -601,12 +601,18 @@ impl DocumentListState {
             Style::default()
         };
 
+        // Filler line used to pad cells to max_lines — a single space
+        // ensures ratatui actually renders the line (zero-width lines are
+        // skipped), which propagates the base style across the full cell
+        // width and prevents black-background artifacts.
+        let filler = || Line::styled(" ", base);
+
         // ID cell: cyan prefix | gray suffix (no DIM to avoid black bg).
         let (prefix, suffix) = display::split_id(&doc.id, self.prefix_len);
-        let id_cell = Cell::from(Line::from(vec![
+        let mut id_lines = vec![Line::from(vec![
             Span::styled(format!("  {prefix}\u{2502}"), base.patch(theme.accent)),
             Span::styled(suffix.to_string(), base.fg(Color::Gray)),
-        ]));
+        ])];
 
         // Compute namespace cell first so we know the row height.
         let mut max_lines: usize = 1;
@@ -628,7 +634,7 @@ impl DocumentListState {
             .get(doc_idx + 1)
             .is_some_and(|&next_d| next_d > depth);
 
-        let title_cell = if depth > 0 {
+        let mut title_lines = if depth > 0 {
             let connector = if is_last {
                 "\u{2514}\u{2500}\u{2500} "
             } else {
@@ -636,7 +642,7 @@ impl DocumentListState {
             };
             let indent = "    ".repeat((depth - 1) as usize);
             let mut lines = vec![Line::from(vec![
-                Span::styled(format!("{indent}{connector}"), base.patch(theme.muted)),
+                Span::styled(format!("{indent}{connector}"), base.fg(Color::Gray)),
                 Span::styled(doc.title.clone(), base),
             ])];
 
@@ -644,35 +650,33 @@ impl DocumentListState {
             if max_lines > 1 {
                 let rails = self.guide_rails.get(doc_idx).cloned().unwrap_or_default();
                 let continuation =
-                    build_continuation_line(&rails, depth, is_last, has_children, base, theme);
+                    build_continuation_line(&rails, depth, is_last, has_children, base);
                 for _ in 1..max_lines {
                     lines.push(continuation.clone());
                 }
             }
 
-            Cell::from(Text::from(lines))
+            lines
         } else if max_lines > 1 {
             // Depth-0 document: no tree connector, but may need │ if it
             // has children that will draw connectors below.
             let mut lines = vec![Line::styled(doc.title.clone(), base)];
             let continuation = if has_children {
-                Line::styled("\u{2502}   ", base.patch(theme.muted))
+                Line::from(Span::styled("\u{2502}   ", base.fg(Color::Gray))).style(base)
             } else {
-                Line::from("")
+                filler()
             };
             for _ in 1..max_lines {
                 lines.push(continuation.clone());
             }
-            Cell::from(Text::from(lines))
+            lines
         } else {
-            Cell::from(Line::styled(doc.title.clone(), base))
+            vec![Line::styled(doc.title.clone(), base)]
         };
 
         // Labels cell (multi-line if labels exceed column width).
-        let labels_cell = if doc.labels.is_empty() {
-            Cell::from(Text::default())
-        } else {
-            let mut label_lines: Vec<Line<'_>> = Vec::new();
+        let mut label_lines: Vec<Line<'_>> = Vec::new();
+        if !doc.labels.is_empty() {
             let mut current_spans: Vec<Span<'_>> = Vec::new();
             let mut current_width: usize = 0;
 
@@ -704,13 +708,31 @@ impl DocumentListState {
             if !current_spans.is_empty() {
                 label_lines.push(Line::from(current_spans));
             }
-
-            Cell::from(Text::from(label_lines))
-        };
+        }
 
         // Modified cell: relative time (plain text, no dim).
         let modified_text = format_relative_time_str(&doc.modified);
-        let modified_cell = Cell::from(Line::styled(modified_text, base));
+        let mut modified_lines = vec![Line::styled(modified_text, base)];
+
+        // Pad all cells to max_lines so continuation rows carry the base
+        // style instead of falling back to the terminal default background.
+        if max_lines > 1 {
+            for lines in [
+                &mut id_lines,
+                &mut title_lines,
+                &mut label_lines,
+                &mut modified_lines,
+            ] {
+                while lines.len() < max_lines {
+                    lines.push(filler());
+                }
+            }
+        }
+
+        let id_cell = Cell::from(Text::from(id_lines));
+        let title_cell = Cell::from(Text::from(title_lines));
+        let labels_cell = Cell::from(Text::from(label_lines));
+        let modified_cell = Cell::from(Text::from(modified_lines));
 
         let mut cells: Vec<Cell<'a>> = vec![id_cell, title_cell];
         if let Some(cell) = ns_cell {
@@ -732,7 +754,6 @@ fn build_continuation_line<'a>(
     is_last: bool,
     has_children: bool,
     base: Style,
-    theme: &Theme,
 ) -> Line<'a> {
     let mut s = String::new();
     // Ancestor levels: draw │ where the ancestor has more siblings.
@@ -755,7 +776,11 @@ fn build_continuation_line<'a>(
     if has_children {
         s.push_str("\u{2502}   ");
     }
-    Line::styled(s, base.patch(theme.muted))
+    // Use `base` for the Line-level style (background without DIM) and
+    // Gray foreground for the rail text.  Modifier::DIM is avoided because
+    // some terminals apply it to the background too, turning DarkGray into
+    // black on selected rows.
+    Line::from(Span::styled(s, base.fg(Color::Gray))).style(base)
 }
 
 /// Accumulator for tree-flattening output.
