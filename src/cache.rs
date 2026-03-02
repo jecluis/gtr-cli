@@ -584,6 +584,31 @@ impl TaskCache {
         Ok(tasks)
     }
 
+    /// List all non-done, non-deleted tasks across all projects.
+    pub fn list_workable_tasks(&self) -> Result<Vec<TaskSummary>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r#"
+            SELECT id, project_id, title, priority, size, created, modified,
+                   done, deleted, deadline, needs_push, is_bookmark, labels,
+                   impact, joy, parent_id, progress, current_work_state
+            FROM tasks
+            WHERE done IS NULL AND deleted IS NULL
+            ORDER BY modified DESC
+            "#,
+            )
+            .map_err(|e| Error::Database(format!("prepare failed: {e}")))?;
+
+        let tasks = stmt
+            .query_map([], Self::row_to_summary)
+            .map_err(|e| Error::Database(format!("query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("collect failed: {e}")))?;
+
+        Ok(tasks)
+    }
+
     /// List all task IDs for multiple projects.
     pub fn list_task_ids(&self, project_ids: &[String]) -> Result<Vec<String>> {
         if project_ids.is_empty() {
