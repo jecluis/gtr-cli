@@ -29,9 +29,8 @@ use rat_salsa::poll::{PollCrossterm, PollTasks};
 use rat_salsa::{Control, RunConfig, SalsaAppContext, SalsaContext, run_tui};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Widget};
+use ratatui::widgets::Widget;
 
 use crate::cache::TaskCache;
 use crate::config::Config;
@@ -39,6 +38,7 @@ use crate::storage::{StorageConfig, TaskStorage};
 use crate::tui::command_bar::CommandBarState;
 use crate::tui::confirm::ConfirmState;
 use crate::tui::create_form::{FormField, TaskFormState};
+use crate::tui::dashboard::DashboardState;
 use crate::tui::doc_detail::DocumentDetailState;
 use crate::tui::doc_form::{DocFormField, DocFormState};
 use crate::tui::doc_list::DocumentListState;
@@ -105,7 +105,7 @@ pub enum FocusPanel {
 
 /// What the main panel is currently showing.
 pub enum MainView {
-    Dashboard,
+    Dashboard(Box<DashboardState>),
     TaskList(Box<TaskListState>),
     TaskDetail {
         detail: Box<TaskDetailState>,
@@ -156,12 +156,13 @@ pub fn run(config: Config) -> crate::Result<()> {
         cache,
         storage,
     };
+    let dashboard = DashboardState::new(&global.cache, &global.config);
     let mut state = AppState {
         keymap: keymap::default_keymap(),
         theme: Theme::default(),
         sidebar,
         focus: FocusPanel::Sidebar,
-        main_view: MainView::Dashboard,
+        main_view: MainView::Dashboard(Box::new(dashboard)),
         confirm: None,
         create_form: None,
         doc_form: None,
@@ -191,6 +192,11 @@ fn init(_state: &mut AppState, _ctx: &mut Global) -> Result<(), crate::Error> {
     Ok(())
 }
 
+/// Create a fresh dashboard view from the current cache state.
+fn make_dashboard(ctx: &Global) -> MainView {
+    MainView::Dashboard(Box::new(DashboardState::new(&ctx.cache, &ctx.config)))
+}
+
 fn render(
     area: Rect,
     buf: &mut Buffer,
@@ -215,7 +221,7 @@ fn render(
 
     // Main area — dispatch based on current view
     match &mut state.main_view {
-        MainView::Dashboard => render_dashboard(theme, main_focused, columns[1], buf),
+        MainView::Dashboard(dashboard) => dashboard.render(theme, main_focused, columns[1], buf),
         MainView::TaskList(task_list) => task_list.render(theme, main_focused, columns[1], buf),
         MainView::TaskDetail { detail, .. } => {
             detail.render(theme, main_focused, columns[1], buf);
@@ -273,7 +279,7 @@ fn render(
 /// Map the current main view to the corresponding sidebar active item.
 fn derive_active_item(view: &MainView) -> ActiveItem<'_> {
     match view {
-        MainView::Dashboard => ActiveItem::Dashboard,
+        MainView::Dashboard(_) => ActiveItem::Dashboard,
         MainView::TaskList(tl) => {
             if tl.project_id == TaskCache::meta_root_id() {
                 ActiveItem::AllProjects
@@ -303,28 +309,6 @@ fn derive_active_item(view: &MainView) -> ActiveItem<'_> {
             }
         }
     }
-}
-
-/// Render the dashboard placeholder in the main area.
-fn render_dashboard(theme: &Theme, focused: bool, area: Rect, buf: &mut Buffer) {
-    let border = if focused {
-        theme.border_focused
-    } else {
-        theme.border_unfocused
-    };
-    let greeting = Paragraph::new(vec![
-        Line::default(),
-        Line::from_iter([
-            Span::from("  gtr").style(theme.accent.add_modifier(Modifier::BOLD)),
-            Span::from(" \u{2014} Getting Things Rusty"),
-        ]),
-        Line::default(),
-        Span::from("  Dashboard coming soon...")
-            .style(theme.muted)
-            .into(),
-    ])
-    .block(Block::bordered().title(" dashboard ").border_style(border));
-    greeting.render(area, buf);
 }
 
 fn handle_event(
@@ -562,7 +546,7 @@ fn handle_event(
                     return handle_new_task(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
-                    state.main_view = MainView::Dashboard;
+                    state.main_view = make_dashboard(ctx);
                     state.nav_history.clear();
                     return Ok(Control::Changed);
                 }
@@ -660,7 +644,7 @@ fn handle_event(
                     return handle_new_document(state);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
-                    state.main_view = MainView::Dashboard;
+                    state.main_view = make_dashboard(ctx);
                     state.nav_history.clear();
                     return Ok(Control::Changed);
                 }
@@ -711,7 +695,7 @@ fn handle_event(
                 }
                 _ => {}
             },
-            MainView::Dashboard => {}
+            MainView::Dashboard(_) => {}
         }
     }
 
@@ -741,11 +725,11 @@ fn handle_event(
                 MainView::TaskDetail { .. } => handle_back_from_detail(state),
                 MainView::DocDetail { .. } => handle_back_from_doc_detail(state),
                 MainView::TaskList(_) | MainView::DocList(_) => {
-                    state.main_view = MainView::Dashboard;
+                    state.main_view = make_dashboard(ctx);
                     state.nav_history.clear();
                     Ok(Control::Changed)
                 }
-                MainView::Dashboard => Ok(Control::Quit),
+                MainView::Dashboard(_) => Ok(Control::Quit),
             }
         }
         KeymapResult::Matched(Action::GotoTasks) => {
@@ -801,7 +785,7 @@ fn handle_sidebar_select(
 
     match kind {
         Some(TreeItemKind::Dashboard) => {
-            state.main_view = MainView::Dashboard;
+            state.main_view = make_dashboard(ctx);
             state.focus = FocusPanel::Main;
             state.nav_history.clear();
             Ok(Control::Changed)
@@ -871,7 +855,7 @@ fn handle_task_list_select(
     ));
 
     // Move the list state into the detail variant for back-navigation.
-    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
     let MainView::TaskList(list) = prev else {
         unreachable!();
     };
@@ -1325,7 +1309,7 @@ fn execute_command(
             let project_id = match &state.main_view {
                 MainView::TaskList(list) => list.project_id.clone(),
                 MainView::TaskDetail { list, .. } => list.project_id.clone(),
-                MainView::Dashboard | MainView::DocList(_) | MainView::DocDetail { .. } => {
+                MainView::Dashboard(_) | MainView::DocList(_) | MainView::DocDetail { .. } => {
                     return Ok(Control::Changed);
                 }
             };
@@ -1594,7 +1578,7 @@ fn refresh_current_view(state: &mut AppState, ctx: &mut Global) {
             detail.refresh(&ctx.storage, &ctx.cache, &ctx.config);
             list.refresh(&ctx.cache, &ctx.config);
         }
-        MainView::Dashboard => {}
+        MainView::Dashboard(dashboard) => dashboard.refresh(&ctx.cache),
     }
 }
 
@@ -2264,7 +2248,7 @@ fn execute_confirmed_action(
     match &state.main_view {
         MainView::TaskDetail { detail, .. } if detail.task.id == affected_id => {
             // Navigate back and refresh
-            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
             if let MainView::TaskDetail { mut list, .. } = prev {
                 list.refresh(&ctx.cache, &ctx.config);
                 state.main_view = MainView::TaskList(list);
@@ -2287,7 +2271,7 @@ fn execute_confirmed_action(
             }
         }
         MainView::DocDetail { detail, .. } if detail.doc_id() == affected_id => {
-            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
             if let MainView::DocDetail { mut list, .. } = prev {
                 list.refresh(&ctx.cache, &ctx.config);
                 state.main_view = MainView::DocList(list);
@@ -2322,7 +2306,7 @@ fn handle_back_from_detail(state: &mut AppState) -> Result<Control<AppEvent>, cr
     }
 
     // 3. Fall back to restoring the list.
-    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
     if let MainView::TaskDetail { list, .. } = prev {
         state.main_view = MainView::TaskList(list);
     }
@@ -2356,7 +2340,7 @@ fn handle_doc_list_select(
         &ctx.config,
     ));
 
-    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
     let MainView::DocList(list) = prev else {
         unreachable!();
     };
@@ -2381,7 +2365,7 @@ fn handle_back_from_doc_detail(state: &mut AppState) -> Result<Control<AppEvent>
     }
 
     // 3. Fall back to restoring the list.
-    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard);
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
     if let MainView::DocDetail { list, .. } = prev {
         state.main_view = MainView::DocList(list);
     }

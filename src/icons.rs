@@ -88,6 +88,10 @@ pub struct Glyphs {
     pub link: &'static str,
     pub info: &'static str,
     pub cancelled: &'static str,
+    pub work_doing: &'static str,
+    pub work_stopped: &'static str,
+    /// Padding equal to work-state icon + trailing space (3 for unicode, 2 for nerd).
+    pub work_pad: &'static str,
 }
 
 impl Glyphs {
@@ -110,25 +114,28 @@ impl Glyphs {
 
     const fn unicode() -> Self {
         Self {
-            impact_critical: "\u{1f525}",    // 🔥
-            impact_significant: "\u{26a1}",  // ⚡
-            impact_pad: "   ",               // 3 spaces (emoji 2-cell + space)
-            overdue: "\u{1f4a5}",            // 💥
-            deadline_warning: "\u{26a0}",    // ⚠
-            joy_high: "\u{1f31f}",           // 🌟
-            joy_low: "\u{1f4a4}",            // 💤
-            priority_now: "\u{1f534}",       // 🔴
-            success: "\u{2713}",             // ✓
-            failure: "\u{2717}",             // ✗
-            queued: "\u{2299}",              // ⊙
-            hierarchy_parent: "\u{21b3}",    // ↳
-            hierarchy_subtasks: "\u{25b6}",  // ▶
-            hierarchy_separator: "\u{00b7}", // ·
-            bookmark: "\u{1f516}",           // 🔖
-            label: "\u{1f3f7}",              // 🏷
-            link: "\u{1f517}",               // 🔗
-            info: "\u{2139}",                // ℹ
-            cancelled: "\u{2717}",           // ✗
+            impact_critical: "\u{1f525}",     // 🔥
+            impact_significant: "\u{26a1}",   // ⚡
+            impact_pad: "   ",                // 3 spaces (emoji 2-cell + space)
+            overdue: "\u{1f4a5}",             // 💥
+            deadline_warning: "\u{26a0}",     // ⚠
+            joy_high: "\u{1f31f}",            // 🌟
+            joy_low: "\u{1f4a4}",             // 💤
+            priority_now: "\u{1f534}",        // 🔴
+            success: "\u{2713}",              // ✓
+            failure: "\u{2717}",              // ✗
+            queued: "\u{2299}",               // ⊙
+            hierarchy_parent: "\u{21b3}",     // ↳
+            hierarchy_subtasks: "\u{25b6}",   // ▶
+            hierarchy_separator: "\u{00b7}",  // ·
+            bookmark: "\u{1f516}",            // 🔖
+            label: "\u{1f3f7}",               // 🏷
+            link: "\u{1f517}",                // 🔗
+            info: "\u{2139}",                 // ℹ
+            cancelled: "\u{2717}",            // ✗
+            work_doing: "\u{1f528}",          // 🔨
+            work_stopped: "\u{23f8}\u{fe0e}", // ⏸︎
+            work_pad: "   ",                  // 3 spaces (emoji 2-cell + space)
         }
     }
 
@@ -153,6 +160,9 @@ impl Glyphs {
             link: "\u{f0c1}",                // nf-fa-link
             info: "\u{f05a}",                // nf-fa-info_circle
             cancelled: "\u{f00d}",           // nf-fa-close
+            work_doing: "\u{f0ad}",          // nf-fa-wrench
+            work_stopped: "\u{f04c}",        // nf-fa-pause
+            work_pad: "  ",                  // 2 spaces (NF 1-cell + space)
         }
     }
 }
