@@ -43,6 +43,7 @@ pub mod sync;
 pub mod threshold_cache;
 #[cfg(feature = "tui")]
 pub mod tui;
+pub mod urgency;
 pub mod url_fetch;
 pub mod utils;
 

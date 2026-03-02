@@ -24,8 +24,8 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::models::Task;
 use crate::threshold_cache::CachedThresholds;
+use crate::urgency::TaskFields;
 use crate::utils;
 
 /// Return the effective priority for display: `"now"` if the task should
@@ -36,17 +36,17 @@ use crate::utils;
 /// 2. Task must have a parseable deadline
 /// 3. Deadline is overdue, OR time remaining <= effective threshold
 ///    (base threshold for task size * impact multiplier)
-pub fn effective_priority<'a>(task: &'a Task, thresholds: &CachedThresholds) -> &'a str {
-    if task.priority == "now" {
-        return &task.priority;
+pub fn effective_priority<'a>(task: &'a impl TaskFields, thresholds: &CachedThresholds) -> &'a str {
+    if task.priority() == "now" {
+        return task.priority();
     }
 
-    let Some(ref deadline_str) = task.deadline else {
-        return &task.priority;
+    let Some(deadline_str) = task.deadline() else {
+        return task.priority();
     };
 
     let Ok(deadline) = DateTime::parse_from_rfc3339(deadline_str) else {
-        return &task.priority;
+        return task.priority();
     };
 
     let now = Utc::now();
@@ -60,13 +60,13 @@ pub fn effective_priority<'a>(task: &'a Task, thresholds: &CachedThresholds) -> 
     // Compute effective threshold
     let base_secs = thresholds
         .deadline
-        .get(&task.size)
+        .get(task.size())
         .and_then(|s| utils::parse_threshold_secs(s))
         .unwrap_or(86400); // fallback: 24h
 
     let multiplier = thresholds
         .impact_multipliers
-        .get(&task.impact.to_string())
+        .get(&task.impact().to_string())
         .copied()
         .unwrap_or(1.0);
 
@@ -76,14 +76,13 @@ pub fn effective_priority<'a>(task: &'a Task, thresholds: &CachedThresholds) -> 
     if remaining <= effective_secs {
         "now"
     } else {
-        &task.priority
+        task.priority()
     }
 }
 
 /// Check if a task's deadline is overdue.
-pub fn is_overdue(task: &Task) -> bool {
-    task.deadline
-        .as_ref()
+pub fn is_overdue(task: &impl TaskFields) -> bool {
+    task.deadline()
         .and_then(|d| DateTime::parse_from_rfc3339(d).ok())
         .map(|d| d.with_timezone(&Utc) < Utc::now())
         .unwrap_or(false)
@@ -92,6 +91,7 @@ pub fn is_overdue(task: &Task) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Task;
 
     fn make_task(priority: &str, size: &str, deadline: Option<String>, impact: u8) -> Task {
         Task {
