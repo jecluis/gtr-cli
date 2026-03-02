@@ -157,6 +157,15 @@ fn help_sections() -> Vec<HelpSection> {
             ],
         },
         HelpSection {
+            title: "Dashboard",
+            bindings: vec![
+                ("j / k", "Navigate next up"),
+                ("Enter", "Open task"),
+                ("s", "Start/stop task"),
+                ("d", "Mark done"),
+            ],
+        },
+        HelpSection {
             title: "Task List",
             bindings: vec![
                 ("/", "Filter by title"),
