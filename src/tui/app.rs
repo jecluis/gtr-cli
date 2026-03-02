@@ -695,7 +695,26 @@ fn handle_event(
                 }
                 _ => {}
             },
-            MainView::Dashboard(_) => {}
+            MainView::Dashboard(dashboard) => match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    dashboard.select_next();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    dashboard.select_prev();
+                    return Ok(Control::Changed);
+                }
+                KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                    return handle_dashboard_select(state, ctx);
+                }
+                KeyCode::Char('s') => {
+                    return handle_dashboard_toggle_work(state, ctx);
+                }
+                KeyCode::Char('d') => {
+                    return handle_dashboard_done(state, ctx);
+                }
+                _ => {}
+            },
         }
     }
 
@@ -950,6 +969,103 @@ fn handle_delete_from_list(
         task_id,
         title,
         child_count,
+    }));
+    Ok(Control::Changed)
+}
+
+// -- Dashboard handlers --
+
+/// Handle Enter on a task in the dashboard next-up list.
+fn handle_dashboard_select(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::Dashboard(ref dashboard) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+
+    let Some(task_id) = dashboard.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+
+    let task = match ctx.storage.load_task(&task_id) {
+        Ok(task) => task,
+        Err(_) => return Ok(Control::Continue),
+    };
+
+    let project_name = ctx
+        .cache
+        .get_project(&task.project_id)
+        .ok()
+        .flatten()
+        .map(|p| p.name)
+        .unwrap_or_else(|| task.project_id.clone());
+
+    let list = Box::new(TaskListState::from_cache(
+        &ctx.cache,
+        &task.project_id,
+        &project_name,
+        &ctx.config,
+    )?);
+
+    let detail = Box::new(TaskDetailState::new(
+        task,
+        project_name,
+        &ctx.cache,
+        &ctx.config,
+    ));
+
+    let current = std::mem::replace(&mut state.main_view, MainView::TaskDetail { detail, list });
+    state.nav_history.push(current);
+    if state.nav_history.len() > NAV_HISTORY_LIMIT {
+        state.nav_history.remove(0);
+    }
+
+    Ok(Control::Changed)
+}
+
+/// Handle 's' to toggle work state on the selected dashboard task.
+fn handle_dashboard_toggle_work(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::Dashboard(ref dashboard) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = dashboard.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    crate::mutations::toggle_work_state(&ctx.storage, &ctx.cache, &task_id)?;
+    if let MainView::Dashboard(ref mut dashboard) = state.main_view {
+        dashboard.refresh(&ctx.cache);
+    }
+    trigger_background_sync(state, ctx);
+    Ok(Control::Changed)
+}
+
+/// Handle 'd' to mark the selected dashboard task as done (with confirmation).
+fn handle_dashboard_done(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::confirm::PendingAction;
+
+    let MainView::Dashboard(ref dashboard) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = dashboard.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    let title = dashboard.selected_task_title().unwrap_or("").to_string();
+    let descendant_count = ctx
+        .cache
+        .get_all_descendants(&task_id)
+        .map(|d| d.len())
+        .unwrap_or(0);
+    state.confirm = Some(ConfirmState::new(PendingAction::Done {
+        task_id,
+        title,
+        descendant_count,
     }));
     Ok(Control::Changed)
 }
@@ -2283,7 +2399,11 @@ fn execute_confirmed_action(
             }
         }
         MainView::DocDetail { .. } => {}
-        _ => {}
+        MainView::Dashboard(_) => {
+            if let MainView::Dashboard(ref mut dashboard) = state.main_view {
+                dashboard.refresh(&ctx.cache);
+            }
+        }
     }
 
     trigger_background_sync(state, ctx);
@@ -2683,6 +2803,28 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" edit", theme.status_desc),
                 Span::styled("  n", theme.status_key),
                 Span::styled(" new", theme.status_desc),
+            ]);
+        }
+        (MainView::Dashboard(db), FocusPanel::Main) => {
+            hints.extend([
+                Span::styled(" j", theme.status_key),
+                Span::styled("/", theme.status_desc),
+                Span::styled("k", theme.status_key),
+                Span::styled(" nav", theme.status_desc),
+            ]);
+            if db.has_next_up() {
+                hints.extend([
+                    Span::styled("  Enter", theme.status_key),
+                    Span::styled(" open", theme.status_desc),
+                    Span::styled("  s", theme.status_key),
+                    Span::styled(" start/stop", theme.status_desc),
+                    Span::styled("  d", theme.status_key),
+                    Span::styled(" done", theme.status_desc),
+                ]);
+            }
+            hints.extend([
+                Span::styled("  :", theme.status_key),
+                Span::styled(" command", theme.status_desc),
             ]);
         }
         _ => {
