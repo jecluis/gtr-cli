@@ -195,17 +195,27 @@ fn help_sections() -> Vec<HelpSection> {
                 ("r", "Toggle recursive"),
                 ("n", "New document"),
                 ("u", "Update fields"),
-                ("e", "Edit in $EDITOR"),
+                ("e", "Inline edit"),
+                ("E", "Edit in $EDITOR"),
                 ("x", "Delete"),
             ],
         },
         HelpSection {
             title: "Document Detail",
             bindings: vec![
-                ("e", "Edit in $EDITOR"),
+                ("e", "Inline edit"),
+                ("E", "Edit in $EDITOR"),
                 ("u", "Update fields"),
                 ("x", "Delete"),
                 ("m", "Move to namespace"),
+            ],
+        },
+        HelpSection {
+            title: "Document Editor",
+            bindings: vec![
+                ("Ctrl-s", "Save"),
+                ("Esc", "Cancel / close"),
+                ("Tab", "Toggle title / body"),
             ],
         },
         HelpSection {

@@ -40,6 +40,7 @@ use crate::tui::confirm::ConfirmState;
 use crate::tui::create_form::{FormField, TaskFormState};
 use crate::tui::dashboard::DashboardState;
 use crate::tui::doc_detail::DocumentDetailState;
+use crate::tui::doc_editor::DocEditorState;
 use crate::tui::doc_form::{DocFormField, DocFormState};
 use crate::tui::doc_list::DocumentListState;
 use crate::tui::feels::FeelsDialogState;
@@ -119,6 +120,11 @@ pub enum MainView {
         /// Preserved list state so we can go back.
         list: Box<DocumentListState>,
     },
+    DocEditor {
+        editor: Box<DocEditorState>,
+        /// Previous view to restore on save/cancel.
+        prev: Box<MainView>,
+    },
 }
 
 /// Maximum number of entries in the navigation history stack.
@@ -151,6 +157,10 @@ pub fn run(config: Config) -> crate::Result<()> {
     let sidebar = SidebarState::from_cache(&cache)?;
     let storage_config = StorageConfig::new(config.cache_dir.clone(), "default".to_string());
     let storage = TaskStorage::new(storage_config);
+
+    // Use rendered cursor (drawn into buffer) instead of terminal cursor,
+    // since we render into a raw Buffer without Frame::set_cursor_position.
+    rat_widget::text::cursor::set_cursor_type(rat_widget::text::cursor::CursorType::RenderedCursor);
 
     let mut global = Global {
         ctx: SalsaAppContext::default(),
@@ -232,6 +242,9 @@ fn render(
         MainView::DocList(doc_list) => doc_list.render(theme, main_focused, columns[1], buf),
         MainView::DocDetail { detail, .. } => {
             detail.render(theme, main_focused, columns[1], buf);
+        }
+        MainView::DocEditor { editor, .. } => {
+            editor.render(theme, main_focused, columns[1], buf);
         }
     }
 
@@ -316,6 +329,13 @@ fn derive_active_item(view: &MainView) -> ActiveItem<'_> {
                 ActiveItem::Namespace(&list.namespace_id)
             }
         }
+        MainView::DocEditor { editor, .. } => {
+            if editor.namespace_id.is_empty() {
+                ActiveItem::AllNamespaces
+            } else {
+                ActiveItem::Namespace(&editor.namespace_id)
+            }
+        }
     }
 }
 
@@ -393,6 +413,15 @@ fn handle_event(
     // Help overlay intercepts all input when active.
     if state.help.is_some() {
         return handle_help_input(key.code, state);
+    }
+
+    // Inline document editor intercepts all input when active.
+    if matches!(state.main_view, MainView::DocEditor { .. }) {
+        let ct_event = match event {
+            AppEvent::Event(e) => e,
+            _ => return Ok(Control::Continue),
+        };
+        return handle_doc_editor_input(key, ct_event, state, ctx);
     }
 
     // Tab toggles focus between sidebar and main panel.
@@ -651,6 +680,9 @@ fn handle_event(
                     return Ok(Control::Changed);
                 }
                 KeyCode::Char('e') => {
+                    return handle_inline_editor_from_doc_list(state, ctx);
+                }
+                KeyCode::Char('E') => {
                     return handle_editor_from_doc_list(state, ctx);
                 }
                 KeyCode::Char('x') => {
@@ -698,6 +730,9 @@ fn handle_event(
                     return handle_follow_link_from_doc_detail(state, ctx);
                 }
                 KeyCode::Char('e') => {
+                    return handle_inline_editor_from_doc_detail(state, ctx);
+                }
+                KeyCode::Char('E') => {
                     return handle_editor_from_doc_detail(state, ctx);
                 }
                 KeyCode::Char('x') => {
@@ -734,6 +769,10 @@ fn handle_event(
                 }
                 _ => {}
             },
+            MainView::DocEditor { .. } => {
+                // Handled earlier in the event function (before Tab/global keys).
+                return Ok(Control::Continue);
+            }
         }
     }
 
@@ -768,6 +807,7 @@ fn handle_event(
                     Ok(Control::Changed)
                 }
                 MainView::Dashboard(_) => Ok(Control::Quit),
+                MainView::DocEditor { .. } => Ok(Control::Continue), // handled earlier
             }
         }
         KeymapResult::Matched(Action::GotoTasks) => {
@@ -1232,6 +1272,144 @@ fn handle_editor_from_doc_list(
     Ok(Control::Changed)
 }
 
+fn handle_inline_editor_from_doc_list(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocList(ref doc_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(doc_id) = doc_list.selected_id() else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = doc_id.to_string();
+    let namespace_id = doc_list.namespace_id.clone();
+    let doc = ctx.storage.load_document(&doc_id)?;
+
+    let editor = DocEditorState::new(doc_id, namespace_id, doc.title, doc.content);
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+    state.main_view = MainView::DocEditor {
+        editor: Box::new(editor),
+        prev: Box::new(prev),
+    };
+    state.focus = FocusPanel::Main;
+    Ok(Control::Changed)
+}
+
+fn handle_inline_editor_from_doc_detail(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::DocDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let doc_id = detail.doc_id().to_string();
+    let MainView::DocDetail { ref list, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let namespace_id = list.namespace_id.clone();
+    let doc = ctx.storage.load_document(&doc_id)?;
+
+    let editor = DocEditorState::new(doc_id, namespace_id, doc.title, doc.content);
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+    state.main_view = MainView::DocEditor {
+        editor: Box::new(editor),
+        prev: Box::new(prev),
+    };
+    state.focus = FocusPanel::Main;
+    Ok(Control::Changed)
+}
+
+fn handle_doc_editor_input(
+    key: &crossterm::event::KeyEvent,
+    ct_event: &Event,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::doc_editor::EditorFocus;
+
+    let MainView::DocEditor { ref mut editor, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+
+    let code = key.code;
+    let mods = key.modifiers;
+
+    // Ctrl+S: save and return to previous view
+    if code == KeyCode::Char('s') && mods.contains(KeyModifiers::CONTROL) {
+        let doc_id = editor.doc_id.clone();
+        let title = editor.title().to_string();
+        let body = editor.body_text();
+
+        // Determine if title changed
+        let title_opt = if title != editor.original_title {
+            Some(title)
+        } else {
+            None
+        };
+
+        crate::mutations::update_document_content(
+            &ctx.storage,
+            &ctx.cache,
+            &doc_id,
+            title_opt,
+            body,
+        )?;
+
+        // Restore previous view and refresh
+        let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+        if let MainView::DocEditor { prev, .. } = prev {
+            state.main_view = *prev;
+        }
+        refresh_current_view(state, ctx);
+        trigger_background_sync(state, ctx);
+        return Ok(Control::Changed);
+    }
+
+    // Esc: cancel (with dirty check)
+    if code == KeyCode::Esc {
+        if editor.is_dirty() {
+            state.confirm = Some(ConfirmState::new(
+                crate::tui::confirm::PendingAction::DiscardEditorChanges,
+            ));
+        } else {
+            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+            if let MainView::DocEditor { prev, .. } = prev {
+                state.main_view = *prev;
+            }
+            refresh_current_view(state, ctx);
+        }
+        return Ok(Control::Changed);
+    }
+
+    // Tab: toggle focus between title and body
+    if code == KeyCode::Tab {
+        editor.toggle_focus();
+        return Ok(Control::Changed);
+    }
+
+    // Dispatch to focused field
+    match editor.focus {
+        EditorFocus::Title => {
+            match code {
+                KeyCode::Char(c) => editor.title_char_input(c),
+                KeyCode::Backspace => editor.title_backspace(),
+                KeyCode::Delete => editor.title_delete(),
+                KeyCode::Left => editor.title_cursor_left(),
+                KeyCode::Right => editor.title_cursor_right(),
+                KeyCode::Home => editor.title_home(),
+                KeyCode::End => editor.title_end(),
+                _ => return Ok(Control::Continue),
+            }
+            Ok(Control::Changed)
+        }
+        EditorFocus::Body => {
+            rat_widget::textarea::handle_events(&mut editor.body, true, ct_event);
+            Ok(Control::Changed)
+        }
+    }
+}
+
 fn handle_delete_document_from_detail(
     state: &mut AppState,
     ctx: &Global,
@@ -1444,7 +1622,10 @@ fn execute_command(
             let project_id = match &state.main_view {
                 MainView::TaskList(list) => list.project_id.clone(),
                 MainView::TaskDetail { list, .. } => list.project_id.clone(),
-                MainView::Dashboard(_) | MainView::DocList(_) | MainView::DocDetail { .. } => {
+                MainView::Dashboard(_)
+                | MainView::DocList(_)
+                | MainView::DocDetail { .. }
+                | MainView::DocEditor { .. } => {
                     return Ok(Control::Changed);
                 }
             };
@@ -1746,6 +1927,7 @@ fn refresh_current_view(state: &mut AppState, ctx: &mut Global) {
             list.refresh(&ctx.cache, &ctx.config);
         }
         MainView::Dashboard(dashboard) => dashboard.refresh(&ctx.cache),
+        MainView::DocEditor { .. } => {} // No refresh needed for active editor
     }
 }
 
@@ -2503,6 +2685,15 @@ fn execute_confirmed_action(
         PendingAction::DeleteDocument { ref doc_id, .. } => {
             mutations::delete_document(&ctx.storage, &ctx.cache, doc_id)?;
         }
+        PendingAction::DiscardEditorChanges => {
+            // Discard changes and return to previous view
+            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+            if let MainView::DocEditor { prev, .. } = prev {
+                state.main_view = *prev;
+            }
+            refresh_current_view(state, ctx);
+            return Ok(Control::Changed);
+        }
     }
 
     // If we're in detail view for the affected task, go back to list
@@ -2511,6 +2702,7 @@ fn execute_confirmed_action(
             task_id.clone()
         }
         PendingAction::DeleteDocument { doc_id, .. } => doc_id.clone(),
+        PendingAction::DiscardEditorChanges => unreachable!("handled above"),
     };
 
     match &state.main_view {
@@ -2551,6 +2743,7 @@ fn execute_confirmed_action(
             }
         }
         MainView::DocDetail { .. } => {}
+        MainView::DocEditor { .. } => {} // Deletion dialog is unlikely during editing
         MainView::Dashboard(_) => {
             if let MainView::Dashboard(ref mut dashboard) = state.main_view {
                 dashboard.refresh(&ctx.cache);
@@ -2881,8 +3074,20 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" move", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
+                Span::styled("  E", theme.status_key),
+                Span::styled(" $EDITOR", theme.status_desc),
                 Span::styled("  x", theme.status_key),
                 Span::styled(" delete", theme.status_desc),
+            ]);
+        }
+        (MainView::DocEditor { .. }, FocusPanel::Main) => {
+            hints.extend([
+                Span::styled(" Ctrl-s", theme.status_key),
+                Span::styled(" save", theme.status_desc),
+                Span::styled("  Esc", theme.status_key),
+                Span::styled(" cancel", theme.status_desc),
+                Span::styled("  Tab", theme.status_key),
+                Span::styled(" title/body", theme.status_desc),
             ]);
         }
         (MainView::DocList(dl), FocusPanel::Main) if dl.is_filtering() => {
@@ -2912,6 +3117,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
+                Span::styled("  E", theme.status_key),
+                Span::styled(" $EDITOR", theme.status_desc),
                 Span::styled("  x", theme.status_key),
                 Span::styled(" delete", theme.status_desc),
             ]);
@@ -2995,28 +3202,31 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    hints.extend([
-        Span::styled("  Tab", theme.status_key),
-        Span::styled(" focus", theme.status_desc),
-    ]);
-
-    if state.focus == FocusPanel::Sidebar {
+    // DocEditor has its own hints; skip global trailing hints.
+    if !matches!(state.main_view, MainView::DocEditor { .. }) {
         hints.extend([
-            Span::styled("  j", theme.status_key),
-            Span::styled("/", theme.status_desc),
-            Span::styled("k", theme.status_key),
-            Span::styled(" nav", theme.status_desc),
-            Span::styled("  Enter", theme.status_key),
-            Span::styled(" open", theme.status_desc),
+            Span::styled("  Tab", theme.status_key),
+            Span::styled(" focus", theme.status_desc),
+        ]);
+
+        if state.focus == FocusPanel::Sidebar {
+            hints.extend([
+                Span::styled("  j", theme.status_key),
+                Span::styled("/", theme.status_desc),
+                Span::styled("k", theme.status_key),
+                Span::styled(" nav", theme.status_desc),
+                Span::styled("  Enter", theme.status_key),
+                Span::styled(" open", theme.status_desc),
+            ]);
+        }
+
+        hints.extend([
+            Span::styled("  f", theme.status_key),
+            Span::styled(" feels", theme.status_desc),
+            Span::styled("  ?", theme.status_key),
+            Span::styled(" help", theme.status_desc),
         ]);
     }
-
-    hints.extend([
-        Span::styled("  f", theme.status_key),
-        Span::styled(" feels", theme.status_desc),
-        Span::styled("  ?", theme.status_key),
-        Span::styled(" help", theme.status_desc),
-    ]);
 
     match state.sync_status {
         SyncStatus::Syncing => hints.push(Span::styled("  syncing", theme.muted)),

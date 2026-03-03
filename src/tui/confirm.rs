@@ -42,6 +42,7 @@ pub enum PendingAction {
         title: String,
         child_count: usize,
     },
+    DiscardEditorChanges,
 }
 
 /// Which button is highlighted.
@@ -110,6 +111,11 @@ impl ConfirmState {
                 };
                 ("Delete document?", format!("\"{}\"", title), warn)
             }
+            PendingAction::DiscardEditorChanges => (
+                "Discard changes?",
+                "You have unsaved changes.".to_string(),
+                String::new(),
+            ),
         };
 
         // Compute popup dimensions
