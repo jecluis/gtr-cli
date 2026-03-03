@@ -40,6 +40,8 @@ pub enum Command {
         energy: Option<u8>,
         focus: Option<u8>,
     },
+    /// Set progress directly (value given) or open the progress dialog.
+    Progress { value: Option<u8> },
     /// Show the help overlay.
     Help,
     /// Create a document with the given title in the current namespace.
@@ -135,6 +137,21 @@ impl CommandBarState {
                 energy: None,
                 focus: None,
             };
+        }
+
+        if trimmed == "progress" || trimmed == "prog" {
+            return Command::Progress { value: None };
+        }
+        if let Some(rest) = trimmed
+            .strip_prefix("progress ")
+            .or_else(|| trimmed.strip_prefix("prog "))
+        {
+            if let Ok(v) = rest.trim().parse::<u8>()
+                && v <= 100
+            {
+                return Command::Progress { value: Some(v) };
+            }
+            return Command::Progress { value: None };
         }
 
         if trimmed == "search" || trimmed == "s" {

@@ -46,6 +46,7 @@ struct OriginalValues {
     joy: u8,
     labels: Vec<String>,
     parent_id: Option<String>,
+    progress: Option<u8>,
 }
 
 /// Which page of the form is visible.
@@ -69,6 +70,15 @@ impl FormPage {
     }
 }
 
+/// Properties page fields including the optional Progress field.
+const PROPERTIES_WITH_PROGRESS: &[FormField] = &[
+    FormField::Impact,
+    FormField::Joy,
+    FormField::Labels,
+    FormField::Parent,
+    FormField::Progress,
+];
+
 /// Which field has focus.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FormField {
@@ -79,6 +89,7 @@ pub enum FormField {
     Joy,
     Labels,
     Parent,
+    Progress,
     Submit,
     Cancel,
 }
@@ -108,6 +119,10 @@ pub struct TaskFormState {
     parent_cursor: usize,
     resolved_parent_title: Option<String>,
     resolved_parent_id: Option<String>,
+    // Progress (update mode only, leaf tasks)
+    show_progress: bool,
+    progress_input: String,
+    progress_cursor: usize,
 }
 
 impl TaskFormState {
@@ -134,11 +149,22 @@ impl TaskFormState {
             parent_cursor: 0,
             resolved_parent_title: None,
             resolved_parent_id: None,
+            show_progress: false,
+            progress_input: String::new(),
+            progress_cursor: 0,
         }
     }
 
     /// Create a form pre-filled with an existing task's values.
-    pub fn for_update(task: &Task, project_name: String, icon_theme: IconTheme) -> Self {
+    ///
+    /// `is_leaf` should be true when the task has no children (progress
+    /// can be set manually). Parent tasks derive progress from children.
+    pub fn for_update(
+        task: &Task,
+        project_name: String,
+        icon_theme: IconTheme,
+        is_leaf: bool,
+    ) -> Self {
         let size_idx = SIZES
             .iter()
             .position(|s| s.eq_ignore_ascii_case(&task.size))
@@ -158,7 +184,11 @@ impl TaskFormState {
             joy: task.joy,
             labels: task.labels.clone(),
             parent_id: task.parent_id.clone(),
+            progress: task.progress,
         };
+
+        let progress_input = task.progress.map(|v| v.to_string()).unwrap_or_default();
+        let progress_cursor = progress_input.len();
 
         Self {
             project_id: task.project_id.clone(),
@@ -184,6 +214,9 @@ impl TaskFormState {
             parent_cursor: 0,
             resolved_parent_title: None,
             resolved_parent_id: task.parent_id.clone(),
+            show_progress: is_leaf,
+            progress_input,
+            progress_cursor,
         }
     }
 
@@ -237,9 +270,24 @@ impl TaskFormState {
         !self.label_input.is_empty()
     }
 
+    /// Return the effective field list for the current page, accounting
+    /// for the conditional progress field.
+    fn effective_fields(&self) -> &[FormField] {
+        match self.page {
+            FormPage::Main => FormPage::Main.fields(),
+            FormPage::Properties => {
+                if self.show_progress {
+                    PROPERTIES_WITH_PROGRESS
+                } else {
+                    FormPage::Properties.fields()
+                }
+            }
+        }
+    }
+
     /// Move focus to the next field (page fields → Submit → Cancel → wrap).
     pub fn focus_next(&mut self) {
-        let fields = self.page.fields();
+        let fields = self.effective_fields();
         match self.focused {
             FormField::Cancel => self.focused = fields[0],
             FormField::Submit => self.focused = FormField::Cancel,
@@ -257,7 +305,7 @@ impl TaskFormState {
 
     /// Move focus to the previous field (wrap → Cancel → Submit → page fields).
     pub fn focus_prev(&mut self) {
-        let fields = self.page.fields();
+        let fields = self.effective_fields();
         match self.focused {
             FormField::Submit => self.focused = *fields.last().unwrap(),
             FormField::Cancel => self.focused = FormField::Submit,
@@ -314,6 +362,12 @@ impl TaskFormState {
                 self.parent_input.insert(self.parent_cursor, c);
                 self.parent_cursor += c.len_utf8();
             }
+            FormField::Progress => {
+                if c.is_ascii_digit() && self.progress_input.len() < 3 {
+                    self.progress_input.insert(self.progress_cursor, c);
+                    self.progress_cursor += 1;
+                }
+            }
             _ => {}
         }
     }
@@ -357,6 +411,12 @@ impl TaskFormState {
                     self.parent_cursor = prev;
                 }
             }
+            FormField::Progress => {
+                if self.progress_cursor > 0 {
+                    self.progress_cursor -= 1;
+                    self.progress_input.remove(self.progress_cursor);
+                }
+            }
             _ => {}
         }
     }
@@ -383,6 +443,7 @@ impl TaskFormState {
             }
             FormField::Labels => self.char_input(' '),
             FormField::Parent => self.char_input(' '),
+            FormField::Progress => {} // no toggle behavior
             FormField::Submit | FormField::Cancel => {}
         }
     }
@@ -409,6 +470,12 @@ impl TaskFormState {
             FormField::Size => {
                 let new = self.size_idx as i8 + delta;
                 self.size_idx = new.clamp(0, SIZES.len() as i8 - 1) as usize;
+            }
+            FormField::Progress => {
+                let current = self.progress_value().unwrap_or(0) as i16;
+                let new = (current + delta as i16 * 10).clamp(0, 100) as u8;
+                self.progress_input = new.to_string();
+                self.progress_cursor = self.progress_input.len();
             }
             _ => {}
         }
@@ -474,6 +541,23 @@ impl TaskFormState {
         }
     }
 
+    /// Parse the progress input as a valid percentage (0-100).
+    pub fn progress_value(&self) -> Option<u8> {
+        let v: u16 = self.progress_input.parse().ok()?;
+        if v <= 100 { Some(v as u8) } else { None }
+    }
+
+    /// Whether progress was changed from its original value.
+    pub fn progress_changed(&self) -> bool {
+        if !self.show_progress {
+            return false;
+        }
+        let Some(orig) = &self.original else {
+            return false;
+        };
+        self.progress_value() != orig.progress
+    }
+
     /// Whether any field has been modified from the original values.
     pub fn has_changes(&self) -> bool {
         let f = self.changed_fields();
@@ -484,6 +568,7 @@ impl TaskFormState {
             || f.joy.is_some()
             || f.labels.is_some()
             || f.parent_id.is_some()
+            || self.progress_changed()
     }
 
     pub fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
@@ -640,6 +725,11 @@ impl TaskFormState {
 
         // Parent field
         self.render_parent_field(theme, rows[6], buf);
+
+        // Progress field (leaf tasks in update mode only)
+        if self.show_progress {
+            self.render_progress_field(theme, rows[8], buf);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -758,6 +848,31 @@ impl TaskFormState {
             if let Some(ref title) = self.resolved_parent_title {
                 spans.push(Span::styled(format!(" \u{2192} {title}"), theme.muted));
             }
+        }
+
+        Line::from(spans).render(area, buf);
+    }
+
+    fn render_progress_field(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
+        let label_style = field_label_style(self.focused == FormField::Progress, theme);
+
+        let mut spans: Vec<Span<'_>> = vec![
+            Span::raw("  "),
+            Span::styled("Progress:", label_style),
+            Span::raw(" "),
+        ];
+
+        if self.focused == FormField::Progress {
+            let display = format!("{:<3}", self.progress_input);
+            spans.push(Span::styled(
+                format!("[{display}]"),
+                theme.accent.add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" %"));
+        } else if self.progress_input.is_empty() {
+            spans.push(Span::raw("(none)"));
+        } else {
+            spans.push(Span::raw(format!("{} %", self.progress_input)));
         }
 
         Line::from(spans).render(area, buf);

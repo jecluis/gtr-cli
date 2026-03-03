@@ -47,6 +47,7 @@ use crate::tui::help::HelpOverlayState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::move_form::MoveFormState;
 use crate::tui::nav::NavTarget;
+use crate::tui::progress::ProgressDialogState;
 use crate::tui::search::{SearchFilter, SearchOverlayState, SearchResultKind};
 use crate::tui::sidebar::{ActiveItem, SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
@@ -137,6 +138,7 @@ pub struct AppState {
     pub command_bar: Option<CommandBarState>,
     pub search: Option<SearchOverlayState>,
     pub feels: Option<FeelsDialogState>,
+    pub progress: Option<ProgressDialogState>,
     pub help: Option<HelpOverlayState>,
     pub sync_status: SyncStatus,
     /// Navigation history for detail-to-detail link following.
@@ -170,6 +172,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         command_bar: None,
         search: None,
         feels: None,
+        progress: None,
         help: None,
         sync_status: SyncStatus::Idle,
         nav_history: Vec::new(),
@@ -247,6 +250,11 @@ fn render(
     // Feels dialog
     if let Some(ref feels) = state.feels {
         feels.render(theme, area, buf);
+    }
+
+    // Progress dialog
+    if let Some(ref progress) = state.progress {
+        progress.render(theme, area, buf);
     }
 
     // Help overlay
@@ -375,6 +383,11 @@ fn handle_event(
     // Feels dialog intercepts all input when active.
     if state.feels.is_some() {
         return handle_feels_input(key.code, state, ctx);
+    }
+
+    // Progress dialog intercepts all input when active.
+    if state.progress.is_some() {
+        return handle_progress_input(key.code, state, ctx);
     }
 
     // Help overlay intercepts all input when active.
@@ -542,6 +555,9 @@ fn handle_event(
                 KeyCode::Char('u') => {
                     return handle_update_task_from_list(state, ctx);
                 }
+                KeyCode::Char('P') => {
+                    return handle_progress_from_list(state, ctx);
+                }
                 KeyCode::Char('n') => {
                     return handle_new_task(state, ctx);
                 }
@@ -594,6 +610,9 @@ fn handle_event(
                 }
                 KeyCode::Char('u') => {
                     return handle_update_task_from_detail(state, ctx);
+                }
+                KeyCode::Char('P') => {
+                    return handle_progress_from_detail(state, ctx);
                 }
                 KeyCode::Char('e') => {
                     return handle_editor_from_detail(state, ctx);
@@ -1476,6 +1495,27 @@ fn execute_command(
             }
             Ok(Control::Changed)
         }
+        Command::Progress { value } => {
+            let task_id = match &state.main_view {
+                MainView::TaskList(list) => list.selected_task_id().map(String::from),
+                MainView::TaskDetail { detail, .. } => Some(detail.task.id.clone()),
+                _ => None,
+            };
+            let Some(task_id) = task_id else {
+                return Ok(Control::Changed);
+            };
+            if let Some(v) = value {
+                if let Ok(_result) =
+                    crate::mutations::set_progress(&ctx.storage, &ctx.cache, &task_id, v)
+                {
+                    refresh_current_view(state, ctx);
+                    trigger_background_sync(state, ctx);
+                }
+            } else {
+                return open_progress_dialog(state, ctx, &task_id);
+            }
+            Ok(Control::Changed)
+        }
         Command::Help => {
             state.help = Some(HelpOverlayState::new());
             Ok(Control::Changed)
@@ -1555,8 +1595,13 @@ fn open_update_form(
     project_name: &str,
 ) -> Result<Control<AppEvent>, crate::Error> {
     let task = ctx.storage.load_task(task_id)?;
-    let mut form =
-        TaskFormState::for_update(&task, project_name.to_string(), ctx.config.icon_theme);
+    let (children, _) = ctx.cache.count_children(task_id)?;
+    let mut form = TaskFormState::for_update(
+        &task,
+        project_name.to_string(),
+        ctx.config.icon_theme,
+        children == 0,
+    );
 
     // Resolve existing parent if present
     if let Some(ref pid) = task.parent_id {
@@ -1633,6 +1678,8 @@ fn submit_update_form(
 
     let changes = form.changed_fields();
     let labels_for_registry = changes.labels.clone();
+    let progress_changed = form.progress_changed();
+    let new_progress = form.progress_value();
     state.create_form = None;
 
     // Auto-register new labels
@@ -1652,6 +1699,10 @@ fn submit_update_form(
         changes.labels,
         changes.parent_id,
     )?;
+
+    if progress_changed && let Some(value) = new_progress {
+        let _ = crate::mutations::set_progress(&ctx.storage, &ctx.cache, &task_id, value);
+    }
 
     refresh_current_view(state, ctx);
     trigger_background_sync(state, ctx);
@@ -2292,6 +2343,107 @@ fn handle_feels_input(
     }
 }
 
+// -- Progress dialog handlers --
+
+/// Open the progress dialog for the given task, if it has no children.
+fn open_progress_dialog(
+    state: &mut AppState,
+    ctx: &Global,
+    task_id: &str,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let (children, _) = ctx.cache.count_children(task_id)?;
+    if children > 0 {
+        return Ok(Control::Changed); // silently ignore parent tasks
+    }
+    let task = ctx.storage.load_task(task_id)?;
+    state.progress = Some(ProgressDialogState::new(
+        task.id.clone(),
+        task.title.clone(),
+        task.progress,
+    ));
+    Ok(Control::Changed)
+}
+
+fn handle_progress_from_list(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = task_list.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    open_progress_dialog(state, ctx, &task_id)
+}
+
+fn handle_progress_from_detail(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let task_id = detail.task.id.clone();
+    open_progress_dialog(state, ctx, &task_id)
+}
+
+/// Handle key input while the progress dialog is active.
+fn handle_progress_input(
+    code: KeyCode,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match code {
+        KeyCode::Esc => {
+            state.progress = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            if let Some(dialog) = state.progress.take()
+                && let Some(value) = dialog.value()
+            {
+                let task_id = dialog.task_id.clone();
+                if crate::mutations::set_progress(&ctx.storage, &ctx.cache, &task_id, value).is_ok()
+                {
+                    refresh_current_view(state, ctx);
+                    trigger_background_sync(state, ctx);
+                }
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Right => {
+            if let Some(ref mut dialog) = state.progress {
+                dialog.adjust(10);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Left => {
+            if let Some(ref mut dialog) = state.progress {
+                dialog.adjust(-10);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Backspace => {
+            if let Some(ref mut dialog) = state.progress {
+                if dialog.is_empty() {
+                    state.progress = None;
+                } else {
+                    dialog.backspace();
+                }
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(c) => {
+            if let Some(ref mut dialog) = state.progress {
+                dialog.char_input(c);
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
 /// Save feels to the cache.
 fn save_feels(energy: u8, focus: u8, ctx: &Global) {
     let today = chrono::Local::now().date_naive();
@@ -2695,6 +2847,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" done", theme.status_desc),
                 Span::styled("  x", theme.status_key),
                 Span::styled(" delete", theme.status_desc),
+                Span::styled("  P", theme.status_key),
+                Span::styled(" progress", theme.status_desc),
                 Span::styled("  u", theme.status_key),
                 Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
@@ -2797,6 +2951,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" done", theme.status_desc),
                 Span::styled("  x", theme.status_key),
                 Span::styled(" delete", theme.status_desc),
+                Span::styled("  P", theme.status_key),
+                Span::styled(" progress", theme.status_desc),
                 Span::styled("  u", theme.status_key),
                 Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),

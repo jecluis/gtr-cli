@@ -173,6 +173,7 @@ fn help_sections() -> Vec<HelpSection> {
                 ("n", "New task"),
                 ("s", "Toggle start/stop"),
                 ("p", "Cycle priority"),
+                ("P", "Set progress"),
                 ("d", "Mark done"),
                 ("x", "Delete"),
                 ("u", "Update fields"),
@@ -184,6 +185,7 @@ fn help_sections() -> Vec<HelpSection> {
             bindings: vec![
                 ("] / [", "Next / previous link"),
                 ("Enter", "Follow selected link"),
+                ("P", "Set progress"),
             ],
         },
         HelpSection {
@@ -215,6 +217,7 @@ fn help_sections() -> Vec<HelpSection> {
                 (":search <query>", "Search (or :s)"),
                 (":sync", "Sync with server"),
                 (":feels [E F]", "Set feels or dialog"),
+                (":progress [N]", "Set progress or dialog"),
             ],
         },
     ]
