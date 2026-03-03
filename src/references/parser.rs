@@ -20,8 +20,12 @@
 //! Extracts references from markdown content:
 //! - `[[Title]]` — document by title
 //! - `[[namespace:Title]]` — document by title within a namespace path
-//! - `task://uuid` — task by UUID
-//! - `doc://uuid` — document by UUID
+//! - `[[task://id]]` — task by UUID (full or prefix)
+//! - `[[doc://slug]]` — document by slug
+//! - `[[doc://ns:slug]]` — document by slug within a namespace
+//! - `[[ns://path]]` — namespace by name or path
+//! - `task://uuid` — task by full UUID (bare text)
+//! - `doc://uuid` — document by full UUID (bare text)
 
 use uuid::Uuid;
 
@@ -41,14 +45,18 @@ pub enum RefTarget {
     DocumentByTitle(String),
     /// `[[ns/path:Title]]` — a document identified by title within a namespace.
     DocumentByTitleInNamespace(String, String),
-    /// `task://uuid` — a task identified by UUID.
+    /// `task://uuid` — a task identified by full UUID.
     TaskById(Uuid),
+    /// `[[task://prefix]]` — a task identified by UUID prefix.
+    TaskByPrefix(String),
     /// `doc://uuid` — a document identified by UUID.
     DocumentById(Uuid),
     /// `[[slug]]` — a document identified by slug.
     DocumentBySlug(String),
     /// `[[ns/path:slug]]` — a document by slug within a namespace.
     DocumentBySlugInNamespace(String, String),
+    /// `[[ns://path]]` — a namespace by name or hierarchical path.
+    NamespaceByPath(String),
 }
 
 /// Parse wiki-links and URI-scheme references from markdown content.
@@ -160,6 +168,17 @@ fn parse_wiki_link_inner(inner: &str) -> Option<ParsedRef> {
         return None;
     }
 
+    // URI-scheme references inside wiki-links
+    if let Some(rest) = inner.strip_prefix("task://") {
+        return parse_task_uri_inner(rest);
+    }
+    if let Some(rest) = inner.strip_prefix("doc://") {
+        return parse_doc_uri_inner(rest);
+    }
+    if let Some(rest) = inner.strip_prefix("ns://") {
+        return parse_ns_uri_inner(rest);
+    }
+
     // Check for namespace:Target pattern
     if let Some(colon_pos) = inner.rfind(':') {
         let ns_part = inner[..colon_pos].trim();
@@ -185,6 +204,70 @@ fn parse_wiki_link_inner(inner: &str) -> Option<ParsedRef> {
     };
     Some(ParsedRef {
         target,
+        ref_type: "inline".to_string(),
+    })
+}
+
+/// Parse `[[task://...]]` — full UUID or prefix.
+fn parse_task_uri_inner(rest: &str) -> Option<ParsedRef> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    // Try full UUID first
+    if let Ok(uuid) = Uuid::parse_str(rest) {
+        return Some(ParsedRef {
+            target: RefTarget::TaskById(uuid),
+            ref_type: "inline".to_string(),
+        });
+    }
+    // Otherwise treat as prefix
+    Some(ParsedRef {
+        target: RefTarget::TaskByPrefix(rest.to_string()),
+        ref_type: "inline".to_string(),
+    })
+}
+
+/// Parse `[[doc://...]]` — full UUID, slug, or namespace:slug.
+fn parse_doc_uri_inner(rest: &str) -> Option<ParsedRef> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    // Try full UUID first
+    if let Ok(uuid) = Uuid::parse_str(rest) {
+        return Some(ParsedRef {
+            target: RefTarget::DocumentById(uuid),
+            ref_type: "inline".to_string(),
+        });
+    }
+    // Check for namespace:slug pattern (use first colon, since
+    // namespace paths use / not :)
+    if let Some(colon_pos) = rest.find(':') {
+        let ns = rest[..colon_pos].trim();
+        let slug = rest[colon_pos + 1..].trim();
+        if !ns.is_empty() && !slug.is_empty() {
+            return Some(ParsedRef {
+                target: RefTarget::DocumentBySlugInNamespace(ns.to_string(), slug.to_string()),
+                ref_type: "inline".to_string(),
+            });
+        }
+    }
+    // Plain slug (or slug-like identifier)
+    Some(ParsedRef {
+        target: RefTarget::DocumentBySlug(rest.to_string()),
+        ref_type: "inline".to_string(),
+    })
+}
+
+/// Parse `[[ns://...]]` — namespace by name or hierarchical path.
+fn parse_ns_uri_inner(rest: &str) -> Option<ParsedRef> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(ParsedRef {
+        target: RefTarget::NamespaceByPath(rest.to_string()),
         ref_type: "inline".to_string(),
     })
 }
@@ -399,5 +482,152 @@ mod tests {
             refs[0].target,
             RefTarget::DocumentByTitle("FAQ".to_string())
         );
+    }
+
+    // --- URI-scheme wiki-links ---
+
+    #[test]
+    fn wiki_link_task_full_uuid() {
+        let id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let refs = parse_wiki_links("See [[task://550e8400-e29b-41d4-a716-446655440000]].");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].target, RefTarget::TaskById(id));
+    }
+
+    #[test]
+    fn wiki_link_task_short_prefix() {
+        let refs = parse_wiki_links("See [[task://ea75a3ac]].");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].target,
+            RefTarget::TaskByPrefix("ea75a3ac".to_string())
+        );
+    }
+
+    #[test]
+    fn wiki_link_task_empty_ignored() {
+        let refs = parse_wiki_links("See [[task://]].");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn wiki_link_doc_full_uuid() {
+        let id = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef0123456789").unwrap();
+        let refs = parse_wiki_links("See [[doc://a1b2c3d4-e5f6-7890-abcd-ef0123456789]].");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].target, RefTarget::DocumentById(id));
+    }
+
+    #[test]
+    fn wiki_link_doc_slug() {
+        let refs = parse_wiki_links("See [[doc://my-notes-a1b2c3d4]].");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].target,
+            RefTarget::DocumentBySlug("my-notes-a1b2c3d4".to_string())
+        );
+    }
+
+    #[test]
+    fn wiki_link_doc_namespaced_slug() {
+        let refs = parse_wiki_links("See [[doc://research:faq-12345678]].");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].target,
+            RefTarget::DocumentBySlugInNamespace(
+                "research".to_string(),
+                "faq-12345678".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn wiki_link_doc_empty_ignored() {
+        let refs = parse_wiki_links("See [[doc://]].");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn wiki_link_ns_simple_name() {
+        let refs = parse_wiki_links("See [[ns://research]].");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].target,
+            RefTarget::NamespaceByPath("research".to_string())
+        );
+    }
+
+    #[test]
+    fn wiki_link_ns_hierarchical_path() {
+        let refs = parse_wiki_links("See [[ns://research/papers]].");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].target,
+            RefTarget::NamespaceByPath("research/papers".to_string())
+        );
+    }
+
+    #[test]
+    fn wiki_link_ns_empty_ignored() {
+        let refs = parse_wiki_links("See [[ns://]].");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn uri_wiki_links_in_code_blocks_ignored() {
+        let content =
+            "```\n[[task://ea75a3ac]]\n[[doc://slug-12345678]]\n[[ns://foo]]\n```\n[[visible]]";
+        let refs = parse_wiki_links(content);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].target,
+            RefTarget::DocumentByTitle("visible".to_string())
+        );
+    }
+
+    #[test]
+    fn uri_wiki_links_in_inline_code_ignored() {
+        let refs = parse_wiki_links("See `[[task://ea75a3ac]]` here.");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn mixed_uri_and_plain_wiki_links() {
+        let content =
+            "[[task://ea75]] and [[My Doc]] and [[ns://notes]] and [[doc://research:faq-12345678]]";
+        let refs = parse_wiki_links(content);
+        assert_eq!(refs.len(), 4);
+        assert_eq!(refs[0].target, RefTarget::TaskByPrefix("ea75".to_string()));
+        assert_eq!(
+            refs[1].target,
+            RefTarget::DocumentByTitle("My Doc".to_string())
+        );
+        assert_eq!(
+            refs[2].target,
+            RefTarget::NamespaceByPath("notes".to_string())
+        );
+        assert_eq!(
+            refs[3].target,
+            RefTarget::DocumentBySlugInNamespace(
+                "research".to_string(),
+                "faq-12345678".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn bare_text_task_uri_still_works() {
+        // Bare text URIs (not in [[...]]) still require full UUID
+        let id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let refs = parse_wiki_links("Related: task://550e8400-e29b-41d4-a716-446655440000 end");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].target, RefTarget::TaskById(id));
+    }
+
+    #[test]
+    fn bare_text_short_task_uri_not_parsed() {
+        // Short task URIs in bare text should NOT be parsed (ambiguous boundaries)
+        let refs = parse_wiki_links("See task://ea75a3ac in context.");
+        assert!(refs.is_empty());
     }
 }

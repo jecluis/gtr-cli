@@ -80,6 +80,22 @@ fn resolve_parsed_ref(
             ref_type: parsed.ref_type.clone(),
             origin: "inline".to_string(),
         })),
+        RefTarget::TaskByPrefix(prefix) => {
+            match crate::utils::resolve_task_id_from_cache(cache, prefix) {
+                Ok(id) => Ok(Some(ReferenceRow {
+                    source_id: source_id.to_string(),
+                    source_type: "document".to_string(),
+                    target_id: id,
+                    target_type: "task".to_string(),
+                    ref_type: parsed.ref_type.clone(),
+                    origin: "inline".to_string(),
+                })),
+                Err(_) => {
+                    debug!(prefix, "task prefix reference not resolved, skipping");
+                    Ok(None)
+                }
+            }
+        }
         RefTarget::DocumentById(id) => {
             let id_str = id.to_string();
             if id_str == source_id {
@@ -245,5 +261,19 @@ fn resolve_parsed_ref(
             );
             Ok(None)
         }
+        RefTarget::NamespaceByPath(path) => match crate::resolve::resolve_namespace(cache, path) {
+            Ok(id) => Ok(Some(ReferenceRow {
+                source_id: source_id.to_string(),
+                source_type: "document".to_string(),
+                target_id: id,
+                target_type: "namespace".to_string(),
+                ref_type: parsed.ref_type.clone(),
+                origin: "inline".to_string(),
+            })),
+            Err(_) => {
+                debug!(path, "namespace reference not resolved, skipping");
+                Ok(None)
+            }
+        },
     }
 }
