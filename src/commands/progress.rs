@@ -25,7 +25,7 @@ use crate::client::Client;
 use crate::config::Config;
 use crate::icons::Icons;
 use crate::local::LocalContext;
-use crate::models::{LogEntry, LogEntryType, LogSource, TaskStatus};
+use crate::models::{LogEntry, LogEntryType, LogSource};
 use crate::{output, utils};
 
 /// Clear task progress (local-first with optional sync).
@@ -134,42 +134,13 @@ pub async fn run(config: &Config, value: u8, task_id: Option<String>, no_sync: b
         .await?
     };
 
-    let mut task = ctx.load_task(&client, &full_id).await?;
+    // Ensure the task is loaded into local storage before mutating.
+    let _task = ctx.load_task(&client, &full_id).await?;
 
-    let old_progress = task.progress;
-    let now = Utc::now();
-
-    task.progress = Some(value);
-    task.modified = now.to_rfc3339();
-    task.version += 1;
-
-    // Add log entry for progress change
-    task.log.push(LogEntry {
-        timestamp: now,
-        entry_type: LogEntryType::ProgressChanged {
-            from: old_progress,
-            to: Some(value),
-        },
-        source: LogSource::User,
-    });
-
-    // Auto-mark as done when progress reaches 100%
-    let auto_done = value == 100 && task.done.is_none();
-    if auto_done {
-        task.done = Some(now.to_rfc3339());
-        task.current_work_state = None;
-
-        task.log.push(LogEntry {
-            timestamp: now,
-            entry_type: LogEntryType::StatusChanged {
-                status: TaskStatus::Done,
-            },
-            source: LogSource::User,
-        });
-    }
-
-    ctx.storage.update_task(&task)?;
-    ctx.cache.upsert_task(&task, true)?;
+    let result = crate::mutations::set_progress(&ctx.storage, &ctx.cache, &full_id, value)?;
+    let task = &result.task;
+    let old_progress = result.old_progress;
+    let auto_done = result.auto_done;
 
     println!(
         "{}",

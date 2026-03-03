@@ -55,6 +55,13 @@ pub struct PriorityResult {
     pub old_priority: String,
 }
 
+/// Result of setting task progress.
+pub struct ProgressResult {
+    pub task: Task,
+    pub old_progress: Option<u8>,
+    pub auto_done: bool,
+}
+
 /// Start working on a task (set work state to "doing").
 ///
 /// Auto-sets progress to 0% if not already set.
@@ -322,6 +329,69 @@ pub fn toggle_priority(
         "now"
     };
     set_priority(storage, cache, task_id, new_priority)
+}
+
+/// Set task progress to a specific value (0–100).
+///
+/// Returns an error if the task has child tasks (auto-derived
+/// progress). Auto-marks the task as done when progress reaches 100%.
+/// Updates ancestor progress after the change.
+pub fn set_progress(
+    storage: &TaskStorage,
+    cache: &TaskCache,
+    task_id: &str,
+    value: u8,
+) -> Result<ProgressResult> {
+    let (children, _) = cache.count_children(task_id)?;
+    if children > 0 {
+        return Err(crate::Error::UserFacing(
+            "Cannot set progress on a task with subtasks (progress is auto-derived)".to_string(),
+        ));
+    }
+
+    let mut task = storage.load_task(task_id)?;
+    let now = Utc::now();
+    let old_progress = task.progress;
+
+    task.progress = Some(value);
+    task.modified = now.to_rfc3339();
+    task.version += 1;
+
+    task.log.push(LogEntry {
+        timestamp: now,
+        entry_type: LogEntryType::ProgressChanged {
+            from: old_progress,
+            to: Some(value),
+        },
+        source: LogSource::User,
+    });
+
+    let auto_done = value == 100 && task.done.is_none();
+    if auto_done {
+        task.done = Some(now.to_rfc3339());
+        task.current_work_state = None;
+
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::StatusChanged {
+                status: TaskStatus::Done,
+            },
+            source: LogSource::User,
+        });
+    }
+
+    storage.update_task(&task)?;
+    cache.upsert_task(&task, true)?;
+
+    if task.parent_id.is_some() {
+        hierarchy::update_ancestor_progress(cache, storage, task_id)?;
+    }
+
+    Ok(ProgressResult {
+        task,
+        old_progress,
+        auto_done,
+    })
 }
 
 /// Update a task's title and/or body.
