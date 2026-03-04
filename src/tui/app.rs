@@ -54,6 +54,7 @@ use crate::tui::ref_picker;
 use crate::tui::search::{SearchFilter, SearchOverlayState, SearchResultKind};
 use crate::tui::sidebar::{ActiveItem, SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
+use crate::tui::task_editor::TaskEditorState;
 use crate::tui::task_list::TaskListState;
 use crate::tui::theme::Theme;
 
@@ -124,6 +125,11 @@ pub enum MainView {
     },
     DocEditor {
         editor: Box<DocEditorState>,
+        /// Previous view to restore on save/cancel.
+        prev: Box<MainView>,
+    },
+    TaskEditor {
+        editor: Box<TaskEditorState>,
         /// Previous view to restore on save/cancel.
         prev: Box<MainView>,
     },
@@ -254,6 +260,13 @@ fn render(
                 picker.render(theme, columns[1], buf);
             }
         }
+        MainView::TaskEditor { editor, .. } => {
+            editor.render(theme, main_focused, columns[1], buf);
+            // Render picker overlay on top of editor
+            if let Some(ref mut picker) = state.ref_picker {
+                picker.render(theme, columns[1], buf);
+            }
+        }
     }
 
     // Status bar (or command bar when active)
@@ -344,6 +357,13 @@ fn derive_active_item(view: &MainView) -> ActiveItem<'_> {
                 ActiveItem::Namespace(&editor.namespace_id)
             }
         }
+        MainView::TaskEditor { editor, .. } => {
+            if editor.project_id == TaskCache::meta_root_id() {
+                ActiveItem::AllProjects
+            } else {
+                ActiveItem::Project(&editor.project_id)
+            }
+        }
     }
 }
 
@@ -430,6 +450,15 @@ fn handle_event(
             _ => return Ok(Control::Continue),
         };
         return handle_doc_editor_input(key, ct_event, state, ctx);
+    }
+
+    // Inline task editor intercepts all input when active.
+    if matches!(state.main_view, MainView::TaskEditor { .. }) {
+        let ct_event = match event {
+            AppEvent::Event(e) => e,
+            _ => return Ok(Control::Continue),
+        };
+        return handle_task_editor_input(key, ct_event, state, ctx);
     }
 
     // Tab toggles focus between sidebar and main panel.
@@ -587,7 +616,10 @@ fn handle_event(
                     return handle_delete_from_list(state, ctx);
                 }
                 KeyCode::Char('e') => {
-                    return handle_editor_from_list(state, ctx);
+                    return handle_inline_editor_from_task_list(state, ctx);
+                }
+                KeyCode::Char('E') => {
+                    return handle_ext_editor_from_task_list(state, ctx);
                 }
                 KeyCode::Char('u') => {
                     return handle_update_task_from_list(state, ctx);
@@ -652,7 +684,10 @@ fn handle_event(
                     return handle_progress_from_detail(state, ctx);
                 }
                 KeyCode::Char('e') => {
-                    return handle_editor_from_detail(state, ctx);
+                    return handle_inline_editor_from_task_detail(state, ctx);
+                }
+                KeyCode::Char('E') => {
+                    return handle_ext_editor_from_task_detail(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     return handle_back_from_detail(state);
@@ -777,7 +812,7 @@ fn handle_event(
                 }
                 _ => {}
             },
-            MainView::DocEditor { .. } => {
+            MainView::DocEditor { .. } | MainView::TaskEditor { .. } => {
                 // Handled earlier in the event function (before Tab/global keys).
                 return Ok(Control::Continue);
             }
@@ -815,7 +850,7 @@ fn handle_event(
                     Ok(Control::Changed)
                 }
                 MainView::Dashboard(_) => Ok(Control::Quit),
-                MainView::DocEditor { .. } => Ok(Control::Continue), // handled earlier
+                MainView::DocEditor { .. } | MainView::TaskEditor { .. } => Ok(Control::Continue), // handled earlier
             }
         }
         KeymapResult::Matched(Action::GotoTasks) => {
@@ -1139,7 +1174,7 @@ fn handle_dashboard_done(
 
 // -- Editor handlers --
 
-fn handle_editor_from_list(
+fn handle_ext_editor_from_task_list(
     state: &mut AppState,
     ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
@@ -1161,7 +1196,7 @@ fn handle_editor_from_list(
     Ok(Control::Changed)
 }
 
-fn handle_editor_from_detail(
+fn handle_ext_editor_from_task_detail(
     state: &mut AppState,
     ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
@@ -1328,6 +1363,131 @@ fn handle_inline_editor_from_doc_detail(
     Ok(Control::Changed)
 }
 
+fn handle_inline_editor_from_task_list(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskList(ref task_list) = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let Some(task_id) = task_list.selected_task_id().map(String::from) else {
+        return Ok(Control::Continue);
+    };
+    let task = ctx.storage.load_task(&task_id)?;
+    let editor = TaskEditorState::new(task_id, task.project_id.clone(), task.title, task.body);
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+    state.main_view = MainView::TaskEditor {
+        editor: Box::new(editor),
+        prev: Box::new(prev),
+    };
+    state.focus = FocusPanel::Main;
+    Ok(Control::Changed)
+}
+
+fn handle_inline_editor_from_task_detail(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let MainView::TaskDetail { ref detail, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+    let task_id = detail.task.id.clone();
+    let task = ctx.storage.load_task(&task_id)?;
+    let editor = TaskEditorState::new(task_id, task.project_id.clone(), task.title, task.body);
+    let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+    state.main_view = MainView::TaskEditor {
+        editor: Box::new(editor),
+        prev: Box::new(prev),
+    };
+    state.focus = FocusPanel::Main;
+    Ok(Control::Changed)
+}
+
+fn handle_task_editor_input(
+    key: &crossterm::event::KeyEvent,
+    ct_event: &Event,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    use crate::tui::inline_editor::{EditorFocus, EditorInputResult, handle_editor_keys};
+
+    // If the ref picker is active and body is focused, route input there first.
+    if state.ref_picker.is_some() {
+        let is_body = matches!(
+            state.main_view,
+            MainView::TaskEditor { ref editor, .. } if editor.editor.focus == EditorFocus::Body
+        );
+        if is_body {
+            return handle_ref_picker_input(key, state, ctx);
+        }
+    }
+
+    let MainView::TaskEditor { ref mut editor, .. } = state.main_view else {
+        return Ok(Control::Continue);
+    };
+
+    // Check for [[ wiki-link trigger (tasks use empty namespace_id).
+    if key.code == KeyCode::Char('[') && editor.editor.focus == EditorFocus::Body {
+        let cursor = editor.editor.body.cursor();
+        if cursor.x > 0
+            && let Ok(line) = editor.editor.body.try_line_at(cursor.y)
+        {
+            let chars: Vec<char> = line.trim_end_matches('\n').chars().collect();
+            if chars.get(cursor.x as usize - 1) == Some(&'[') {
+                // Insert the [ into textarea, then activate picker
+                rat_widget::textarea::handle_events(&mut editor.editor.body, true, ct_event);
+                state.ref_picker = Some(ref_picker::RefPickerState::new(String::new()));
+                return Ok(Control::Changed);
+            }
+        }
+    }
+
+    match handle_editor_keys(key, ct_event, &mut editor.editor) {
+        EditorInputResult::Save => {
+            if editor.editor.is_dirty() {
+                let task_id = editor.task_id.clone();
+                let title = editor.editor.title().to_string();
+                let body = editor.editor.body_text();
+
+                let title_opt = if title != editor.editor.original_title {
+                    Some(title)
+                } else {
+                    None
+                };
+
+                crate::mutations::update_body(&ctx.storage, &ctx.cache, &task_id, title_opt, body)?;
+            }
+
+            state.ref_picker = None;
+            let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+            if let MainView::TaskEditor { prev, .. } = prev {
+                state.main_view = *prev;
+            }
+            refresh_current_view(state, ctx);
+            trigger_background_sync(state, ctx);
+            Ok(Control::Changed)
+        }
+        EditorInputResult::Cancel => {
+            state.ref_picker = None;
+            if editor.editor.is_dirty() {
+                state.confirm = Some(ConfirmState::new(
+                    crate::tui::confirm::PendingAction::DiscardEditorChanges,
+                ));
+            } else {
+                let prev =
+                    std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+                if let MainView::TaskEditor { prev, .. } = prev {
+                    state.main_view = *prev;
+                }
+                refresh_current_view(state, ctx);
+            }
+            Ok(Control::Changed)
+        }
+        EditorInputResult::Handled => Ok(Control::Changed),
+        EditorInputResult::NotConsumed => Ok(Control::Continue),
+    }
+}
+
 fn handle_doc_editor_input(
     key: &crossterm::event::KeyEvent,
     ct_event: &Event,
@@ -1372,26 +1532,26 @@ fn handle_doc_editor_input(
 
     match handle_editor_keys(key, ct_event, &mut editor.editor) {
         EditorInputResult::Save => {
-            let doc_id = editor.doc_id.clone();
-            let title = editor.editor.title().to_string();
-            let body = editor.editor.body_text();
+            if editor.editor.is_dirty() {
+                let doc_id = editor.doc_id.clone();
+                let title = editor.editor.title().to_string();
+                let body = editor.editor.body_text();
 
-            // Determine if title changed
-            let title_opt = if title != editor.editor.original_title {
-                Some(title)
-            } else {
-                None
-            };
+                let title_opt = if title != editor.editor.original_title {
+                    Some(title)
+                } else {
+                    None
+                };
 
-            crate::mutations::update_document_content(
-                &ctx.storage,
-                &ctx.cache,
-                &doc_id,
-                title_opt,
-                body,
-            )?;
+                crate::mutations::update_document_content(
+                    &ctx.storage,
+                    &ctx.cache,
+                    &doc_id,
+                    title_opt,
+                    body,
+                )?;
+            }
 
-            // Restore previous view and refresh
             state.ref_picker = None;
             let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
             if let MainView::DocEditor { prev, .. } = prev {
@@ -1422,6 +1582,15 @@ fn handle_doc_editor_input(
     }
 }
 
+/// Get a mutable reference to the active inline editor, if any.
+fn get_active_inline_editor(main_view: &mut MainView) -> Option<&mut InlineEditorState> {
+    match main_view {
+        MainView::DocEditor { editor, .. } => Some(&mut editor.editor),
+        MainView::TaskEditor { editor, .. } => Some(&mut editor.editor),
+        _ => None,
+    }
+}
+
 /// Handle input when the wiki-link reference picker is active.
 fn handle_ref_picker_input(
     key: &crossterm::event::KeyEvent,
@@ -1432,8 +1601,8 @@ fn handle_ref_picker_input(
 
     match code {
         KeyCode::Esc => {
-            if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
-                remove_bracket_trigger(&mut editor.editor);
+            if let Some(editor) = get_active_inline_editor(&mut state.main_view) {
+                remove_bracket_trigger(editor);
             }
             state.ref_picker = None;
         }
@@ -1455,11 +1624,11 @@ fn handle_ref_picker_input(
                 .and_then(|p| p.selected_result())
                 .map(|r| r.insert_text.clone());
 
-            if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
+            if let Some(editor) = get_active_inline_editor(&mut state.main_view) {
                 if let Some(text) = insert_text {
-                    complete_wiki_link(&mut editor.editor, &text);
+                    complete_wiki_link(editor, &text);
                 } else {
-                    remove_bracket_trigger(&mut editor.editor);
+                    remove_bracket_trigger(editor);
                 }
             }
             state.ref_picker = None;
@@ -1473,8 +1642,8 @@ fn handle_ref_picker_input(
 
             if should_dismiss {
                 // Remove the [[ from the textarea
-                if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
-                    remove_bracket_trigger(&mut editor.editor);
+                if let Some(editor) = get_active_inline_editor(&mut state.main_view) {
+                    remove_bracket_trigger(editor);
                 }
                 state.ref_picker = None;
             } else if let Some(ref mut picker) = state.ref_picker {
@@ -1747,7 +1916,8 @@ fn execute_command(
                 MainView::Dashboard(_)
                 | MainView::DocList(_)
                 | MainView::DocDetail { .. }
-                | MainView::DocEditor { .. } => {
+                | MainView::DocEditor { .. }
+                | MainView::TaskEditor { .. } => {
                     return Ok(Control::Changed);
                 }
             };
@@ -2049,7 +2219,7 @@ fn refresh_current_view(state: &mut AppState, ctx: &mut Global) {
             list.refresh(&ctx.cache, &ctx.config);
         }
         MainView::Dashboard(dashboard) => dashboard.refresh(&ctx.cache),
-        MainView::DocEditor { .. } => {} // No refresh needed for active editor
+        MainView::DocEditor { .. } | MainView::TaskEditor { .. } => {} // No refresh needed for active editor
     }
 }
 
@@ -2811,8 +2981,13 @@ fn execute_confirmed_action(
             // Discard changes and return to previous view
             state.ref_picker = None;
             let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
-            if let MainView::DocEditor { prev, .. } = prev {
-                state.main_view = *prev;
+            match prev {
+                MainView::DocEditor { prev, .. } | MainView::TaskEditor { prev, .. } => {
+                    state.main_view = *prev;
+                }
+                _ => {
+                    state.main_view = prev;
+                }
             }
             refresh_current_view(state, ctx);
             return Ok(Control::Changed);
@@ -2866,7 +3041,7 @@ fn execute_confirmed_action(
             }
         }
         MainView::DocDetail { .. } => {}
-        MainView::DocEditor { .. } => {} // Deletion dialog is unlikely during editing
+        MainView::DocEditor { .. } | MainView::TaskEditor { .. } => {} // Deletion dialog is unlikely during editing
         MainView::Dashboard(_) => {
             if let MainView::Dashboard(ref mut dashboard) = state.main_view {
                 dashboard.refresh(&ctx.cache);
@@ -3169,6 +3344,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
+                Span::styled("  E", theme.status_key),
+                Span::styled(" $EDITOR", theme.status_desc),
             ]);
         }
         (MainView::DocDetail { detail, .. }, FocusPanel::Main) => {
@@ -3203,7 +3380,7 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" delete", theme.status_desc),
             ]);
         }
-        (MainView::DocEditor { .. }, FocusPanel::Main) => {
+        (MainView::DocEditor { .. } | MainView::TaskEditor { .. }, FocusPanel::Main) => {
             hints.extend([
                 Span::styled(" Ctrl-s", theme.status_key),
                 Span::styled(" save", theme.status_desc),
@@ -3287,6 +3464,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled(" update", theme.status_desc),
                 Span::styled("  e", theme.status_key),
                 Span::styled(" edit", theme.status_desc),
+                Span::styled("  E", theme.status_key),
+                Span::styled(" $EDITOR", theme.status_desc),
                 Span::styled("  n", theme.status_key),
                 Span::styled(" new", theme.status_desc),
             ]);
@@ -3325,8 +3504,11 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    // DocEditor has its own hints; skip global trailing hints.
-    if !matches!(state.main_view, MainView::DocEditor { .. }) {
+    // Inline editors have their own hints; skip global trailing hints.
+    if !matches!(
+        state.main_view,
+        MainView::DocEditor { .. } | MainView::TaskEditor { .. }
+    ) {
         hints.extend([
             Span::styled("  Tab", theme.status_key),
             Span::styled(" focus", theme.status_desc),
