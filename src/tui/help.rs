@@ -177,7 +177,8 @@ fn help_sections() -> Vec<HelpSection> {
                 ("d", "Mark done"),
                 ("x", "Delete"),
                 ("u", "Update fields"),
-                ("e", "Edit in $EDITOR"),
+                ("e", "Inline edit"),
+                ("E", "Edit in $EDITOR"),
             ],
         },
         HelpSection {
@@ -186,6 +187,8 @@ fn help_sections() -> Vec<HelpSection> {
                 ("] / [", "Next / previous link"),
                 ("Enter", "Follow selected link"),
                 ("P", "Set progress"),
+                ("e", "Inline edit"),
+                ("E", "Edit in $EDITOR"),
             ],
         },
         HelpSection {
