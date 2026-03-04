@@ -1334,7 +1334,7 @@ fn handle_doc_editor_input(
     state: &mut AppState,
     ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
-    use crate::tui::inline_editor::EditorFocus;
+    use crate::tui::inline_editor::{EditorFocus, EditorInputResult, handle_editor_keys};
 
     // If the ref picker is active and body is focused, route input there
     // first. This check must happen before borrowing `editor` from
@@ -1353,104 +1353,72 @@ fn handle_doc_editor_input(
         return Ok(Control::Continue);
     };
 
-    let code = key.code;
-    let mods = key.modifiers;
-
-    // Ctrl+S: save and return to previous view
-    if code == KeyCode::Char('s') && mods.contains(KeyModifiers::CONTROL) {
-        let doc_id = editor.doc_id.clone();
-        let title = editor.editor.title().to_string();
-        let body = editor.editor.body_text();
-
-        // Determine if title changed
-        let title_opt = if title != editor.editor.original_title {
-            Some(title)
-        } else {
-            None
-        };
-
-        crate::mutations::update_document_content(
-            &ctx.storage,
-            &ctx.cache,
-            &doc_id,
-            title_opt,
-            body,
-        )?;
-
-        // Restore previous view and refresh
-        state.ref_picker = None;
-        let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
-        if let MainView::DocEditor { prev, .. } = prev {
-            state.main_view = *prev;
+    // Check for [[ wiki-link trigger (doc-specific: uses namespace_id).
+    if key.code == KeyCode::Char('[') && editor.editor.focus == EditorFocus::Body {
+        let cursor = editor.editor.body.cursor();
+        if cursor.x > 0
+            && let Ok(line) = editor.editor.body.try_line_at(cursor.y)
+        {
+            let chars: Vec<char> = line.trim_end_matches('\n').chars().collect();
+            if chars.get(cursor.x as usize - 1) == Some(&'[') {
+                // Insert the [ into textarea, then activate picker
+                rat_widget::textarea::handle_events(&mut editor.editor.body, true, ct_event);
+                let ns_id = editor.namespace_id.clone();
+                state.ref_picker = Some(ref_picker::RefPickerState::new(ns_id));
+                return Ok(Control::Changed);
+            }
         }
-        refresh_current_view(state, ctx);
-        trigger_background_sync(state, ctx);
-        return Ok(Control::Changed);
     }
 
-    // Esc: cancel (with dirty check)
-    if code == KeyCode::Esc {
-        state.ref_picker = None;
-        if editor.editor.is_dirty() {
-            state.confirm = Some(ConfirmState::new(
-                crate::tui::confirm::PendingAction::DiscardEditorChanges,
-            ));
-        } else {
+    match handle_editor_keys(key, ct_event, &mut editor.editor) {
+        EditorInputResult::Save => {
+            let doc_id = editor.doc_id.clone();
+            let title = editor.editor.title().to_string();
+            let body = editor.editor.body_text();
+
+            // Determine if title changed
+            let title_opt = if title != editor.editor.original_title {
+                Some(title)
+            } else {
+                None
+            };
+
+            crate::mutations::update_document_content(
+                &ctx.storage,
+                &ctx.cache,
+                &doc_id,
+                title_opt,
+                body,
+            )?;
+
+            // Restore previous view and refresh
+            state.ref_picker = None;
             let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
             if let MainView::DocEditor { prev, .. } = prev {
                 state.main_view = *prev;
             }
             refresh_current_view(state, ctx);
-        }
-        return Ok(Control::Changed);
-    }
-
-    // Tab: toggle focus between title and body
-    if code == KeyCode::Tab {
-        editor.editor.toggle_focus();
-        return Ok(Control::Changed);
-    }
-
-    // Dispatch to focused field
-    match editor.editor.focus {
-        EditorFocus::Title => {
-            match code {
-                KeyCode::Char(c) => editor.editor.title_char_input(c),
-                KeyCode::Backspace => editor.editor.title_backspace(),
-                KeyCode::Delete => editor.editor.title_delete(),
-                KeyCode::Left => editor.editor.title_cursor_left(),
-                KeyCode::Right => editor.editor.title_cursor_right(),
-                KeyCode::Home => editor.editor.title_home(),
-                KeyCode::End => editor.editor.title_end(),
-                _ => return Ok(Control::Continue),
-            }
+            trigger_background_sync(state, ctx);
             Ok(Control::Changed)
         }
-        EditorFocus::Body => {
-            // Check for [[ trigger before passing to textarea
-            if code == KeyCode::Char('[') {
-                let cursor = editor.editor.body.cursor();
-                if cursor.x > 0
-                    && let Ok(line) = editor.editor.body.try_line_at(cursor.y)
-                {
-                    let chars: Vec<char> = line.trim_end_matches('\n').chars().collect();
-                    if chars.get(cursor.x as usize - 1) == Some(&'[') {
-                        // Insert the [ into textarea, then activate picker
-                        rat_widget::textarea::handle_events(
-                            &mut editor.editor.body,
-                            true,
-                            ct_event,
-                        );
-                        let ns_id = editor.namespace_id.clone();
-                        state.ref_picker = Some(ref_picker::RefPickerState::new(ns_id));
-                        return Ok(Control::Changed);
-                    }
+        EditorInputResult::Cancel => {
+            state.ref_picker = None;
+            if editor.editor.is_dirty() {
+                state.confirm = Some(ConfirmState::new(
+                    crate::tui::confirm::PendingAction::DiscardEditorChanges,
+                ));
+            } else {
+                let prev =
+                    std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
+                if let MainView::DocEditor { prev, .. } = prev {
+                    state.main_view = *prev;
                 }
+                refresh_current_view(state, ctx);
             }
-
-            rat_widget::textarea::handle_events(&mut editor.editor.body, true, ct_event);
             Ok(Control::Changed)
         }
+        EditorInputResult::Handled => Ok(Control::Changed),
+        EditorInputResult::NotConsumed => Ok(Control::Continue),
     }
 }
 

@@ -18,6 +18,7 @@
 //! Reusable inline editor — title + body editing for documents, tasks,
 //! and any future entity that needs a two-field text editor.
 
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use rat_widget::textarea::{TextArea, TextAreaState, TextWrap};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -271,5 +272,64 @@ impl InlineEditorState {
         }
 
         Line::from(spans).render(area, buf);
+    }
+}
+
+/// Result of shared editor key handling.
+pub enum EditorInputResult {
+    /// Key was consumed (title/body input, Tab toggle, etc.).
+    Handled,
+    /// Ctrl+S pressed — caller should save.
+    Save,
+    /// Esc pressed — caller should cancel/close.
+    Cancel,
+    /// Key was not consumed by the editor.
+    NotConsumed,
+}
+
+/// Handle common inline editor keys.
+///
+/// Returns `Save` or `Cancel` for the entity-specific handler to
+/// act on; `Handled` when the key was consumed; `NotConsumed`
+/// otherwise.
+pub fn handle_editor_keys(
+    key: &KeyEvent,
+    ct_event: &Event,
+    editor: &mut InlineEditorState,
+) -> EditorInputResult {
+    let code = key.code;
+    let mods = key.modifiers;
+
+    if code == KeyCode::Char('s') && mods.contains(KeyModifiers::CONTROL) {
+        return EditorInputResult::Save;
+    }
+
+    if code == KeyCode::Esc {
+        return EditorInputResult::Cancel;
+    }
+
+    if code == KeyCode::Tab {
+        editor.toggle_focus();
+        return EditorInputResult::Handled;
+    }
+
+    match editor.focus {
+        EditorFocus::Title => {
+            match code {
+                KeyCode::Char(c) => editor.title_char_input(c),
+                KeyCode::Backspace => editor.title_backspace(),
+                KeyCode::Delete => editor.title_delete(),
+                KeyCode::Left => editor.title_cursor_left(),
+                KeyCode::Right => editor.title_cursor_right(),
+                KeyCode::Home => editor.title_home(),
+                KeyCode::End => editor.title_end(),
+                _ => return EditorInputResult::NotConsumed,
+            }
+            EditorInputResult::Handled
+        }
+        EditorFocus::Body => {
+            rat_widget::textarea::handle_events(&mut editor.body, true, ct_event);
+            EditorInputResult::Handled
+        }
     }
 }
