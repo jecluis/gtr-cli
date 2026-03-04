@@ -45,6 +45,7 @@ use crate::tui::doc_form::{DocFormField, DocFormState};
 use crate::tui::doc_list::DocumentListState;
 use crate::tui::feels::FeelsDialogState;
 use crate::tui::help::HelpOverlayState;
+use crate::tui::inline_editor::InlineEditorState;
 use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::move_form::MoveFormState;
 use crate::tui::nav::NavTarget;
@@ -1333,7 +1334,7 @@ fn handle_doc_editor_input(
     state: &mut AppState,
     ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
-    use crate::tui::doc_editor::EditorFocus;
+    use crate::tui::inline_editor::EditorFocus;
 
     // If the ref picker is active and body is focused, route input there
     // first. This check must happen before borrowing `editor` from
@@ -1341,7 +1342,7 @@ fn handle_doc_editor_input(
     if state.ref_picker.is_some() {
         let is_body = matches!(
             state.main_view,
-            MainView::DocEditor { ref editor, .. } if editor.focus == EditorFocus::Body
+            MainView::DocEditor { ref editor, .. } if editor.editor.focus == EditorFocus::Body
         );
         if is_body {
             return handle_ref_picker_input(key, state, ctx);
@@ -1358,11 +1359,11 @@ fn handle_doc_editor_input(
     // Ctrl+S: save and return to previous view
     if code == KeyCode::Char('s') && mods.contains(KeyModifiers::CONTROL) {
         let doc_id = editor.doc_id.clone();
-        let title = editor.title().to_string();
-        let body = editor.body_text();
+        let title = editor.editor.title().to_string();
+        let body = editor.editor.body_text();
 
         // Determine if title changed
-        let title_opt = if title != editor.original_title {
+        let title_opt = if title != editor.editor.original_title {
             Some(title)
         } else {
             None
@@ -1390,7 +1391,7 @@ fn handle_doc_editor_input(
     // Esc: cancel (with dirty check)
     if code == KeyCode::Esc {
         state.ref_picker = None;
-        if editor.is_dirty() {
+        if editor.editor.is_dirty() {
             state.confirm = Some(ConfirmState::new(
                 crate::tui::confirm::PendingAction::DiscardEditorChanges,
             ));
@@ -1406,21 +1407,21 @@ fn handle_doc_editor_input(
 
     // Tab: toggle focus between title and body
     if code == KeyCode::Tab {
-        editor.toggle_focus();
+        editor.editor.toggle_focus();
         return Ok(Control::Changed);
     }
 
     // Dispatch to focused field
-    match editor.focus {
+    match editor.editor.focus {
         EditorFocus::Title => {
             match code {
-                KeyCode::Char(c) => editor.title_char_input(c),
-                KeyCode::Backspace => editor.title_backspace(),
-                KeyCode::Delete => editor.title_delete(),
-                KeyCode::Left => editor.title_cursor_left(),
-                KeyCode::Right => editor.title_cursor_right(),
-                KeyCode::Home => editor.title_home(),
-                KeyCode::End => editor.title_end(),
+                KeyCode::Char(c) => editor.editor.title_char_input(c),
+                KeyCode::Backspace => editor.editor.title_backspace(),
+                KeyCode::Delete => editor.editor.title_delete(),
+                KeyCode::Left => editor.editor.title_cursor_left(),
+                KeyCode::Right => editor.editor.title_cursor_right(),
+                KeyCode::Home => editor.editor.title_home(),
+                KeyCode::End => editor.editor.title_end(),
                 _ => return Ok(Control::Continue),
             }
             Ok(Control::Changed)
@@ -1428,14 +1429,18 @@ fn handle_doc_editor_input(
         EditorFocus::Body => {
             // Check for [[ trigger before passing to textarea
             if code == KeyCode::Char('[') {
-                let cursor = editor.body.cursor();
+                let cursor = editor.editor.body.cursor();
                 if cursor.x > 0
-                    && let Ok(line) = editor.body.try_line_at(cursor.y)
+                    && let Ok(line) = editor.editor.body.try_line_at(cursor.y)
                 {
                     let chars: Vec<char> = line.trim_end_matches('\n').chars().collect();
                     if chars.get(cursor.x as usize - 1) == Some(&'[') {
                         // Insert the [ into textarea, then activate picker
-                        rat_widget::textarea::handle_events(&mut editor.body, true, ct_event);
+                        rat_widget::textarea::handle_events(
+                            &mut editor.editor.body,
+                            true,
+                            ct_event,
+                        );
                         let ns_id = editor.namespace_id.clone();
                         state.ref_picker = Some(ref_picker::RefPickerState::new(ns_id));
                         return Ok(Control::Changed);
@@ -1443,7 +1448,7 @@ fn handle_doc_editor_input(
                 }
             }
 
-            rat_widget::textarea::handle_events(&mut editor.body, true, ct_event);
+            rat_widget::textarea::handle_events(&mut editor.editor.body, true, ct_event);
             Ok(Control::Changed)
         }
     }
@@ -1460,7 +1465,7 @@ fn handle_ref_picker_input(
     match code {
         KeyCode::Esc => {
             if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
-                remove_bracket_trigger(editor);
+                remove_bracket_trigger(&mut editor.editor);
             }
             state.ref_picker = None;
         }
@@ -1484,9 +1489,9 @@ fn handle_ref_picker_input(
 
             if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
                 if let Some(text) = insert_text {
-                    complete_wiki_link(editor, &text);
+                    complete_wiki_link(&mut editor.editor, &text);
                 } else {
-                    remove_bracket_trigger(editor);
+                    remove_bracket_trigger(&mut editor.editor);
                 }
             }
             state.ref_picker = None;
@@ -1501,7 +1506,7 @@ fn handle_ref_picker_input(
             if should_dismiss {
                 // Remove the [[ from the textarea
                 if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
-                    remove_bracket_trigger(editor);
+                    remove_bracket_trigger(&mut editor.editor);
                 }
                 state.ref_picker = None;
             } else if let Some(ref mut picker) = state.ref_picker {
@@ -1522,7 +1527,7 @@ fn handle_ref_picker_input(
 
 /// Replace everything from the opening `[[` through the cursor with
 /// `[[insert_text]]` in the body textarea.
-fn complete_wiki_link(editor: &mut DocEditorState, insert_text: &str) {
+fn complete_wiki_link(editor: &mut InlineEditorState, insert_text: &str) {
     let text = editor.body.text();
     let cursor = editor.body.cursor();
     let byte_range = editor.body.byte_at(cursor);
@@ -1543,7 +1548,7 @@ fn complete_wiki_link(editor: &mut DocEditorState, insert_text: &str) {
 
 /// Remove the `[[` trigger from the textarea when dismissing with
 /// empty query.
-fn remove_bracket_trigger(editor: &mut DocEditorState) {
+fn remove_bracket_trigger(editor: &mut InlineEditorState) {
     let text = editor.body.text();
     let cursor = editor.body.cursor();
     let byte_range = editor.body.byte_at(cursor);
