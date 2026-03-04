@@ -36,6 +36,7 @@ pub mod keymap;
 pub mod move_form;
 pub mod nav;
 pub mod progress;
+pub mod ref_picker;
 pub mod search;
 pub mod sidebar;
 pub mod task_detail;
