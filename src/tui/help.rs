@@ -216,6 +216,7 @@ fn help_sections() -> Vec<HelpSection> {
                 ("Ctrl-s", "Save"),
                 ("Esc", "Cancel / close"),
                 ("Tab", "Toggle title / body"),
+                ("[[", "Wiki-link picker"),
             ],
         },
         HelpSection {
