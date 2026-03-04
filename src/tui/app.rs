@@ -49,6 +49,7 @@ use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::move_form::MoveFormState;
 use crate::tui::nav::NavTarget;
 use crate::tui::progress::ProgressDialogState;
+use crate::tui::ref_picker;
 use crate::tui::search::{SearchFilter, SearchOverlayState, SearchResultKind};
 use crate::tui::sidebar::{ActiveItem, SidebarState, TreeItemKind};
 use crate::tui::task_detail::TaskDetailState;
@@ -146,6 +147,7 @@ pub struct AppState {
     pub feels: Option<FeelsDialogState>,
     pub progress: Option<ProgressDialogState>,
     pub help: Option<HelpOverlayState>,
+    pub ref_picker: Option<ref_picker::RefPickerState>,
     pub sync_status: SyncStatus,
     /// Navigation history for detail-to-detail link following.
     pub nav_history: Vec<MainView>,
@@ -184,6 +186,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         feels: None,
         progress: None,
         help: None,
+        ref_picker: None,
         sync_status: SyncStatus::Idle,
         nav_history: Vec::new(),
     };
@@ -245,6 +248,10 @@ fn render(
         }
         MainView::DocEditor { editor, .. } => {
             editor.render(theme, main_focused, columns[1], buf);
+            // Render picker overlay on top of editor
+            if let Some(ref mut picker) = state.ref_picker {
+                picker.render(theme, columns[1], buf);
+            }
         }
     }
 
@@ -1328,6 +1335,19 @@ fn handle_doc_editor_input(
 ) -> Result<Control<AppEvent>, crate::Error> {
     use crate::tui::doc_editor::EditorFocus;
 
+    // If the ref picker is active and body is focused, route input there
+    // first. This check must happen before borrowing `editor` from
+    // `state.main_view` to avoid conflicting borrows.
+    if state.ref_picker.is_some() {
+        let is_body = matches!(
+            state.main_view,
+            MainView::DocEditor { ref editor, .. } if editor.focus == EditorFocus::Body
+        );
+        if is_body {
+            return handle_ref_picker_input(key, state, ctx);
+        }
+    }
+
     let MainView::DocEditor { ref mut editor, .. } = state.main_view else {
         return Ok(Control::Continue);
     };
@@ -1357,6 +1377,7 @@ fn handle_doc_editor_input(
         )?;
 
         // Restore previous view and refresh
+        state.ref_picker = None;
         let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
         if let MainView::DocEditor { prev, .. } = prev {
             state.main_view = *prev;
@@ -1368,6 +1389,7 @@ fn handle_doc_editor_input(
 
     // Esc: cancel (with dirty check)
     if code == KeyCode::Esc {
+        state.ref_picker = None;
         if editor.is_dirty() {
             state.confirm = Some(ConfirmState::new(
                 crate::tui::confirm::PendingAction::DiscardEditorChanges,
@@ -1404,9 +1426,136 @@ fn handle_doc_editor_input(
             Ok(Control::Changed)
         }
         EditorFocus::Body => {
+            // Check for [[ trigger before passing to textarea
+            if code == KeyCode::Char('[') {
+                let cursor = editor.body.cursor();
+                if cursor.x > 0
+                    && let Ok(line) = editor.body.try_line_at(cursor.y)
+                {
+                    let chars: Vec<char> = line.trim_end_matches('\n').chars().collect();
+                    if chars.get(cursor.x as usize - 1) == Some(&'[') {
+                        // Insert the [ into textarea, then activate picker
+                        rat_widget::textarea::handle_events(&mut editor.body, true, ct_event);
+                        let ns_id = editor.namespace_id.clone();
+                        state.ref_picker = Some(ref_picker::RefPickerState::new(ns_id));
+                        return Ok(Control::Changed);
+                    }
+                }
+            }
+
             rat_widget::textarea::handle_events(&mut editor.body, true, ct_event);
             Ok(Control::Changed)
         }
+    }
+}
+
+/// Handle input when the wiki-link reference picker is active.
+fn handle_ref_picker_input(
+    key: &crossterm::event::KeyEvent,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let code = key.code;
+
+    match code {
+        KeyCode::Esc => {
+            if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
+                remove_bracket_trigger(editor);
+            }
+            state.ref_picker = None;
+        }
+        KeyCode::Up => {
+            if let Some(ref mut picker) = state.ref_picker {
+                picker.select_prev();
+            }
+        }
+        KeyCode::Down => {
+            if let Some(ref mut picker) = state.ref_picker {
+                picker.select_next();
+            }
+        }
+        KeyCode::Enter => {
+            // Get the selected result's insert_text
+            let insert_text = state
+                .ref_picker
+                .as_ref()
+                .and_then(|p| p.selected_result())
+                .map(|r| r.insert_text.clone());
+
+            if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
+                if let Some(text) = insert_text {
+                    complete_wiki_link(editor, &text);
+                } else {
+                    remove_bracket_trigger(editor);
+                }
+            }
+            state.ref_picker = None;
+        }
+        KeyCode::Backspace => {
+            let should_dismiss = state
+                .ref_picker
+                .as_mut()
+                .map(|p| !p.backspace())
+                .unwrap_or(false);
+
+            if should_dismiss {
+                // Remove the [[ from the textarea
+                if let MainView::DocEditor { ref mut editor, .. } = state.main_view {
+                    remove_bracket_trigger(editor);
+                }
+                state.ref_picker = None;
+            } else if let Some(ref mut picker) = state.ref_picker {
+                picker.update_results(&ctx.cache);
+            }
+        }
+        KeyCode::Char(c) => {
+            if let Some(ref mut picker) = state.ref_picker {
+                picker.char_input(c);
+                picker.update_results(&ctx.cache);
+            }
+        }
+        _ => {}
+    }
+
+    Ok(Control::Changed)
+}
+
+/// Replace everything from the opening `[[` through the cursor with
+/// `[[insert_text]]` in the body textarea.
+fn complete_wiki_link(editor: &mut DocEditorState, insert_text: &str) {
+    let text = editor.body.text();
+    let cursor = editor.body.cursor();
+    let byte_range = editor.body.byte_at(cursor);
+    let byte_pos = byte_range.start;
+
+    // Find the last [[ before cursor
+    if let Some(bracket_pos) = text[..byte_pos].rfind("[[") {
+        let replacement = format!("[[{insert_text}]]");
+        let before = &text[..bracket_pos];
+        let after = &text[byte_pos..];
+        let new_text = format!("{before}{replacement}{after}");
+        let new_cursor_byte = bracket_pos + replacement.len();
+        editor.body.set_text(&new_text);
+        let new_pos = editor.body.byte_pos(new_cursor_byte);
+        editor.body.set_cursor(new_pos, false);
+    }
+}
+
+/// Remove the `[[` trigger from the textarea when dismissing with
+/// empty query.
+fn remove_bracket_trigger(editor: &mut DocEditorState) {
+    let text = editor.body.text();
+    let cursor = editor.body.cursor();
+    let byte_range = editor.body.byte_at(cursor);
+    let byte_pos = byte_range.start;
+
+    if let Some(bracket_pos) = text[..byte_pos].rfind("[[") {
+        let before = &text[..bracket_pos];
+        let after = &text[byte_pos..];
+        let new_text = format!("{before}{after}");
+        editor.body.set_text(&new_text);
+        let new_pos = editor.body.byte_pos(bracket_pos);
+        editor.body.set_cursor(new_pos, false);
     }
 }
 
@@ -2687,6 +2836,7 @@ fn execute_confirmed_action(
         }
         PendingAction::DiscardEditorChanges => {
             // Discard changes and return to previous view
+            state.ref_picker = None;
             let prev = std::mem::replace(&mut state.main_view, MainView::Dashboard(Box::default()));
             if let MainView::DocEditor { prev, .. } = prev {
                 state.main_view = *prev;
