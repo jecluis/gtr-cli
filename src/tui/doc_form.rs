@@ -269,19 +269,15 @@ impl DocFormState {
 
     /// Commit the current label input if valid.
     pub fn commit_label(&mut self) -> bool {
-        let trimmed = self.label_input.trim().to_string();
-        if trimmed.is_empty() {
+        let Ok(normalized) = crate::labels::normalize_label(&self.label_input) else {
             return false;
-        }
-        if crate::labels::validate_label(&trimmed).is_err() {
-            return false;
-        }
-        if self.labels.contains(&trimmed) {
+        };
+        if self.labels.contains(&normalized) {
             self.label_input.clear();
             self.label_cursor = 0;
             return false;
         }
-        self.labels.push(trimmed);
+        self.labels.push(normalized);
         self.label_input.clear();
         self.label_cursor = 0;
         true

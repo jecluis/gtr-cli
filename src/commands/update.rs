@@ -320,10 +320,11 @@ pub async fn run(
     if !labels.is_empty() || !unlabels.is_empty() {
         let mut current_labels = task.labels.clone();
 
-        // Validate new labels
-        for label in &labels {
-            crate::labels::validate_label(label)?;
-        }
+        // Normalize new labels (lowercase + validate)
+        let labels: Vec<String> = labels
+            .iter()
+            .map(|l| crate::labels::normalize_label(l))
+            .collect::<crate::Result<_>>()?;
 
         // Check if labels exist in project's effective registry (own + inherited)
         if !labels.is_empty() {
