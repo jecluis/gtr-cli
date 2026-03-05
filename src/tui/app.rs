@@ -2235,6 +2235,7 @@ fn submit_update_form(
         changes.deadline,
         changes.labels,
         changes.parent_id,
+        None,
     )?;
 
     if progress_changed && let Some(value) = new_progress {

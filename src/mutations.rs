@@ -421,7 +421,8 @@ pub fn update_body(
 ///
 /// Only fields with `Some` values are modified. Returns the updated
 /// task. For `parent_id`, `Some(None)` clears the parent while
-/// `Some(Some(id))` sets a new parent.
+/// `Some(Some(id))` sets a new parent. For `project_id`, `Some(id)`
+/// moves the task to another project (caller handles label migration).
 #[allow(clippy::too_many_arguments)]
 pub fn update_task(
     storage: &TaskStorage,
@@ -435,6 +436,7 @@ pub fn update_task(
     deadline: Option<Option<String>>,
     labels: Option<Vec<String>>,
     parent_id: Option<Option<String>>,
+    project_id: Option<String>,
 ) -> Result<Task> {
     let mut task = storage.load_task(task_id)?;
     let now = Utc::now();
@@ -527,6 +529,10 @@ pub fn update_task(
 
     if let Some(new_labels) = labels {
         task.labels = new_labels;
+    }
+
+    if let Some(new_project) = project_id {
+        task.project_id = new_project;
     }
 
     if let Some(new_parent) = parent_id {
