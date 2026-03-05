@@ -19,10 +19,11 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Widget};
 
+use crate::display;
 use crate::tui::theme::Theme;
 
 /// The destructive action awaiting confirmation.
@@ -89,7 +90,7 @@ impl ConfirmState {
                 } else {
                     String::new()
                 };
-                ("Mark as done?", format!("\"{}\"", title), warn)
+                ("Mark as done?", format!("\"{title}\""), warn)
             }
             PendingAction::Delete {
                 title, child_count, ..
@@ -99,7 +100,7 @@ impl ConfirmState {
                 } else {
                     String::new()
                 };
-                ("Delete task?", format!("\"{}\"", title), warn)
+                ("Delete task?", format!("\"{title}\""), warn)
             }
             PendingAction::DeleteDocument {
                 title, child_count, ..
@@ -109,7 +110,7 @@ impl ConfirmState {
                 } else {
                     String::new()
                 };
-                ("Delete document?", format!("\"{}\"", title), warn)
+                ("Delete document?", format!("\"{title}\""), warn)
             }
             PendingAction::DiscardEditorChanges => (
                 "Discard changes?",
@@ -118,19 +119,28 @@ impl ConfirmState {
             ),
         };
 
-        // Compute popup dimensions
-        let popup_width = 50u16.min(area.width.saturating_sub(4));
-        let popup_height = if warning.is_empty() { 7 } else { 9 };
+        // Compute popup dimensions — wider to give titles room.
+        let popup_width = 64u16.min(area.width.saturating_sub(4));
+        // Inner width = popup minus borders (2) minus small padding (4).
+        let inner_text_width = popup_width.saturating_sub(6) as usize;
+
+        // Wrap the message text so long titles don't get clipped.
+        let wrapped = display::wrap_text(&message, inner_text_width);
+        let msg_lines = wrapped.len() as u16;
+
+        // Height: 1 blank + msg_lines + optional (1 blank + 1 warning)
+        //       + 1 blank + 1 buttons + 2 borders
+        let warning_rows = if warning.is_empty() { 0u16 } else { 2 };
+        let popup_height = 1 + msg_lines + warning_rows + 1 + 1 + 2;
         let popup = centered_rect(popup_width, popup_height, area);
 
-        // Clear the area behind the popup
         Clear.render(popup, buf);
 
         // Build content lines
-        let mut lines = vec![
-            Line::default(),
-            Line::from(message).alignment(Alignment::Center),
-        ];
+        let mut lines: Vec<Line<'_>> = vec![Line::default()];
+        for line in &wrapped {
+            lines.push(Line::from(line.as_str()).alignment(Alignment::Center));
+        }
 
         if !warning.is_empty() {
             lines.push(Line::default());
@@ -142,15 +152,16 @@ impl ConfirmState {
         lines.push(Line::default());
 
         // Buttons
+        let unfocused = Style::default().fg(Color::Gray);
         let no_style = if self.selected == Choice::No {
             theme.selected.add_modifier(Modifier::BOLD)
         } else {
-            theme.muted
+            unfocused
         };
         let yes_style = if self.selected == Choice::Yes {
             theme.danger.add_modifier(Modifier::BOLD)
         } else {
-            theme.muted
+            unfocused
         };
 
         lines.push(
@@ -166,7 +177,7 @@ impl ConfirmState {
 
         let border_style = theme.danger;
         let block = Block::bordered()
-            .title(format!(" {} ", title))
+            .title(format!(" {title} "))
             .border_style(border_style);
 
         Paragraph::new(lines).block(block).render(popup, buf);
