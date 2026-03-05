@@ -43,6 +43,7 @@ use crate::tui::doc_detail::DocumentDetailState;
 use crate::tui::doc_editor::DocEditorState;
 use crate::tui::doc_form::{DocFormField, DocFormState};
 use crate::tui::doc_list::DocumentListState;
+use crate::tui::entity_form::{EntityFormField, EntityFormState, EntityKind};
 use crate::tui::feels::FeelsDialogState;
 use crate::tui::help::HelpOverlayState;
 use crate::tui::inline_editor::InlineEditorState;
@@ -148,6 +149,7 @@ pub struct AppState {
     pub confirm: Option<ConfirmState>,
     pub create_form: Option<TaskFormState>,
     pub doc_form: Option<DocFormState>,
+    pub entity_form: Option<EntityFormState>,
     pub move_form: Option<MoveFormState>,
     pub command_bar: Option<CommandBarState>,
     pub search: Option<SearchOverlayState>,
@@ -187,6 +189,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         confirm: None,
         create_form: None,
         doc_form: None,
+        entity_form: None,
         move_form: None,
         command_bar: None,
         search: None,
@@ -306,6 +309,9 @@ fn render(
     if let Some(ref mut form) = state.doc_form {
         form.render(theme, area, buf);
     }
+    if let Some(ref mut form) = state.entity_form {
+        form.render(theme, area, buf);
+    }
     if let Some(ref form) = state.move_form {
         form.render(theme, area, buf);
     }
@@ -380,6 +386,7 @@ fn handle_event(
         };
         if *success {
             refresh_current_view(state, ctx);
+            state.sidebar.refresh(&ctx.cache);
         }
         return Ok(Control::Changed);
     }
@@ -411,6 +418,11 @@ fn handle_event(
     // Document form intercepts all input when active.
     if state.doc_form.is_some() {
         return handle_doc_form_input(key, state, ctx);
+    }
+
+    // Entity form (project/namespace creation) intercepts all input.
+    if state.entity_form.is_some() {
+        return handle_entity_form_input(key, state, ctx);
     }
 
     // Move form intercepts all input when active.
@@ -488,6 +500,9 @@ fn handle_event(
             }
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                 return handle_sidebar_select(state, ctx);
+            }
+            KeyCode::Char('n') => {
+                return handle_sidebar_new_entity(state);
             }
             _ => {}
         }
@@ -2012,6 +2027,41 @@ fn execute_command(
             trigger_background_sync(state, ctx);
             Ok(Control::Changed)
         }
+        Command::NewProject { name } => {
+            let parent_id = match &state.main_view {
+                MainView::TaskList(list) if list.project_id != TaskCache::meta_root_id() => {
+                    Some(list.project_id.clone())
+                }
+                _ => None,
+            };
+            let parent_name = parent_id
+                .as_ref()
+                .and_then(|pid| ctx.cache.get_project(pid).ok().flatten().map(|p| p.name));
+            let mut form = EntityFormState::new(EntityKind::Project, parent_id, parent_name);
+            form.set_name(&name);
+            state.entity_form = Some(form);
+            Ok(Control::Changed)
+        }
+        Command::NewNamespace { name } => {
+            let parent_id = match &state.main_view {
+                MainView::DocList(list) => {
+                    let ns_id = &list.namespace_id;
+                    if ctx.cache.get_namespace(ns_id).ok().flatten().is_some() {
+                        Some(ns_id.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let parent_name = parent_id
+                .as_ref()
+                .and_then(|pid| ctx.cache.get_namespace(pid).ok().flatten().map(|n| n.name));
+            let mut form = EntityFormState::new(EntityKind::Namespace, parent_id, parent_name);
+            form.set_name(&name);
+            state.entity_form = Some(form);
+            Ok(Control::Changed)
+        }
         Command::Unknown(_) => {
             // Silently ignore unknown commands
             Ok(Control::Changed)
@@ -2547,6 +2597,199 @@ fn resolve_doc_parent_if_needed(form: &mut DocFormState, cache: &TaskCache) {
             form.set_resolved_parent(None);
             form.set_parent_id(None);
         }
+    }
+}
+
+// -- Entity form handlers (project / namespace creation) --
+
+fn handle_entity_form_input(
+    key: &crossterm::event::KeyEvent,
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let code = key.code;
+
+    match code {
+        KeyCode::Esc => {
+            state.entity_form = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            let focused = state.entity_form.as_ref().unwrap().focused();
+
+            if focused == EntityFormField::Cancel {
+                state.entity_form = None;
+                return Ok(Control::Changed);
+            }
+
+            // Allow Enter in description for newlines
+            if focused == EntityFormField::Description {
+                if let Some(ref mut form) = state.entity_form {
+                    form.handle_desc_key(key);
+                }
+                return Ok(Control::Changed);
+            }
+
+            // Submit on Save or Name (if submittable)
+            let form = state.entity_form.as_ref().unwrap();
+            if !form.can_submit() {
+                return Ok(Control::Continue);
+            }
+            submit_entity_form(state, ctx)
+        }
+        KeyCode::Tab => {
+            if let Some(ref mut form) = state.entity_form {
+                form.focus_next();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::BackTab => {
+            if let Some(ref mut form) = state.entity_form {
+                form.focus_prev();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(_)
+        | KeyCode::Backspace
+        | KeyCode::Delete
+        | KeyCode::Left
+        | KeyCode::Right
+        | KeyCode::Home
+        | KeyCode::End => {
+            if let Some(ref mut form) = state.entity_form {
+                match form.focused() {
+                    EntityFormField::Name => form.handle_name_key(key),
+                    EntityFormField::Description => form.handle_desc_key(key),
+                    EntityFormField::Save | EntityFormField::Cancel => {}
+                }
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
+    }
+}
+
+fn submit_entity_form(
+    state: &mut AppState,
+    ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    let form = state.entity_form.as_ref().unwrap();
+    let kind = form.kind();
+    let name = form.name();
+    let description = {
+        let d = form.description();
+        if d.trim().is_empty() { None } else { Some(d) }
+    };
+    let parent_id = form.parent_id().map(String::from);
+    state.entity_form = None;
+
+    let config = ctx.config.clone();
+    let cache_path = ctx.config.cache_dir.join("index.db");
+
+    match kind {
+        EntityKind::Project => {
+            let _ = ctx.spawn(move || {
+                let result = (|| -> crate::Result<()> {
+                    let cache = crate::cache::TaskCache::open(&cache_path)?;
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(crate::Error::Io)?;
+                    rt.block_on(async {
+                        let client = crate::client::Client::new(&config)?;
+                        let req = crate::models::CreateProjectRequest {
+                            id: name.clone(),
+                            name: name.clone(),
+                            description,
+                            parent_id,
+                        };
+                        let project = client.create_project(&req).await?;
+                        let cached = crate::cache::CachedProject {
+                            id: project.id,
+                            name: project.name,
+                            parent_id: project.parent_id,
+                            deleted: None,
+                            last_synced: Some(chrono::Utc::now().to_rfc3339()),
+                            labels: project.labels,
+                        };
+                        cache.upsert_project(&cached)?;
+                        Ok(())
+                    })
+                })();
+                let success = result.is_ok();
+                Ok(Control::Event(AppEvent::SyncComplete(success)))
+            });
+            state.sync_status = SyncStatus::Syncing;
+        }
+        EntityKind::Namespace => {
+            let _ = ctx.spawn(move || {
+                let result = (|| -> crate::Result<()> {
+                    let cache = crate::cache::TaskCache::open(&cache_path)?;
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(crate::Error::Io)?;
+                    rt.block_on(async {
+                        let client = crate::client::Client::new(&config)?;
+                        let req = crate::models::CreateNamespaceRequest {
+                            name,
+                            description,
+                            parent_id,
+                        };
+                        let ns = client.create_namespace(&req).await?;
+                        let cached = crate::cache::CachedNamespace {
+                            id: ns.id,
+                            name: ns.name,
+                            parent_id: ns.parent_id,
+                            deleted: None,
+                            last_synced: Some(chrono::Utc::now().to_rfc3339()),
+                            labels: ns.labels,
+                        };
+                        cache.upsert_namespace(&cached)?;
+                        Ok(())
+                    })
+                })();
+                let success = result.is_ok();
+                Ok(Control::Event(AppEvent::SyncComplete(success)))
+            });
+            state.sync_status = SyncStatus::Syncing;
+        }
+    }
+
+    Ok(Control::Changed)
+}
+
+fn handle_sidebar_new_entity(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+    let kind = state.sidebar.selected_kind();
+    let id = state.sidebar.selected_id().to_string();
+    let name = state.sidebar.selected_name().to_string();
+
+    match kind {
+        Some(TreeItemKind::Project) if !id.is_empty() => {
+            state.entity_form = Some(EntityFormState::new(
+                EntityKind::Project,
+                Some(id),
+                Some(name),
+            ));
+            Ok(Control::Changed)
+        }
+        Some(TreeItemKind::SectionHeader) if name == "Projects" => {
+            state.entity_form = Some(EntityFormState::new(EntityKind::Project, None, None));
+            Ok(Control::Changed)
+        }
+        Some(TreeItemKind::Namespace) if !id.is_empty() => {
+            state.entity_form = Some(EntityFormState::new(
+                EntityKind::Namespace,
+                Some(id),
+                Some(name),
+            ));
+            Ok(Control::Changed)
+        }
+        Some(TreeItemKind::SectionHeader) if name == "Namespaces" => {
+            state.entity_form = Some(EntityFormState::new(EntityKind::Namespace, None, None));
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
     }
 }
 
@@ -3555,6 +3798,17 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 Span::styled("  Enter", theme.status_key),
                 Span::styled(" open", theme.status_desc),
             ]);
+            if let Some(kind) = state.sidebar.selected_kind()
+                && matches!(
+                    kind,
+                    TreeItemKind::Project | TreeItemKind::Namespace | TreeItemKind::SectionHeader
+                )
+            {
+                hints.extend([
+                    Span::styled("  n", theme.status_key),
+                    Span::styled(" new", theme.status_desc),
+                ]);
+            }
         }
 
         hints.extend([

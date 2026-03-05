@@ -223,10 +223,20 @@ fn help_sections() -> Vec<HelpSection> {
             ],
         },
         HelpSection {
+            title: "Sidebar",
+            bindings: vec![
+                ("j / k", "Move down / up"),
+                ("Enter / l", "Open / select"),
+                ("n", "New project/namespace"),
+            ],
+        },
+        HelpSection {
             title: "Commands (:)",
             bindings: vec![
                 (":q / :quit", "Quit"),
                 (":new <title>", "Create task"),
+                (":new project <name>", "Create project"),
+                (":new ns <name>", "Create namespace"),
                 (":doc new <title>", "Create document"),
                 (":search <query>", "Search (or :s)"),
                 (":sync", "Sync with server"),

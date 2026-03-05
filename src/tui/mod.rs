@@ -30,6 +30,7 @@ pub mod doc_detail;
 pub mod doc_editor;
 pub mod doc_form;
 pub mod doc_list;
+pub mod entity_form;
 pub mod feels;
 pub mod help;
 pub mod inline_editor;

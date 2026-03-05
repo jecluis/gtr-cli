@@ -204,6 +204,55 @@ impl SidebarState {
             .unwrap_or("")
     }
 
+    /// Rebuild the sidebar items from the cache, preserving selection.
+    pub fn refresh(&mut self, cache: &TaskCache) {
+        let projects = cache.list_projects().unwrap_or_default();
+        let namespaces = cache.list_namespaces().unwrap_or_default();
+
+        let selected_id = self.selected_id().to_string();
+
+        let mut items = Vec::new();
+
+        items.push(TreeItem {
+            id: String::new(),
+            name: "Dashboard".to_string(),
+            depth: 0,
+            kind: TreeItemKind::Dashboard,
+            is_section_header: false,
+        });
+
+        items.push(TreeItem::divider());
+
+        items.push(TreeItem {
+            id: String::new(),
+            name: "Projects".to_string(),
+            depth: 0,
+            kind: TreeItemKind::SectionHeader,
+            is_section_header: true,
+        });
+        flatten_projects(&projects, Some(META_ROOT_UUID), 1, &mut items);
+
+        items.push(TreeItem::divider());
+
+        items.push(TreeItem {
+            id: String::new(),
+            name: "Namespaces".to_string(),
+            depth: 0,
+            kind: TreeItemKind::SectionHeader,
+            is_section_header: true,
+        });
+        flatten_namespaces(&namespaces, None, 1, &mut items);
+
+        self.items = items;
+
+        let new_idx = self
+            .items
+            .iter()
+            .position(|item| !item.id.is_empty() && item.id == selected_id)
+            .unwrap_or(0);
+        self.set_selected(new_idx);
+    }
+
     /// Render the sidebar into the given area.
     pub fn render(
         &mut self,
