@@ -950,13 +950,16 @@ impl TaskFormState {
             if self.label_input.is_empty() {
                 spans.push(Span::styled("\u{2588}", theme.selected));
                 if self.labels.is_empty() {
-                    spans.push(Span::styled(" (type to add)", theme.muted));
+                    spans.push(Span::styled(
+                        " (type to add)",
+                        Style::default().fg(Color::Gray),
+                    ));
                 }
             } else {
                 render_cursor_spans(&self.label_input, self.label_cursor, theme, &mut spans);
             }
         } else if self.labels.is_empty() {
-            spans.push(Span::styled("(none)", theme.muted));
+            spans.push(Span::styled("(none)", Style::default().fg(Color::Gray)));
         }
 
         Line::from(spans).render(area, buf);
@@ -971,19 +974,25 @@ impl TaskFormState {
         if self.focused == FormField::Parent {
             if self.parent_input.is_empty() {
                 spans.push(Span::styled("\u{2588}", theme.selected));
-                spans.push(Span::styled(" (task ID)", theme.muted));
+                spans.push(Span::styled(" (task ID)", Style::default().fg(Color::Gray)));
             } else {
                 render_cursor_spans(&self.parent_input, self.parent_cursor, theme, &mut spans);
             }
             if let Some(ref title) = self.resolved_parent_title {
-                spans.push(Span::styled(format!(" \u{2192} {title}"), theme.muted));
+                spans.push(Span::styled(
+                    format!(" \u{2192} {title}"),
+                    Style::default().fg(Color::Gray),
+                ));
             }
         } else if self.parent_input.is_empty() {
-            spans.push(Span::styled("(none)", theme.muted));
+            spans.push(Span::styled("(none)", Style::default().fg(Color::Gray)));
         } else {
             spans.push(Span::raw(self.parent_input.clone()));
             if let Some(ref title) = self.resolved_parent_title {
-                spans.push(Span::styled(format!(" \u{2192} {title}"), theme.muted));
+                spans.push(Span::styled(
+                    format!(" \u{2192} {title}"),
+                    Style::default().fg(Color::Gray),
+                ));
             }
         }
 
