@@ -300,10 +300,10 @@ fn render(
     if let Some(ref confirm) = state.confirm {
         confirm.render(theme, area, buf);
     }
-    if let Some(ref form) = state.create_form {
+    if let Some(ref mut form) = state.create_form {
         form.render(theme, area, buf);
     }
-    if let Some(ref form) = state.doc_form {
+    if let Some(ref mut form) = state.doc_form {
         form.render(theme, area, buf);
     }
     if let Some(ref form) = state.move_form {
@@ -2305,20 +2305,22 @@ fn handle_create_form_input(
             }
             Ok(Control::Changed)
         }
-        KeyCode::Backspace => {
+        KeyCode::Backspace | KeyCode::Delete => {
             if let Some(ref mut form) = state.create_form {
-                form.backspace();
+                if form.focused() == FormField::Title {
+                    form.handle_title_key(key);
+                } else {
+                    form.backspace();
+                }
                 resolve_parent_if_needed(form, &ctx.cache);
             }
             Ok(Control::Changed)
         }
-        KeyCode::Left | KeyCode::Right => {
+        KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
             if let Some(ref mut form) = state.create_form {
                 match form.focused() {
-                    // Text fields: Left/Right would move cursor — not
-                    // implemented yet, so ignore.
-                    FormField::Title | FormField::Labels | FormField::Parent => {}
-                    // Numeric/toggle fields: adjust value
+                    FormField::Title => form.handle_title_key(key),
+                    FormField::Labels | FormField::Parent => {}
                     _ => {
                         let delta = if code == KeyCode::Right { 1 } else { -1 };
                         form.adjust_field(delta);
@@ -2335,7 +2337,11 @@ fn handle_create_form_input(
         }
         KeyCode::Char(c) => {
             if let Some(ref mut form) = state.create_form {
-                form.char_input(c);
+                if form.focused() == FormField::Title {
+                    form.handle_title_key(key);
+                } else {
+                    form.char_input(c);
+                }
                 resolve_parent_if_needed(form, &ctx.cache);
             }
             Ok(Control::Changed)
@@ -2426,16 +2432,32 @@ fn handle_doc_form_input(
             }
             Ok(Control::Changed)
         }
-        KeyCode::Backspace => {
+        KeyCode::Backspace | KeyCode::Delete => {
             if let Some(ref mut form) = state.doc_form {
-                form.backspace();
+                if form.focused() == DocFormField::Title {
+                    form.handle_title_key(key);
+                } else {
+                    form.backspace();
+                }
                 resolve_doc_parent_if_needed(form, &ctx.cache);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+            if let Some(ref mut form) = state.doc_form
+                && form.focused() == DocFormField::Title
+            {
+                form.handle_title_key(key);
             }
             Ok(Control::Changed)
         }
         KeyCode::Char(c) => {
             if let Some(ref mut form) = state.doc_form {
-                form.char_input(c);
+                if form.focused() == DocFormField::Title {
+                    form.handle_title_key(key);
+                } else {
+                    form.char_input(c);
+                }
                 resolve_doc_parent_if_needed(form, &ctx.cache);
             }
             Ok(Control::Changed)
