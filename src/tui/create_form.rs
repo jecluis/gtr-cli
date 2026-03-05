@@ -46,6 +46,7 @@ struct OriginalValues {
     size_idx: usize,
     impact: u8,
     joy: u8,
+    deadline: Option<String>,
     labels: Vec<String>,
     parent_id: Option<String>,
     progress: Option<u8>,
@@ -65,6 +66,7 @@ impl FormPage {
             FormPage::Properties => &[
                 FormField::Impact,
                 FormField::Joy,
+                FormField::Deadline,
                 FormField::Labels,
                 FormField::Parent,
             ],
@@ -76,6 +78,7 @@ impl FormPage {
 const PROPERTIES_WITH_PROGRESS: &[FormField] = &[
     FormField::Impact,
     FormField::Joy,
+    FormField::Deadline,
     FormField::Labels,
     FormField::Parent,
     FormField::Progress,
@@ -89,6 +92,7 @@ pub enum FormField {
     Size,
     Impact,
     Joy,
+    Deadline,
     Labels,
     Parent,
     Progress,
@@ -113,6 +117,10 @@ pub struct TaskFormState {
     // Properties fields
     impact: u8,
     joy: u8,
+    deadline_input: String,
+    deadline_cursor: usize,
+    /// Validated RFC 3339 string, or `None` if input is empty/invalid.
+    deadline_validated: Option<String>,
     labels: Vec<String>,
     label_input: String,
     label_cursor: usize,
@@ -142,6 +150,9 @@ impl TaskFormState {
             size_idx: 1, // default M
             impact: 3,
             joy: 5,
+            deadline_input: String::new(),
+            deadline_cursor: 0,
+            deadline_validated: None,
             labels: Vec::new(),
             label_input: String::new(),
             label_cursor: 0,
@@ -176,12 +187,21 @@ impl TaskFormState {
             .map(|id| id[..8.min(id.len())].to_string())
             .unwrap_or_default();
 
+        let deadline_input = task
+            .deadline
+            .as_ref()
+            .map(|d| d[..10.min(d.len())].to_string())
+            .unwrap_or_default();
+        let deadline_cursor = deadline_input.len();
+        let deadline_validated = task.deadline.clone();
+
         let original = OriginalValues {
             title: task.title.clone(),
             priority: task.priority.clone(),
             size_idx,
             impact: task.impact,
             joy: task.joy,
+            deadline: task.deadline.clone(),
             labels: task.labels.clone(),
             parent_id: task.parent_id.clone(),
             progress: task.progress,
@@ -209,6 +229,9 @@ impl TaskFormState {
             size_idx,
             impact: task.impact,
             joy: task.joy,
+            deadline_input,
+            deadline_cursor,
+            deadline_validated,
             labels: task.labels.clone(),
             label_input: String::new(),
             label_cursor: 0,
@@ -240,6 +263,16 @@ impl TaskFormState {
 
     pub fn joy(&self) -> u8 {
         self.joy
+    }
+
+    /// The validated deadline to use on submission, if any.
+    /// Returns None if input is empty or invalid.
+    pub fn deadline(&self) -> Option<&str> {
+        if self.deadline_input.trim().is_empty() {
+            None
+        } else {
+            self.deadline_validated.as_deref()
+        }
     }
 
     pub fn labels(&self) -> &[String] {
@@ -357,6 +390,11 @@ impl TaskFormState {
                     crossterm::event::KeyModifiers::NONE,
                 ));
             }
+            FormField::Deadline => {
+                self.deadline_input.insert(self.deadline_cursor, c);
+                self.deadline_cursor += c.len_utf8();
+                self.revalidate_deadline();
+            }
             FormField::Labels => {
                 if c == ',' {
                     self.commit_label();
@@ -387,6 +425,18 @@ impl TaskFormState {
                     KeyCode::Backspace,
                     crossterm::event::KeyModifiers::NONE,
                 ));
+            }
+            FormField::Deadline => {
+                if self.deadline_cursor > 0 {
+                    let prev = self.deadline_input[..self.deadline_cursor]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    self.deadline_input.remove(prev);
+                    self.deadline_cursor = prev;
+                    self.revalidate_deadline();
+                }
             }
             FormField::Labels => {
                 if self.label_cursor > 0 {
@@ -443,6 +493,7 @@ impl TaskFormState {
             FormField::Joy => {
                 self.joy = (self.joy % 10) + 1;
             }
+            FormField::Deadline => self.char_input(' '),
             FormField::Labels => self.char_input(' '),
             FormField::Parent => self.char_input(' '),
             FormField::Progress => {} // no toggle behavior
@@ -532,12 +583,25 @@ impl TaskFormState {
             return ChangedFields::default();
         };
         let title_text = self.title_ta.text();
+
+        // Deadline: only report a change when the input is empty (clear) or
+        // non-empty and valid. Invalid non-empty input is silently ignored
+        // so we don't accidentally clear the original deadline.
+        let deadline =
+            if !self.deadline_input.trim().is_empty() && self.deadline_validated.is_none() {
+                None // invalid input — keep original
+            } else {
+                let new_deadline = self.deadline_validated.clone();
+                (new_deadline != orig.deadline).then_some(new_deadline)
+            };
+
         ChangedFields {
             title: (title_text != orig.title).then_some(title_text),
             priority: (self.priority != orig.priority).then(|| self.priority.clone()),
             size: (self.size_idx != orig.size_idx).then(|| SIZES[self.size_idx].to_string()),
             impact: (self.impact != orig.impact).then_some(self.impact),
             joy: (self.joy != orig.joy).then_some(self.joy),
+            deadline,
             labels: (self.labels != orig.labels).then(|| self.labels.clone()),
             parent_id: (self.resolved_parent_id != orig.parent_id)
                 .then(|| self.resolved_parent_id.clone()),
@@ -569,9 +633,20 @@ impl TaskFormState {
             || f.size.is_some()
             || f.impact.is_some()
             || f.joy.is_some()
+            || f.deadline.is_some()
             || f.labels.is_some()
             || f.parent_id.is_some()
             || self.progress_changed()
+    }
+
+    /// Re-run deadline validation against the current input text.
+    fn revalidate_deadline(&mut self) {
+        let trimmed = self.deadline_input.trim();
+        if trimmed.is_empty() {
+            self.deadline_validated = None;
+        } else {
+            self.deadline_validated = crate::utils::validate_deadline(trimmed).ok();
+        }
     }
 
     /// Forward a key event to the title textarea (for cursor movement,
@@ -748,6 +823,9 @@ impl TaskFormState {
             buf,
         );
 
+        // Deadline field
+        self.render_deadline_field(theme, rows[4], buf);
+
         // Labels field
         self.render_labels_field(theme, rows[5], buf);
 
@@ -813,6 +891,41 @@ impl TaskFormState {
                 }
             }
             _ => {}
+        }
+
+        Line::from(spans).render(area, buf);
+    }
+
+    fn render_deadline_field(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
+        let label_style = field_label_style(self.focused == FormField::Deadline, theme);
+
+        let mut spans: Vec<Span<'_>> = vec![
+            Span::raw("  "),
+            Span::styled("Deadline:", label_style),
+            Span::raw(" "),
+        ];
+
+        if self.focused == FormField::Deadline {
+            if self.deadline_input.is_empty() {
+                spans.push(Span::styled("\u{2588}", theme.selected));
+                spans.push(Span::styled(
+                    " (e.g. tomorrow, 2026-03-15)",
+                    Style::default().fg(Color::Gray),
+                ));
+            } else {
+                render_cursor_spans(
+                    &self.deadline_input,
+                    self.deadline_cursor,
+                    theme,
+                    &mut spans,
+                );
+                append_deadline_hint(&self.deadline_validated, theme, &mut spans);
+            }
+        } else if self.deadline_input.is_empty() {
+            spans.push(Span::styled("(none)", Style::default().fg(Color::Gray)));
+        } else {
+            spans.push(Span::raw(self.deadline_input.clone()));
+            append_deadline_hint(&self.deadline_validated, theme, &mut spans);
         }
 
         Line::from(spans).render(area, buf);
@@ -954,6 +1067,9 @@ pub struct ChangedFields {
     pub size: Option<String>,
     pub impact: Option<u8>,
     pub joy: Option<u8>,
+    /// `Some(None)` means deadline was cleared; `Some(Some(rfc3339))`
+    /// means deadline was set/changed.
+    pub deadline: Option<Option<String>>,
     pub labels: Option<Vec<String>>,
     /// `Some(None)` means parent was cleared; `Some(Some(id))` means
     /// parent was changed to a new ID.
@@ -966,6 +1082,27 @@ fn field_label_style(focused: bool, theme: &Theme) -> Style {
         theme.accent.add_modifier(Modifier::BOLD)
     } else {
         Style::default()
+    }
+}
+
+/// Append a validated-deadline hint: "✓ YYYY-MM-DD (in 3d)" or "✗".
+fn append_deadline_hint<'a>(validated: &Option<String>, theme: &Theme, spans: &mut Vec<Span<'a>>) {
+    if let Some(rfc) = validated {
+        let date_part = &rfc[..10.min(rfc.len())];
+        let compact = display::format_deadline_compact(Some(rfc));
+        let style = if compact.as_ref().is_some_and(|c| c.is_overdue) {
+            theme.danger
+        } else {
+            theme.success
+        };
+        let hint = if let Some(c) = compact {
+            format!(" \u{2713} {date_part} ({})", c.text)
+        } else {
+            format!(" \u{2713} {date_part}")
+        };
+        spans.push(Span::styled(hint, style));
+    } else {
+        spans.push(Span::styled(" \u{2717}", theme.danger));
     }
 }
 

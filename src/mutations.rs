@@ -432,6 +432,7 @@ pub fn update_task(
     size: Option<String>,
     impact: Option<u8>,
     joy: Option<u8>,
+    deadline: Option<Option<String>>,
     labels: Option<Vec<String>>,
     parent_id: Option<Option<String>>,
 ) -> Result<Task> {
@@ -503,6 +504,27 @@ pub fn update_task(
         });
     }
 
+    if let Some(new_deadline) = deadline {
+        let old = task
+            .deadline
+            .as_ref()
+            .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+            .map(|d| d.with_timezone(&Utc));
+        let new_dt = new_deadline
+            .as_ref()
+            .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+            .map(|d| d.with_timezone(&Utc));
+        task.deadline = new_deadline;
+        task.log.push(LogEntry {
+            timestamp: now,
+            entry_type: LogEntryType::DeadlineChanged {
+                from: old,
+                to: new_dt,
+            },
+            source: LogSource::User,
+        });
+    }
+
     if let Some(new_labels) = labels {
         task.labels = new_labels;
     }
@@ -552,6 +574,7 @@ pub fn create_task(
     joy: Option<u8>,
     labels: Vec<String>,
     parent_id: Option<String>,
+    deadline: Option<String>,
 ) -> Result<Task> {
     let task_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -567,7 +590,7 @@ pub fn create_task(
         modified: now,
         done: None,
         deleted: None,
-        deadline: None,
+        deadline,
         version: 1,
         subtasks: vec![],
         custom: serde_json::Value::Object(serde_json::Map::new()),

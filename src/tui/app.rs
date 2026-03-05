@@ -1948,6 +1948,7 @@ fn execute_command(
                 None,
                 vec![],
                 None,
+                None,
             )?;
 
             match &mut state.main_view {
@@ -2162,6 +2163,7 @@ fn submit_create_form(
     let size = form.size().to_string();
     let impact = form.impact();
     let joy = form.joy();
+    let deadline = form.deadline().map(String::from);
     let labels = form.labels().to_vec();
     let parent_id = form.parent_id().map(String::from);
     state.create_form = None;
@@ -2179,6 +2181,7 @@ fn submit_create_form(
         Some(joy),
         labels,
         parent_id,
+        deadline,
     )?;
 
     refresh_current_view(state, ctx);
@@ -2229,6 +2232,7 @@ fn submit_update_form(
         changes.size,
         changes.impact,
         changes.joy,
+        changes.deadline,
         changes.labels,
         changes.parent_id,
     )?;
