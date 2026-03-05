@@ -15,8 +15,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Label validation for per-project task labels.
+//! Label validation and migration helpers for per-project task labels.
 
+use crate::cache::TaskCache;
 use crate::{Error, Result};
 
 /// Normalize a label: trim, lowercase, then validate.
@@ -56,6 +57,26 @@ pub fn validate_label(label: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Find task labels that don't exist in a target project's effective
+/// label registry (own + inherited). Returns the list of missing
+/// labels. Callers decide whether to create them in the target or
+/// remove them from the task.
+pub fn find_missing_labels(
+    task_labels: &[String],
+    target_project_id: &str,
+    cache: &TaskCache,
+) -> Result<Vec<String>> {
+    if task_labels.is_empty() {
+        return Ok(Vec::new());
+    }
+    let target_labels = cache.get_effective_labels(target_project_id)?;
+    Ok(task_labels
+        .iter()
+        .filter(|l| !target_labels.contains(l))
+        .cloned()
+        .collect())
 }
 
 #[cfg(test)]
