@@ -421,7 +421,8 @@ impl TaskCache {
     /// impact, joy, parent_id, progress, current_work_state
     fn row_to_summary(row: &rusqlite::Row) -> rusqlite::Result<TaskSummary> {
         let labels_json: String = row.get(12)?;
-        let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        let mut labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        labels.sort();
         Ok(TaskSummary {
             id: row.get(0)?,
             project_id: row.get(1)?,
@@ -702,7 +703,9 @@ impl TaskCache {
         let tasks = stmt
             .query_map([], |row| {
                 let labels_json: String = row.get(7)?;
-                let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+                let mut labels: Vec<String> =
+                    serde_json::from_str(&labels_json).unwrap_or_default();
+                labels.sort();
                 Ok(ActiveTask {
                     id: row.get(0)?,
                     project_id: row.get(1)?,
@@ -976,7 +979,8 @@ impl TaskCache {
     /// id, name, parent_id, deleted, last_synced, labels
     fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<CachedProject> {
         let labels_json: String = row.get(5)?;
-        let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        let mut labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        labels.sort();
         Ok(CachedProject {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -1185,7 +1189,8 @@ impl TaskCache {
     /// id, name, parent_id, deleted, last_synced, labels
     fn row_to_namespace(row: &rusqlite::Row) -> rusqlite::Result<CachedNamespace> {
         let labels_json: String = row.get(5)?;
-        let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        let mut labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        labels.sort();
         Ok(CachedNamespace {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -1330,7 +1335,8 @@ impl TaskCache {
     /// needs_push, last_synced, parent_id, labels, slug, slug_aliases
     fn row_to_cached_document(row: &rusqlite::Row) -> rusqlite::Result<CachedDocument> {
         let labels_json: String = row.get(10)?;
-        let labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        let mut labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        labels.sort();
         let slug_aliases_json: String = row.get(12)?;
         let slug_aliases: Vec<String> =
             serde_json::from_str(&slug_aliases_json).unwrap_or_default();
@@ -1733,7 +1739,9 @@ impl TaskCache {
                 |row| row.get(0),
             )
             .map_err(|e| Error::Database(format!("get labels failed: {e}")))?;
-        Ok(serde_json::from_str(&labels_json).unwrap_or_default())
+        let mut labels: Vec<String> = serde_json::from_str(&labels_json).unwrap_or_default();
+        labels.sort();
+        Ok(labels)
     }
 
     /// Update the label registry for a project.
