@@ -46,6 +46,10 @@ pub enum Command {
     Help,
     /// Create a document with the given title in the current namespace.
     DocNew { title: String },
+    /// Create a new project with the given name.
+    NewProject { name: String },
+    /// Create a new namespace with the given name.
+    NewNamespace { name: String },
     /// Unrecognised command.
     Unknown(String),
 }
@@ -98,6 +102,26 @@ impl CommandBarState {
 
         if trimmed == "q" || trimmed == "quit" {
             return Command::Quit;
+        }
+
+        // Must be checked before generic `:new <title>`
+        if let Some(rest) = trimmed
+            .strip_prefix("new project ")
+            .or_else(|| trimmed.strip_prefix("new proj "))
+        {
+            let name = rest.trim().to_string();
+            if !name.is_empty() {
+                return Command::NewProject { name };
+            }
+        }
+        if let Some(rest) = trimmed
+            .strip_prefix("new namespace ")
+            .or_else(|| trimmed.strip_prefix("new ns "))
+        {
+            let name = rest.trim().to_string();
+            if !name.is_empty() {
+                return Command::NewNamespace { name };
+            }
         }
 
         if let Some(rest) = trimmed.strip_prefix("new ") {
