@@ -410,13 +410,14 @@ pub async fn label_new(config: &Config, project_id: &str, labels: &[String]) -> 
     let cache = TaskCache::open(&cache_path)?;
     let project_id = crate::resolve::resolve_project(&cache, project_id)?;
 
-    // Validate all labels
-    for label in labels {
-        crate::labels::validate_label(label)?;
-    }
+    // Normalize all labels (lowercase + validate)
+    let labels: Vec<String> = labels
+        .iter()
+        .map(|l| crate::labels::normalize_label(l))
+        .collect::<crate::Result<_>>()?;
 
     // Sync with server
-    let project = client.create_project_labels(&project_id, labels).await?;
+    let project = client.create_project_labels(&project_id, &labels).await?;
 
     // Update local cache
     cache.set_project_labels(&project_id, &project.labels)?;
@@ -497,23 +498,23 @@ pub async fn label_rename(config: &Config, project_id: &str, old: &str, new: &st
     let cache = TaskCache::open(&cache_path)?;
     let project_id = crate::resolve::resolve_project(&cache, project_id)?;
 
-    // Validate new label
-    crate::labels::validate_label(new)?;
+    // Normalize new label (lowercase + validate)
+    let new = crate::labels::normalize_label(new)?;
 
     // Sync with server
-    let resp = client.rename_project_label(&project_id, old, new).await?;
+    let resp = client.rename_project_label(&project_id, old, &new).await?;
 
     // Update local cache
     let mut labels = cache.get_project_labels(&project_id)?;
     for l in &mut labels {
         if l == old {
-            *l = new.to_string();
+            *l = new.clone();
         }
     }
     labels.sort();
     labels.dedup();
     cache.set_project_labels(&project_id, &labels)?;
-    cache.rename_label_in_tasks(&project_id, old, new)?;
+    cache.rename_label_in_tasks(&project_id, old, &new)?;
 
     println!(
         "{}",

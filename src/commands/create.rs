@@ -166,12 +166,13 @@ pub async fn run(
         None
     };
 
-    // Validate and resolve labels
+    // Normalize and resolve labels
     let mut resolved_labels = Vec::new();
     if !labels.is_empty() {
-        for label in &labels {
-            crate::labels::validate_label(label)?;
-        }
+        let labels: Vec<String> = labels
+            .iter()
+            .map(|l| crate::labels::normalize_label(l))
+            .collect::<crate::Result<_>>()?;
 
         // Check if labels exist in project's effective registry (own + inherited)
         let project_labels = ctx.cache.get_effective_labels(&project_id)?;

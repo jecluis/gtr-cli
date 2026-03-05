@@ -19,6 +19,15 @@
 
 use crate::{Error, Result};
 
+/// Normalize a label: trim, lowercase, then validate.
+///
+/// Returns the cleaned label on success.
+pub fn normalize_label(input: &str) -> Result<String> {
+    let label = input.trim().to_ascii_lowercase();
+    validate_label(&label)?;
+    Ok(label)
+}
+
 /// Validate a label string.
 ///
 /// Labels must be non-empty, start with `[a-z0-9]`, and contain only
@@ -87,5 +96,23 @@ mod tests {
         assert!(validate_label("bug fix").is_err());
         assert!(validate_label("bug@home").is_err());
         assert!(validate_label("bug#1").is_err());
+    }
+
+    #[test]
+    fn normalize_lowercases_and_trims() {
+        assert_eq!(normalize_label("Bug").unwrap(), "bug");
+        assert_eq!(normalize_label("FEATURE").unwrap(), "feature");
+        assert_eq!(
+            normalize_label("  scope:Frontend  ").unwrap(),
+            "scope:frontend"
+        );
+        assert_eq!(normalize_label("Area/CLI").unwrap(), "area/cli");
+    }
+
+    #[test]
+    fn normalize_rejects_invalid() {
+        assert!(normalize_label("").is_err());
+        assert!(normalize_label("-bug").is_err());
+        assert!(normalize_label("bug fix").is_err());
     }
 }
