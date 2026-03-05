@@ -51,6 +51,7 @@ use crate::tui::keymap::{self, Action, Keymap, KeymapResult};
 use crate::tui::move_form::MoveFormState;
 use crate::tui::nav::NavTarget;
 use crate::tui::progress::ProgressDialogState;
+use crate::tui::project_picker;
 use crate::tui::ref_picker;
 use crate::tui::search::{SearchFilter, SearchOverlayState, SearchResultKind};
 use crate::tui::sidebar::{ActiveItem, SidebarState, TreeItemKind};
@@ -157,6 +158,7 @@ pub struct AppState {
     pub progress: Option<ProgressDialogState>,
     pub help: Option<HelpOverlayState>,
     pub ref_picker: Option<ref_picker::RefPickerState>,
+    pub project_picker: Option<project_picker::ProjectPickerState>,
     pub sync_status: SyncStatus,
     /// Navigation history for detail-to-detail link following.
     pub nav_history: Vec<MainView>,
@@ -197,6 +199,7 @@ pub fn run(config: Config) -> crate::Result<()> {
         progress: None,
         help: None,
         ref_picker: None,
+        project_picker: None,
         sync_status: SyncStatus::Idle,
         nav_history: Vec::new(),
     };
@@ -305,6 +308,9 @@ fn render(
     }
     if let Some(ref mut form) = state.create_form {
         form.render(theme, area, buf);
+    }
+    if let Some(ref mut picker) = state.project_picker {
+        picker.render(theme, area, buf);
     }
     if let Some(ref mut form) = state.doc_form {
         form.render(theme, area, buf);
@@ -2218,9 +2224,27 @@ fn submit_update_form(
     let new_progress = form.progress_value();
     state.create_form = None;
 
-    // Auto-register new labels
+    // Determine the effective project for label registration: if moving
+    // to a new project, register labels there instead.
+    let effective_project = changes
+        .project_id
+        .as_deref()
+        .unwrap_or(&project_id)
+        .to_string();
+
+    // Auto-register new labels in the effective project
     if let Some(ref new_labels) = labels_for_registry {
-        auto_register_labels(new_labels, &project_id, &ctx.cache)?;
+        auto_register_labels(new_labels, &effective_project, &ctx.cache)?;
+    }
+
+    // When moving projects, ensure existing task labels exist in target
+    if changes.project_id.is_some() {
+        let task = ctx.storage.load_task(&task_id)?;
+        let missing =
+            crate::labels::find_missing_labels(&task.labels, &effective_project, &ctx.cache)?;
+        if !missing.is_empty() {
+            auto_register_labels(&missing, &effective_project, &ctx.cache)?;
+        }
     }
 
     crate::mutations::update_task(
@@ -2235,7 +2259,7 @@ fn submit_update_form(
         changes.deadline,
         changes.labels,
         changes.parent_id,
-        None,
+        changes.project_id,
     )?;
 
     if progress_changed && let Some(value) = new_progress {
@@ -2293,6 +2317,11 @@ fn handle_create_form_input(
     state: &mut AppState,
     ctx: &mut Global,
 ) -> Result<Control<AppEvent>, crate::Error> {
+    // Project picker overlay intercepts all keys when open.
+    if state.project_picker.is_some() {
+        return handle_project_picker_input(key, state, ctx);
+    }
+
     let code = key.code;
     let mods = key.modifiers;
 
@@ -2318,6 +2347,7 @@ fn handle_create_form_input(
     match code {
         KeyCode::Esc => {
             state.create_form = None;
+            state.project_picker = None;
             Ok(Control::Changed)
         }
         KeyCode::Enter => {
@@ -2326,6 +2356,13 @@ fn handle_create_form_input(
             // Cancel button
             if focused == FormField::Cancel {
                 state.create_form = None;
+                state.project_picker = None;
+                return Ok(Control::Changed);
+            }
+
+            // Open project picker when Enter is pressed on Project field.
+            if focused == FormField::Project {
+                state.project_picker = Some(project_picker::ProjectPickerState::new(&ctx.cache));
                 return Ok(Control::Changed);
             }
 
@@ -2375,7 +2412,7 @@ fn handle_create_form_input(
             if let Some(ref mut form) = state.create_form {
                 match form.focused() {
                     FormField::Title => form.handle_title_key(key),
-                    FormField::Labels | FormField::Parent => {}
+                    FormField::Labels | FormField::Parent | FormField::Project => {}
                     _ => {
                         let delta = if code == KeyCode::Right { 1 } else { -1 };
                         form.adjust_field(delta);
@@ -2430,6 +2467,58 @@ fn resolve_parent_if_needed(form: &mut TaskFormState, cache: &TaskCache) {
             form.set_resolved_parent(None);
             form.set_parent_id(None);
         }
+    }
+}
+
+/// Handle keyboard input for the project picker overlay.
+fn handle_project_picker_input(
+    key: &crossterm::event::KeyEvent,
+    state: &mut AppState,
+    _ctx: &mut Global,
+) -> Result<Control<AppEvent>, crate::Error> {
+    match key.code {
+        KeyCode::Esc => {
+            state.project_picker = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Up => {
+            if let Some(ref mut picker) = state.project_picker {
+                picker.select_prev();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Down => {
+            if let Some(ref mut picker) = state.project_picker {
+                picker.select_next();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Enter => {
+            if let Some(ref picker) = state.project_picker
+                && let Some(entry) = picker.selected()
+            {
+                let id = entry.id.clone();
+                let display = entry.path.join(" > ");
+                if let Some(ref mut form) = state.create_form {
+                    form.apply_project_pick(id, display);
+                }
+            }
+            state.project_picker = None;
+            Ok(Control::Changed)
+        }
+        KeyCode::Backspace => {
+            if let Some(ref mut picker) = state.project_picker {
+                picker.backspace();
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(c) => {
+            if let Some(ref mut picker) = state.project_picker {
+                picker.char_input(c);
+            }
+            Ok(Control::Changed)
+        }
+        _ => Ok(Control::Continue),
     }
 }
 
