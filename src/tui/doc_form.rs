@@ -17,11 +17,13 @@
 
 //! Centred overlay form for creating and editing documents.
 
+use crossterm::event::{Event, KeyCode, KeyEvent};
+use rat_widget::textarea::{TextArea, TextAreaState, TextWrap};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Widget};
+use ratatui::widgets::{Block, Clear, Padding, StatefulWidget, Widget};
 
 use crate::display::LABEL_PALETTE_LEN;
 use crate::models::Document;
@@ -57,8 +59,7 @@ pub struct DocFormState {
     original: Option<OriginalValues>,
     focused: DocFormField,
     // Fields
-    title: String,
-    cursor_pos: usize,
+    title_ta: TextAreaState,
     labels: Vec<String>,
     label_input: String,
     label_cursor: usize,
@@ -82,8 +83,7 @@ impl DocFormState {
             namespace_name,
             original: None,
             focused: DocFormField::Title,
-            title: String::new(),
-            cursor_pos: 0,
+            title_ta: TextAreaState::new(),
             labels: Vec::new(),
             label_input: String::new(),
             label_cursor: 0,
@@ -108,6 +108,9 @@ impl DocFormState {
             parent_id: doc.parent_id.clone(),
         };
 
+        let mut title_ta = TextAreaState::new();
+        title_ta.set_text(&doc.title);
+
         Self {
             mode: DocFormMode::Update {
                 doc_id: doc.id.clone(),
@@ -115,8 +118,7 @@ impl DocFormState {
             namespace_name,
             original: Some(original),
             focused: DocFormField::Title,
-            title: doc.title.clone(),
-            cursor_pos: doc.title.len(),
+            title_ta,
             labels: doc.labels.clone(),
             label_input: String::new(),
             label_cursor: 0,
@@ -131,8 +133,8 @@ impl DocFormState {
         &self.mode
     }
 
-    pub fn title(&self) -> &str {
-        &self.title
+    pub fn title(&self) -> String {
+        self.title_ta.text()
     }
 
     pub fn labels(&self) -> &[String] {
@@ -152,7 +154,7 @@ impl DocFormState {
 
     /// Whether the title is non-empty (ready to submit).
     pub fn can_submit(&self) -> bool {
-        !self.title.trim().is_empty()
+        !self.title_ta.text().trim().is_empty()
     }
 
     /// Whether the label input is currently non-empty.
@@ -201,12 +203,15 @@ impl DocFormState {
         }
     }
 
-    /// Handle character input for text fields.
+    /// Handle character input for text fields (excluding Title, which
+    /// uses `handle_title_key`).
     pub fn char_input(&mut self, c: char) {
         match self.focused {
             DocFormField::Title => {
-                self.title.insert(self.cursor_pos, c);
-                self.cursor_pos += c.len_utf8();
+                self.forward_title_key(KeyEvent::new(
+                    KeyCode::Char(c),
+                    crossterm::event::KeyModifiers::NONE,
+                ));
             }
             DocFormField::Labels => {
                 if c == ',' {
@@ -228,15 +233,10 @@ impl DocFormState {
     pub fn backspace(&mut self) {
         match self.focused {
             DocFormField::Title => {
-                if self.cursor_pos > 0 {
-                    let prev = self.title[..self.cursor_pos]
-                        .char_indices()
-                        .next_back()
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
-                    self.title.remove(prev);
-                    self.cursor_pos = prev;
-                }
+                self.forward_title_key(KeyEvent::new(
+                    KeyCode::Backspace,
+                    crossterm::event::KeyModifiers::NONE,
+                ));
             }
             DocFormField::Labels => {
                 if self.label_cursor > 0 {
@@ -314,7 +314,8 @@ impl DocFormState {
         let Some(orig) = &self.original else {
             return None;
         };
-        (self.title != orig.title).then(|| self.title.clone())
+        let title_text = self.title_ta.text();
+        (title_text != orig.title).then_some(title_text)
     }
 
     /// Returns `Some(labels)` if labels changed from original.
@@ -338,9 +339,24 @@ impl DocFormState {
         matches!(self.mode, DocFormMode::Update { .. })
     }
 
-    pub fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
-        let popup_width = 56u16.min(area.width.saturating_sub(4));
-        let popup_height = 12;
+    /// Forward a key event to the title textarea (for cursor movement,
+    /// character input, deletion). Blocks Enter to prevent newlines.
+    pub fn handle_title_key(&mut self, key: &KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {} // no newlines in title
+            _ => self.forward_title_key(*key),
+        }
+    }
+
+    /// Send a key event to the title textarea.
+    fn forward_title_key(&mut self, key: KeyEvent) {
+        let event = Event::Key(key);
+        rat_widget::textarea::handle_events(&mut self.title_ta, true, &event);
+    }
+
+    pub fn render(&mut self, theme: &Theme, area: Rect, buf: &mut Buffer) {
+        let popup_width = 72u16.min(area.width.saturating_sub(4));
+        let popup_height = 14;
         let popup = centered_rect(popup_width, popup_height, area);
 
         Clear.render(popup, buf);
@@ -356,16 +372,16 @@ impl DocFormState {
         block.render(popup, buf);
 
         let rows = Layout::vertical([
-            Constraint::Length(1), // Title label
-            Constraint::Length(1), // Title input
-            Constraint::Length(1), // padding
-            Constraint::Length(1), // Labels
-            Constraint::Length(1), // padding
-            Constraint::Length(1), // Parent
-            Constraint::Length(1), // padding
-            Constraint::Length(1), // padding
-            Constraint::Length(1), // padding
-            Constraint::Length(1), // buttons
+            Constraint::Length(1), // [0] Title label
+            Constraint::Length(3), // [1] Title input (bordered)
+            Constraint::Length(1), // [2] padding
+            Constraint::Length(1), // [3] Labels
+            Constraint::Length(1), // [4] padding
+            Constraint::Length(1), // [5] Parent
+            Constraint::Length(1), // [6] padding
+            Constraint::Length(1), // [7] padding
+            Constraint::Length(1), // [8] padding
+            Constraint::Length(1), // [9] buttons
         ])
         .split(inner);
 
@@ -373,14 +389,23 @@ impl DocFormState {
         let title_style = field_label_style(self.focused == DocFormField::Title, theme);
         Line::from(vec![Span::raw("  "), Span::styled("Title: ", title_style)])
             .render(rows[0], buf);
-        render_text_input(
-            &self.title,
-            self.cursor_pos,
-            self.focused == DocFormField::Title,
-            theme,
-            rows[1],
-            buf,
-        );
+
+        let title_focused = self.focused == DocFormField::Title;
+        self.title_ta.focus.set(title_focused);
+        let title_block = Block::bordered()
+            .border_style(if title_focused {
+                Style::new().fg(Color::Yellow)
+            } else {
+                theme.border_unfocused
+            })
+            .padding(Padding::horizontal(1));
+        let title_widget = TextArea::new()
+            .block(title_block)
+            .style(Style::default())
+            .focus_style(Style::default())
+            .cursor_style(Style::new().bg(Color::White).fg(Color::Black))
+            .text_wrap(TextWrap::Shift);
+        title_widget.render(rows[1], buf, &mut self.title_ta);
 
         // Labels field
         self.render_labels_field(theme, rows[3], buf);
@@ -519,28 +544,6 @@ fn render_cursor_spans<'a>(text: &str, cursor: usize, theme: &Theme, spans: &mut
             after[after.chars().next().unwrap().len_utf8()..].to_string(),
         ));
     }
-}
-
-/// Render a text input with cursor at the given position.
-fn render_text_input(
-    text: &str,
-    cursor: usize,
-    focused: bool,
-    theme: &Theme,
-    area: Rect,
-    buf: &mut Buffer,
-) {
-    let mut spans = vec![Span::raw("  ")];
-    if focused {
-        if text.is_empty() {
-            spans.push(Span::styled("\u{2588}", theme.selected));
-        } else {
-            render_cursor_spans(text, cursor, theme, &mut spans);
-        }
-    } else {
-        spans.push(Span::raw(text.to_string()));
-    }
-    Line::from(spans).render(area, buf);
 }
 
 /// Return a centred `Rect` of the given width and height within `area`.

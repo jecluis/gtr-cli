@@ -17,12 +17,14 @@
 
 //! Centred overlay form for creating and editing tasks.
 
+use crossterm::event::{Event, KeyCode, KeyEvent};
+use rat_widget::textarea::{TextArea, TextAreaState, TextWrap};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Tabs, Widget};
+use ratatui::widgets::{Block, Clear, Padding, StatefulWidget, Tabs, Widget};
 
 use crate::display;
 use crate::icons::{Glyphs, IconTheme};
@@ -105,8 +107,7 @@ pub struct TaskFormState {
     page: FormPage,
     focused: FormField,
     // Main fields
-    title: String,
-    cursor_pos: usize,
+    title_ta: TextAreaState,
     priority: String,
     size_idx: usize,
     // Properties fields
@@ -136,8 +137,7 @@ impl TaskFormState {
             glyphs: Glyphs::new(icon_theme),
             page: FormPage::Main,
             focused: FormField::Title,
-            title: String::new(),
-            cursor_pos: 0,
+            title_ta: TextAreaState::new(),
             priority: "later".to_string(),
             size_idx: 1, // default M
             impact: 3,
@@ -190,6 +190,9 @@ impl TaskFormState {
         let progress_input = task.progress.map(|v| v.to_string()).unwrap_or_default();
         let progress_cursor = progress_input.len();
 
+        let mut title_ta = TextAreaState::new();
+        title_ta.set_text(&task.title);
+
         Self {
             project_id: task.project_id.clone(),
             project_name,
@@ -201,8 +204,7 @@ impl TaskFormState {
             glyphs: Glyphs::new(icon_theme),
             page: FormPage::Main,
             focused: FormPage::Main.fields()[0],
-            title: task.title.clone(),
-            cursor_pos: task.title.len(),
+            title_ta,
             priority: task.priority.clone(),
             size_idx,
             impact: task.impact,
@@ -220,8 +222,8 @@ impl TaskFormState {
         }
     }
 
-    pub fn title(&self) -> &str {
-        &self.title
+    pub fn title(&self) -> String {
+        self.title_ta.text()
     }
 
     pub fn priority(&self) -> &str {
@@ -262,7 +264,7 @@ impl TaskFormState {
 
     /// Whether the title is non-empty (ready to submit).
     pub fn can_submit(&self) -> bool {
-        !self.title.trim().is_empty()
+        !self.title_ta.text().trim().is_empty()
     }
 
     /// Whether the label input is currently non-empty.
@@ -343,12 +345,17 @@ impl TaskFormState {
         }
     }
 
-    /// Handle character input for text fields.
+    /// Handle character input for text fields (excluding Title, which
+    /// uses `handle_title_key`).
     pub fn char_input(&mut self, c: char) {
         match self.focused {
             FormField::Title => {
-                self.title.insert(self.cursor_pos, c);
-                self.cursor_pos += c.len_utf8();
+                // Title uses handle_title_key(); this path only reached
+                // via toggle_or_space for space, so forward it.
+                self.forward_title_key(KeyEvent::new(
+                    KeyCode::Char(c),
+                    crossterm::event::KeyModifiers::NONE,
+                ));
             }
             FormField::Labels => {
                 if c == ',' {
@@ -376,15 +383,10 @@ impl TaskFormState {
     pub fn backspace(&mut self) {
         match self.focused {
             FormField::Title => {
-                if self.cursor_pos > 0 {
-                    let prev = self.title[..self.cursor_pos]
-                        .char_indices()
-                        .next_back()
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
-                    self.title.remove(prev);
-                    self.cursor_pos = prev;
-                }
+                self.forward_title_key(KeyEvent::new(
+                    KeyCode::Backspace,
+                    crossterm::event::KeyModifiers::NONE,
+                ));
             }
             FormField::Labels => {
                 if self.label_cursor > 0 {
@@ -529,8 +531,9 @@ impl TaskFormState {
         let Some(orig) = &self.original else {
             return ChangedFields::default();
         };
+        let title_text = self.title_ta.text();
         ChangedFields {
-            title: (self.title != orig.title).then(|| self.title.clone()),
+            title: (title_text != orig.title).then_some(title_text),
             priority: (self.priority != orig.priority).then(|| self.priority.clone()),
             size: (self.size_idx != orig.size_idx).then(|| SIZES[self.size_idx].to_string()),
             impact: (self.impact != orig.impact).then_some(self.impact),
@@ -571,9 +574,24 @@ impl TaskFormState {
             || self.progress_changed()
     }
 
-    pub fn render(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
-        let popup_width = 56u16.min(area.width.saturating_sub(4));
-        let popup_height = 15;
+    /// Forward a key event to the title textarea (for cursor movement,
+    /// character input, deletion). Blocks Enter to prevent newlines.
+    pub fn handle_title_key(&mut self, key: &KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {} // no newlines in title
+            _ => self.forward_title_key(*key),
+        }
+    }
+
+    /// Send a key event to the title textarea.
+    fn forward_title_key(&mut self, key: KeyEvent) {
+        let event = Event::Key(key);
+        rat_widget::textarea::handle_events(&mut self.title_ta, true, &event);
+    }
+
+    pub fn render(&mut self, theme: &Theme, area: Rect, buf: &mut Buffer) {
+        let popup_width = 72u16.min(area.width.saturating_sub(4));
+        let popup_height = 17;
         let popup = centered_rect(popup_width, popup_height, area);
 
         Clear.render(popup, buf);
@@ -589,17 +607,19 @@ impl TaskFormState {
         block.render(popup, buf);
 
         let field_rows = Layout::vertical([
-            Constraint::Length(1), // tab bar
-            Constraint::Length(1), // divider
-            Constraint::Length(1), // field 1 label
-            Constraint::Length(1), // field 1 input (or field 2)
-            Constraint::Length(1), // padding / field 2
-            Constraint::Length(1), // field 2 / field 3
-            Constraint::Length(1), // field 3 / field 4
-            Constraint::Length(1), // padding
-            Constraint::Length(1), // padding
-            Constraint::Length(1), // padding
-            Constraint::Length(1), // submit buttons
+            Constraint::Length(1), // [0] tab bar
+            Constraint::Length(1), // [1] divider
+            Constraint::Length(1), // [2] field 1 label
+            Constraint::Length(3), // [3] field 1 input (title, bordered)
+            Constraint::Length(1), // [4] padding / field 2
+            Constraint::Length(1), // [5] field 2 / field 3
+            Constraint::Length(1), // [6] field 3 / field 4
+            Constraint::Length(1), // [7] padding
+            Constraint::Length(1), // [8] padding
+            Constraint::Length(1), // [9] padding
+            Constraint::Length(1), // [10] padding
+            Constraint::Length(1), // [11] padding
+            Constraint::Length(1), // [12] submit buttons
         ])
         .split(inner);
 
@@ -611,7 +631,7 @@ impl TaskFormState {
             FormPage::Properties => self.render_properties_page(theme, &field_rows, buf),
         }
 
-        self.render_submit_buttons(theme, field_rows[10], buf);
+        self.render_submit_buttons(theme, field_rows[12], buf);
     }
 
     fn render_tab_bar(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
@@ -644,20 +664,28 @@ impl TaskFormState {
         Line::from(Span::styled(line, theme.divider)).render(area, buf);
     }
 
-    fn render_main_page(&self, theme: &Theme, rows: &[Rect], buf: &mut Buffer) {
+    fn render_main_page(&mut self, theme: &Theme, rows: &[Rect], buf: &mut Buffer) {
         // Title field
         let title_style = field_label_style(self.focused == FormField::Title, theme);
         Line::from(vec![Span::raw("  "), Span::styled("Title: ", title_style)])
             .render(rows[2], buf);
 
-        render_text_input(
-            &self.title,
-            self.cursor_pos,
-            self.focused == FormField::Title,
-            theme,
-            rows[3],
-            buf,
-        );
+        let title_focused = self.focused == FormField::Title;
+        self.title_ta.focus.set(title_focused);
+        let title_block = Block::bordered()
+            .border_style(if title_focused {
+                Style::new().fg(Color::Yellow)
+            } else {
+                theme.border_unfocused
+            })
+            .padding(Padding::horizontal(1));
+        let title_widget = TextArea::new()
+            .block(title_block)
+            .style(Style::default())
+            .focus_style(Style::default())
+            .cursor_style(Style::new().bg(Color::White).fg(Color::Black))
+            .text_wrap(TextWrap::Shift);
+        title_widget.render(rows[3], buf, &mut self.title_ta);
 
         // Priority field
         let pri_style = field_label_style(self.focused == FormField::Priority, theme);
@@ -958,28 +986,6 @@ fn render_cursor_spans<'a>(text: &str, cursor: usize, theme: &Theme, spans: &mut
             after[after.chars().next().unwrap().len_utf8()..].to_string(),
         ));
     }
-}
-
-/// Render a text input with cursor at the given position.
-fn render_text_input(
-    text: &str,
-    cursor: usize,
-    focused: bool,
-    theme: &Theme,
-    area: Rect,
-    buf: &mut Buffer,
-) {
-    let mut spans = vec![Span::raw("  ")];
-    if focused {
-        if text.is_empty() {
-            spans.push(Span::styled("\u{2588}", theme.selected));
-        } else {
-            render_cursor_spans(text, cursor, theme, &mut spans);
-        }
-    } else {
-        spans.push(Span::raw(text.to_string()));
-    }
-    Line::from(spans).render(area, buf);
 }
 
 /// Return a centred `Rect` of the given width and height within `area`.
