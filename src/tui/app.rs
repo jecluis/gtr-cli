@@ -2026,10 +2026,15 @@ fn handle_new_task(state: &mut AppState, ctx: &Global) -> Result<Control<AppEven
         return Ok(Control::Continue);
     };
     let project_id = task_list.project_id.clone();
-    let project_name = task_list.project_name.clone();
+    let path = ctx.cache.get_project_path(&project_id).unwrap_or_default();
+    let display_name = if path.len() > 1 {
+        path.join(" > ")
+    } else {
+        task_list.project_name.clone()
+    };
     state.create_form = Some(TaskFormState::new(
         project_id,
-        project_name,
+        display_name,
         ctx.config.icon_theme,
     ));
     Ok(Control::Changed)
@@ -2068,13 +2073,18 @@ fn open_update_form(
     project_name: &str,
 ) -> Result<Control<AppEvent>, crate::Error> {
     let task = ctx.storage.load_task(task_id)?;
+    let path = ctx
+        .cache
+        .get_project_path(&task.project_id)
+        .unwrap_or_default();
+    let display_name = if path.len() > 1 {
+        path.join(" > ")
+    } else {
+        project_name.to_string()
+    };
     let (children, _) = ctx.cache.count_children(task_id)?;
-    let mut form = TaskFormState::for_update(
-        &task,
-        project_name.to_string(),
-        ctx.config.icon_theme,
-        children == 0,
-    );
+    let mut form =
+        TaskFormState::for_update(&task, display_name, ctx.config.icon_theme, children == 0);
 
     // Resolve existing parent if present
     if let Some(ref pid) = task.parent_id {
