@@ -49,6 +49,7 @@ struct OriginalValues {
     deadline: Option<String>,
     labels: Vec<String>,
     parent_id: Option<String>,
+    project_id: String,
     progress: Option<u8>,
 }
 
@@ -74,7 +75,15 @@ impl FormPage {
     }
 }
 
-/// Properties page fields including the optional Progress field.
+/// Main page fields with Project (update mode only).
+const MAIN_WITH_PROJECT: &[FormField] = &[
+    FormField::Title,
+    FormField::Priority,
+    FormField::Size,
+    FormField::Project,
+];
+
+/// Properties page fields with Progress (update mode, leaf tasks).
 const PROPERTIES_WITH_PROGRESS: &[FormField] = &[
     FormField::Impact,
     FormField::Joy,
@@ -95,6 +104,7 @@ pub enum FormField {
     Deadline,
     Labels,
     Parent,
+    Project,
     Progress,
     Submit,
     Cancel,
@@ -128,6 +138,12 @@ pub struct TaskFormState {
     parent_cursor: usize,
     resolved_parent_title: Option<String>,
     resolved_parent_id: Option<String>,
+    // Project (update mode only)
+    show_project: bool,
+    /// Display path for the currently selected project (e.g. "home > dev").
+    project_display: String,
+    /// UUID of the selected target project (None = unchanged).
+    selected_project_id: Option<String>,
     // Progress (update mode only, leaf tasks)
     show_progress: bool,
     progress_input: String,
@@ -160,6 +176,9 @@ impl TaskFormState {
             parent_cursor: 0,
             resolved_parent_title: None,
             resolved_parent_id: None,
+            show_project: false,
+            project_display: String::new(),
+            selected_project_id: None,
             show_progress: false,
             progress_input: String::new(),
             progress_cursor: 0,
@@ -204,6 +223,7 @@ impl TaskFormState {
             deadline: task.deadline.clone(),
             labels: task.labels.clone(),
             parent_id: task.parent_id.clone(),
+            project_id: task.project_id.clone(),
             progress: task.progress,
         };
 
@@ -215,7 +235,7 @@ impl TaskFormState {
 
         Self {
             project_id: task.project_id.clone(),
-            project_name,
+            project_name: project_name.clone(),
             mode: FormMode::Update {
                 task_id: task.id.clone(),
             },
@@ -239,6 +259,9 @@ impl TaskFormState {
             parent_cursor: 0,
             resolved_parent_title: None,
             resolved_parent_id: task.parent_id.clone(),
+            show_project: true,
+            project_display: project_name,
+            selected_project_id: None,
             show_progress: is_leaf,
             progress_input,
             progress_cursor,
@@ -309,7 +332,13 @@ impl TaskFormState {
     /// for the conditional progress field.
     fn effective_fields(&self) -> &[FormField] {
         match self.page {
-            FormPage::Main => FormPage::Main.fields(),
+            FormPage::Main => {
+                if self.show_project {
+                    MAIN_WITH_PROJECT
+                } else {
+                    FormPage::Main.fields()
+                }
+            }
             FormPage::Properties => {
                 if self.show_progress {
                     PROPERTIES_WITH_PROGRESS
@@ -407,6 +436,7 @@ impl TaskFormState {
                 self.parent_input.insert(self.parent_cursor, c);
                 self.parent_cursor += c.len_utf8();
             }
+            FormField::Project => {} // handled by picker overlay
             FormField::Progress => {
                 if c.is_ascii_digit() && self.progress_input.len() < 3 {
                     self.progress_input.insert(self.progress_cursor, c);
@@ -463,6 +493,7 @@ impl TaskFormState {
                     self.parent_cursor = prev;
                 }
             }
+            FormField::Project => {} // handled by picker overlay
             FormField::Progress => {
                 if self.progress_cursor > 0 {
                     self.progress_cursor -= 1;
@@ -496,6 +527,7 @@ impl TaskFormState {
             FormField::Deadline => self.char_input(' '),
             FormField::Labels => self.char_input(' '),
             FormField::Parent => self.char_input(' '),
+            FormField::Project => {}  // handled by picker overlay
             FormField::Progress => {} // no toggle behavior
             FormField::Submit | FormField::Cancel => {}
         }
@@ -560,6 +592,17 @@ impl TaskFormState {
         self.resolved_parent_id = full_id;
     }
 
+    /// Apply a project selection from the picker overlay.
+    pub fn apply_project_pick(&mut self, project_id: String, display_path: String) {
+        self.selected_project_id = Some(project_id);
+        self.project_display = display_path;
+    }
+
+    /// The selected project UUID (if changed from original).
+    pub fn selected_project_id(&self) -> Option<&str> {
+        self.selected_project_id.as_deref()
+    }
+
     /// Whether this form is in update mode.
     pub fn is_update(&self) -> bool {
         matches!(self.mode, FormMode::Update { .. })
@@ -591,6 +634,13 @@ impl TaskFormState {
                 (new_deadline != orig.deadline).then_some(new_deadline)
             };
 
+        // Project: only report when a different project was picked.
+        let project_id = self
+            .selected_project_id
+            .as_ref()
+            .filter(|id| **id != orig.project_id)
+            .cloned();
+
         ChangedFields {
             title: (title_text != orig.title).then_some(title_text),
             priority: (self.priority != orig.priority).then(|| self.priority.clone()),
@@ -601,6 +651,7 @@ impl TaskFormState {
             labels: (self.labels != orig.labels).then(|| self.labels.clone()),
             parent_id: (self.resolved_parent_id != orig.parent_id)
                 .then(|| self.resolved_parent_id.clone()),
+            project_id,
         }
     }
 
@@ -632,6 +683,7 @@ impl TaskFormState {
             || f.deadline.is_some()
             || f.labels.is_some()
             || f.parent_id.is_some()
+            || f.project_id.is_some()
             || self.progress_changed()
     }
 
@@ -794,6 +846,11 @@ impl TaskFormState {
             size_spans.push(Span::styled(*s, style));
         }
         Line::from(size_spans).render(rows[6], buf);
+
+        // Project field (update mode only), with 1 line padding
+        if self.show_project {
+            self.render_project_field(theme, rows[8], buf);
+        }
     }
 
     fn render_properties_page(&self, theme: &Theme, rows: &[Rect], buf: &mut Buffer) {
@@ -999,6 +1056,33 @@ impl TaskFormState {
         Line::from(spans).render(area, buf);
     }
 
+    fn render_project_field(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
+        let focused = self.focused == FormField::Project;
+        let label_style = field_label_style(focused, theme);
+
+        let mut spans: Vec<Span<'_>> =
+            vec![Span::raw("  "), Span::styled("Project: ", label_style)];
+
+        spans.push(Span::raw(self.project_display.clone()));
+
+        if focused {
+            spans.push(Span::styled(
+                "  [Enter to change]",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+
+        // Show a marker if the project was changed from the original.
+        if let Some(ref selected) = self.selected_project_id
+            && let Some(orig) = &self.original
+            && selected != &orig.project_id
+        {
+            spans.push(Span::styled(" (changed)", theme.warning));
+        }
+
+        Line::from(spans).render(area, buf);
+    }
+
     fn render_progress_field(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {
         let label_style = field_label_style(self.focused == FormField::Progress, theme);
 
@@ -1079,6 +1163,8 @@ pub struct ChangedFields {
     /// `Some(None)` means parent was cleared; `Some(Some(id))` means
     /// parent was changed to a new ID.
     pub parent_id: Option<Option<String>>,
+    /// `Some(id)` means the task is being moved to a different project.
+    pub project_id: Option<String>,
 }
 
 /// Style for a field label: accent+bold when focused, default otherwise.
