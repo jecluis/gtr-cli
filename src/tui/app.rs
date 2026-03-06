@@ -756,7 +756,7 @@ fn handle_event(
                     return handle_update_document_from_list(state, ctx);
                 }
                 KeyCode::Char('n') => {
-                    return handle_new_document(state);
+                    return handle_new_document(state, ctx);
                 }
                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
                     state.main_view = make_dashboard(ctx);
@@ -1262,13 +1262,21 @@ fn handle_editor_from_doc_detail(
     Ok(Control::Changed)
 }
 
-fn handle_new_document(state: &mut AppState) -> Result<Control<AppEvent>, crate::Error> {
+fn handle_new_document(
+    state: &mut AppState,
+    ctx: &Global,
+) -> Result<Control<AppEvent>, crate::Error> {
     let MainView::DocList(ref doc_list) = state.main_view else {
         return Ok(Control::Continue);
     };
     let namespace_id = doc_list.namespace_id.clone();
     let namespace_name = doc_list.namespace_name.clone();
-    state.doc_form = Some(DocFormState::new(namespace_id, namespace_name));
+    let available_labels = ns_labels_with_own_flag(&ctx.cache, &namespace_id);
+    state.doc_form = Some(DocFormState::new(
+        namespace_id,
+        namespace_name,
+        available_labels,
+    ));
     Ok(Control::Changed)
 }
 
@@ -1309,7 +1317,12 @@ fn open_update_doc_form(
     namespace_name: &str,
 ) -> Result<Control<AppEvent>, crate::Error> {
     let doc = ctx.storage.load_document(doc_id)?;
-    state.doc_form = Some(DocFormState::for_update(doc, namespace_name.to_string()));
+    let available_labels = ns_labels_with_own_flag(&ctx.cache, &doc.namespace_id);
+    state.doc_form = Some(DocFormState::for_update(
+        doc,
+        namespace_name.to_string(),
+        available_labels,
+    ));
     Ok(Control::Changed)
 }
 
@@ -2289,6 +2302,16 @@ fn labels_with_own_flag(cache: &TaskCache, project_id: &str) -> Vec<(String, boo
         .collect()
 }
 
+/// Build `(label, is_own)` tuples for autocomplete from namespace labels.
+fn ns_labels_with_own_flag(cache: &TaskCache, namespace_id: &str) -> Vec<(String, bool)> {
+    cache
+        .get_effective_namespace_labels_with_source(namespace_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(label, source_id)| (label, source_id == namespace_id))
+        .collect()
+}
+
 /// Register any new labels in the project label registry.
 fn auto_register_labels(
     labels: &[String],
@@ -2589,13 +2612,17 @@ fn handle_doc_form_input(
                 return Ok(Control::Changed);
             }
 
-            // When focused on Labels with pending input, commit the label
-            if let Some(ref mut form) = state.doc_form
-                && focused == DocFormField::Labels
-                && form.has_pending_label()
+            // When focused on Labels, try autocomplete first, then commit
+            if focused == DocFormField::Labels
+                && let Some(ref mut form) = state.doc_form
             {
-                form.commit_label();
-                return Ok(Control::Changed);
+                if form.accept_autocomplete() {
+                    return Ok(Control::Changed);
+                }
+                if form.has_pending_label() {
+                    form.commit_label();
+                    return Ok(Control::Changed);
+                }
             }
 
             let form = state.doc_form.as_ref().unwrap();
@@ -2631,11 +2658,39 @@ fn handle_doc_form_input(
             }
             Ok(Control::Changed)
         }
+        KeyCode::Up | KeyCode::Down => {
+            if let Some(ref mut form) = state.doc_form
+                && form.focused() == DocFormField::Labels
+            {
+                if form.autocomplete_active() {
+                    if code == KeyCode::Down {
+                        form.autocomplete_select_next();
+                    } else {
+                        form.autocomplete_select_prev();
+                    }
+                } else {
+                    form.show_all_labels();
+                }
+            }
+            Ok(Control::Changed)
+        }
         KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
             if let Some(ref mut form) = state.doc_form
                 && form.focused() == DocFormField::Title
             {
                 form.handle_title_key(key);
+            }
+            Ok(Control::Changed)
+        }
+        KeyCode::Char(' ') => {
+            if let Some(ref mut form) = state.doc_form {
+                if form.focused() == DocFormField::Labels && !form.has_pending_label() {
+                    form.show_all_labels();
+                } else if form.focused() == DocFormField::Title {
+                    form.handle_title_key(key);
+                } else {
+                    form.char_input(' ');
+                }
             }
             Ok(Control::Changed)
         }
