@@ -47,10 +47,10 @@ pub fn validate_label(label: &str) -> Result<()> {
     }
 
     for ch in label.chars() {
-        if !ch.is_ascii_lowercase() && !ch.is_ascii_digit() && !"-:./\\'".contains(ch) {
+        if !ch.is_ascii_lowercase() && !ch.is_ascii_digit() && !"-:./\\'&".contains(ch) {
             return Err(Error::UserFacing(format!(
                 "label '{}' contains invalid character '{}'; \
-                 allowed: a-z, 0-9, - : . / '",
+                 allowed: a-z, 0-9, - : . / ' &",
                 label, ch
             )));
         }
