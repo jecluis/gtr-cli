@@ -2089,10 +2089,12 @@ fn handle_new_task(state: &mut AppState, ctx: &Global) -> Result<Control<AppEven
     } else {
         task_list.project_name.clone()
     };
+    let available_labels = labels_with_own_flag(&ctx.cache, &project_id);
     state.create_form = Some(TaskFormState::new(
         project_id,
         display_name,
         ctx.config.icon_theme,
+        available_labels,
     ));
     Ok(Control::Changed)
 }
@@ -2140,8 +2142,14 @@ fn open_update_form(
         project_name.to_string()
     };
     let (children, _) = ctx.cache.count_children(task_id)?;
-    let mut form =
-        TaskFormState::for_update(&task, display_name, ctx.config.icon_theme, children == 0);
+    let available_labels = labels_with_own_flag(&ctx.cache, &task.project_id);
+    let mut form = TaskFormState::for_update(
+        &task,
+        display_name,
+        ctx.config.icon_theme,
+        children == 0,
+        available_labels,
+    );
 
     // Resolve existing parent if present
     if let Some(ref pid) = task.parent_id {
@@ -2271,6 +2279,16 @@ fn submit_update_form(
     Ok(Control::Changed)
 }
 
+/// Build `(label, is_own)` tuples for autocomplete from project labels.
+fn labels_with_own_flag(cache: &TaskCache, project_id: &str) -> Vec<(String, bool)> {
+    cache
+        .get_effective_labels_with_source(project_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(label, source_id)| (label, source_id == project_id))
+        .collect()
+}
+
 /// Register any new labels in the project label registry.
 fn auto_register_labels(
     labels: &[String],
@@ -2366,13 +2384,17 @@ fn handle_create_form_input(
                 return Ok(Control::Changed);
             }
 
-            // When focused on Labels with pending input, commit the label
-            if let Some(ref mut form) = state.create_form
-                && focused == FormField::Labels
-                && form.has_pending_label()
+            // When focused on Labels, try autocomplete first, then commit
+            if focused == FormField::Labels
+                && let Some(ref mut form) = state.create_form
             {
-                form.commit_label();
-                return Ok(Control::Changed);
+                if form.accept_autocomplete() {
+                    return Ok(Control::Changed);
+                }
+                if form.has_pending_label() {
+                    form.commit_label();
+                    return Ok(Control::Changed);
+                }
             }
 
             let form = state.create_form.as_ref().unwrap();
@@ -2408,6 +2430,23 @@ fn handle_create_form_input(
             }
             Ok(Control::Changed)
         }
+        KeyCode::Up | KeyCode::Down => {
+            if let Some(ref mut form) = state.create_form
+                && form.focused() == FormField::Labels
+            {
+                if form.autocomplete_active() {
+                    if code == KeyCode::Down {
+                        form.autocomplete_select_next();
+                    } else {
+                        form.autocomplete_select_prev();
+                    }
+                } else {
+                    // Show all labels when pressing Down on empty input
+                    form.show_all_labels();
+                }
+            }
+            Ok(Control::Changed)
+        }
         KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
             if let Some(ref mut form) = state.create_form {
                 match form.focused() {
@@ -2423,7 +2462,12 @@ fn handle_create_form_input(
         }
         KeyCode::Char(' ') => {
             if let Some(ref mut form) = state.create_form {
-                form.toggle_or_space();
+                // Show all labels when pressing Space on empty label input
+                if form.focused() == FormField::Labels && !form.has_pending_label() {
+                    form.show_all_labels();
+                } else {
+                    form.toggle_or_space();
+                }
             }
             Ok(Control::Changed)
         }
