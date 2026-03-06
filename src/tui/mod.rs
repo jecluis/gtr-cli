@@ -35,6 +35,7 @@ pub mod feels;
 pub mod help;
 pub mod inline_editor;
 pub mod keymap;
+pub mod label_autocomplete;
 pub mod move_form;
 pub mod nav;
 pub mod progress;

@@ -29,6 +29,7 @@ use ratatui::widgets::{Block, Clear, Padding, StatefulWidget, Tabs, Widget};
 use crate::display;
 use crate::icons::{Glyphs, IconTheme};
 use crate::models::Task;
+use crate::tui::label_autocomplete::LabelAutocomplete;
 use crate::tui::theme::{LABEL_PALETTE, Theme};
 
 const SIZES: [&str; 4] = ["S", "M", "L", "XL"];
@@ -134,6 +135,7 @@ pub struct TaskFormState {
     labels: Vec<String>,
     label_input: String,
     label_cursor: usize,
+    label_autocomplete: LabelAutocomplete,
     parent_input: String,
     parent_cursor: usize,
     resolved_parent_title: Option<String>,
@@ -151,7 +153,12 @@ pub struct TaskFormState {
 }
 
 impl TaskFormState {
-    pub fn new(project_id: String, project_name: String, icon_theme: IconTheme) -> Self {
+    pub fn new(
+        project_id: String,
+        project_name: String,
+        icon_theme: IconTheme,
+        available_labels: Vec<(String, bool)>,
+    ) -> Self {
         Self {
             project_id,
             project_name,
@@ -172,6 +179,7 @@ impl TaskFormState {
             labels: Vec::new(),
             label_input: String::new(),
             label_cursor: 0,
+            label_autocomplete: LabelAutocomplete::new(available_labels),
             parent_input: String::new(),
             parent_cursor: 0,
             resolved_parent_title: None,
@@ -194,6 +202,7 @@ impl TaskFormState {
         project_name: String,
         icon_theme: IconTheme,
         is_leaf: bool,
+        available_labels: Vec<(String, bool)>,
     ) -> Self {
         let size_idx = SIZES
             .iter()
@@ -255,6 +264,7 @@ impl TaskFormState {
             labels: task.labels.clone(),
             label_input: String::new(),
             label_cursor: 0,
+            label_autocomplete: LabelAutocomplete::new(available_labels),
             parent_input,
             parent_cursor: 0,
             resolved_parent_title: None,
@@ -365,6 +375,9 @@ impl TaskFormState {
                 }
             }
         }
+        if self.focused != FormField::Labels {
+            self.label_autocomplete.update("", &self.labels);
+        }
     }
 
     /// Move focus to the previous field (wrap → Cancel → Submit → page fields).
@@ -382,6 +395,9 @@ impl TaskFormState {
                     }
                 }
             }
+        }
+        if self.focused != FormField::Labels {
+            self.label_autocomplete.update("", &self.labels);
         }
     }
 
@@ -430,6 +446,8 @@ impl TaskFormState {
                 } else {
                     self.label_input.insert(self.label_cursor, c);
                     self.label_cursor += c.len_utf8();
+                    self.label_autocomplete
+                        .update(&self.label_input, &self.labels);
                 }
             }
             FormField::Parent => {
@@ -477,6 +495,8 @@ impl TaskFormState {
                         .unwrap_or(0);
                     self.label_input.remove(prev);
                     self.label_cursor = prev;
+                    self.label_autocomplete
+                        .update(&self.label_input, &self.labels);
                 } else {
                     // Backspace on empty input removes last label
                     self.labels.pop();
@@ -574,12 +594,48 @@ impl TaskFormState {
         if self.labels.contains(&normalized) {
             self.label_input.clear();
             self.label_cursor = 0;
+            self.label_autocomplete.update("", &self.labels);
             return false;
         }
         self.labels.push(normalized);
         self.label_input.clear();
         self.label_cursor = 0;
+        self.label_autocomplete.update("", &self.labels);
         true
+    }
+
+    /// Move autocomplete selection to the next suggestion.
+    pub fn autocomplete_select_next(&mut self) {
+        self.label_autocomplete.select_next();
+    }
+
+    /// Move autocomplete selection to the previous suggestion.
+    pub fn autocomplete_select_prev(&mut self) {
+        self.label_autocomplete.select_prev();
+    }
+
+    /// Accept the currently selected autocomplete suggestion.
+    ///
+    /// Sets the label input to the selected label and commits it.
+    /// Returns `true` if a suggestion was accepted.
+    pub fn accept_autocomplete(&mut self) -> bool {
+        let Some(label) = self.label_autocomplete.selected_label().map(String::from) else {
+            return false;
+        };
+        self.label_input = label;
+        self.label_cursor = self.label_input.len();
+        self.commit_label();
+        true
+    }
+
+    /// Whether the autocomplete overlay should be shown.
+    pub fn autocomplete_active(&self) -> bool {
+        self.focused == FormField::Labels && self.label_autocomplete.has_suggestions()
+    }
+
+    /// Show all available labels (for browsing before typing).
+    pub fn show_all_labels(&mut self) {
+        self.label_autocomplete.show_all(&self.labels);
     }
 
     /// Set the resolved parent title for display feedback.
@@ -888,6 +944,20 @@ impl TaskFormState {
         // Progress field (leaf tasks in update mode only)
         if self.show_progress {
             self.render_progress_field(theme, rows[8], buf);
+        }
+
+        // Autocomplete overlay (rendered last so it covers fields below)
+        if self.autocomplete_active() {
+            let overlay = Rect {
+                x: rows[6].x,
+                y: rows[6].y,
+                width: rows[6].width,
+                height: rows
+                    .get(9)
+                    .map_or(0, |r| r.y + r.height)
+                    .saturating_sub(rows[6].y),
+            };
+            self.label_autocomplete.render(overlay, buf);
         }
     }
 
