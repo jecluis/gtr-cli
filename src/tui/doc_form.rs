@@ -27,6 +27,7 @@ use ratatui::widgets::{Block, Clear, Padding, StatefulWidget, Widget};
 
 use crate::display::LABEL_PALETTE_LEN;
 use crate::models::Document;
+use crate::tui::label_autocomplete::LabelAutocomplete;
 use crate::tui::theme::{LABEL_PALETTE, Theme};
 
 /// Whether the form is creating a new document or editing an existing one.
@@ -63,6 +64,7 @@ pub struct DocFormState {
     labels: Vec<String>,
     label_input: String,
     label_cursor: usize,
+    label_autocomplete: LabelAutocomplete,
     parent_input: String,
     parent_cursor: usize,
     resolved_parent_id: Option<String>,
@@ -77,7 +79,11 @@ const FIELDS: &[DocFormField] = &[
 
 impl DocFormState {
     /// Create an empty form for a new document in the given namespace.
-    pub fn new(namespace_id: String, namespace_name: String) -> Self {
+    pub fn new(
+        namespace_id: String,
+        namespace_name: String,
+        available_labels: Vec<(String, bool)>,
+    ) -> Self {
         Self {
             mode: DocFormMode::Create { namespace_id },
             namespace_name,
@@ -87,6 +93,7 @@ impl DocFormState {
             labels: Vec::new(),
             label_input: String::new(),
             label_cursor: 0,
+            label_autocomplete: LabelAutocomplete::new(available_labels),
             parent_input: String::new(),
             parent_cursor: 0,
             resolved_parent_id: None,
@@ -95,7 +102,11 @@ impl DocFormState {
     }
 
     /// Create a form pre-filled with an existing document's values.
-    pub fn for_update(doc: Document, namespace_name: String) -> Self {
+    pub fn for_update(
+        doc: Document,
+        namespace_name: String,
+        available_labels: Vec<(String, bool)>,
+    ) -> Self {
         let parent_input = doc
             .parent_id
             .as_ref()
@@ -122,6 +133,7 @@ impl DocFormState {
             labels: doc.labels.clone(),
             label_input: String::new(),
             label_cursor: 0,
+            label_autocomplete: LabelAutocomplete::new(available_labels),
             parent_input,
             parent_cursor: 0,
             resolved_parent_id: doc.parent_id.clone(),
@@ -184,6 +196,9 @@ impl DocFormState {
                 }
             }
         }
+        if self.focused != DocFormField::Labels {
+            self.label_autocomplete.update("", &self.labels);
+        }
     }
 
     /// Move focus to the previous field.
@@ -200,6 +215,9 @@ impl DocFormState {
                     }
                 }
             }
+        }
+        if self.focused != DocFormField::Labels {
+            self.label_autocomplete.update("", &self.labels);
         }
     }
 
@@ -219,6 +237,8 @@ impl DocFormState {
                 } else {
                     self.label_input.insert(self.label_cursor, c);
                     self.label_cursor += c.len_utf8();
+                    self.label_autocomplete
+                        .update(&self.label_input, &self.labels);
                 }
             }
             DocFormField::Parent => {
@@ -247,6 +267,8 @@ impl DocFormState {
                         .unwrap_or(0);
                     self.label_input.remove(prev);
                     self.label_cursor = prev;
+                    self.label_autocomplete
+                        .update(&self.label_input, &self.labels);
                 } else {
                     // Backspace on empty input removes last label
                     self.labels.pop();
@@ -275,12 +297,45 @@ impl DocFormState {
         if self.labels.contains(&normalized) {
             self.label_input.clear();
             self.label_cursor = 0;
+            self.label_autocomplete.update("", &self.labels);
             return false;
         }
         self.labels.push(normalized);
         self.label_input.clear();
         self.label_cursor = 0;
+        self.label_autocomplete.update("", &self.labels);
         true
+    }
+
+    /// Move autocomplete selection to the next suggestion.
+    pub fn autocomplete_select_next(&mut self) {
+        self.label_autocomplete.select_next();
+    }
+
+    /// Move autocomplete selection to the previous suggestion.
+    pub fn autocomplete_select_prev(&mut self) {
+        self.label_autocomplete.select_prev();
+    }
+
+    /// Accept the currently selected autocomplete suggestion.
+    pub fn accept_autocomplete(&mut self) -> bool {
+        let Some(label) = self.label_autocomplete.selected_label().map(String::from) else {
+            return false;
+        };
+        self.label_input = label;
+        self.label_cursor = self.label_input.len();
+        self.commit_label();
+        true
+    }
+
+    /// Whether the autocomplete overlay should be shown.
+    pub fn autocomplete_active(&self) -> bool {
+        self.focused == DocFormField::Labels && self.label_autocomplete.has_suggestions()
+    }
+
+    /// Show all available labels (for browsing before typing).
+    pub fn show_all_labels(&mut self) {
+        self.label_autocomplete.show_all(&self.labels);
     }
 
     /// Set the resolved parent title for display feedback.
@@ -411,6 +466,20 @@ impl DocFormState {
 
         // Submit/Cancel buttons
         self.render_submit_buttons(theme, rows[9], buf);
+
+        // Autocomplete overlay (rendered last so it covers fields below)
+        if self.autocomplete_active() {
+            let overlay = Rect {
+                x: rows[4].x,
+                y: rows[4].y,
+                width: rows[4].width,
+                height: rows
+                    .get(7)
+                    .map_or(0, |r| r.y + r.height)
+                    .saturating_sub(rows[4].y),
+            };
+            self.label_autocomplete.render(overlay, buf);
+        }
     }
 
     fn render_labels_field(&self, theme: &Theme, area: Rect, buf: &mut Buffer) {

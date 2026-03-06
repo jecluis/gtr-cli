@@ -1872,6 +1872,35 @@ impl TaskCache {
         Ok(with_source.into_iter().map(|(label, _)| label).collect())
     }
 
+    /// Get the flat list of effective labels for a namespace with their
+    /// source namespace ID, deduped and sorted.
+    pub fn get_effective_namespace_labels_with_source(
+        &self,
+        namespace_id: &str,
+    ) -> Result<Vec<(String, String)>> {
+        let id_path = self.get_namespace_path(namespace_id)?;
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for ns_id in &id_path {
+            if let Some(ns) = self.get_namespace(ns_id)? {
+                for label in &ns.labels {
+                    if seen.insert(label.clone()) {
+                        result.push((label.clone(), ns_id.clone()));
+                    }
+                }
+            }
+        }
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(result)
+    }
+
+    /// Get the flat list of effective labels for a namespace (own +
+    /// inherited from ancestors), deduped and sorted.
+    pub fn get_effective_namespace_labels(&self, namespace_id: &str) -> Result<Vec<String>> {
+        let with_source = self.get_effective_namespace_labels_with_source(namespace_id)?;
+        Ok(with_source.into_iter().map(|(label, _)| label).collect())
+    }
+
     /// Count tasks per label in a project.
     pub fn count_tasks_by_label(&self, project_id: &str) -> Result<Vec<(String, i64)>> {
         // Get all non-deleted tasks for this project
